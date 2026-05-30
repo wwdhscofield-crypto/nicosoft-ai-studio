@@ -197,6 +197,23 @@ Desktop.ini
 *.swp
 *.swo
 
+# AI coding tools — ignore per-developer local state, but KEEP the shared
+# instruction files (CLAUDE.md / AGENTS.md) that the project commits.
+# Claude Code
+.claude/
+!CLAUDE.md
+# Codex CLI
+.codex/
+.codexignore
+# Cursor
+.cursor/
+.cursorrules
+.cursorignore
+# GitHub Copilot / other agents
+.aider*
+.continue/
+.windsurf/
+
 # Misc local
 .local/
 *.local
