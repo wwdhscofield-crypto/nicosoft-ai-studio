@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import * as convService from '../services/conversation.service'
-import type { ConversationCreateDto, MessageAppendDto } from './contracts'
+import type { ConversationCreateDto, ConversationTitleInput, MessageAppendDto } from './contracts'
 
 // IPC boundary for persisted conversations + messages — parse args, call the service, return. No SQL.
 export function registerConversationHandlers(): void {
@@ -11,5 +11,6 @@ export function registerConversationHandlers(): void {
     convService.append(convId, input)
   )
   ipcMain.handle('conversations:rename', (_e, convId: string, title: string) => convService.rename(convId, title))
+  ipcMain.handle('conversations:title', (_e, input: ConversationTitleInput) => convService.generateTitle(input))
   ipcMain.handle('conversations:remove', (_e, convId: string) => convService.remove(convId))
 }

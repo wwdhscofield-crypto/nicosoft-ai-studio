@@ -1,7 +1,9 @@
 import * as convRepo from '../repos/conversation.repo'
+import * as titleService from './title.service'
 import type {
   ConversationCreateDto,
   ConversationDto,
+  ConversationTitleInput,
   MessageAppendDto,
   MessageAttachmentDto,
   MessageDto
@@ -63,6 +65,18 @@ export function append(convId: string, input: MessageAppendDto): MessageDto {
 
 export function rename(convId: string, title: string): void {
   convRepo.rename(convId, title)
+}
+
+// Generate a title for a fresh conversation from the user's first message (small/fast model — see
+// title.service) and persist it. Returns the title so the renderer can patch its history list.
+export async function generateTitle(input: ConversationTitleInput): Promise<string> {
+  const title = await titleService.generate({
+    firstMessage: input.firstMessage,
+    fallbackEndpointId: input.fallbackEndpointId,
+    fallbackModel: input.fallbackModel
+  })
+  convRepo.rename(input.convId, title)
+  return title
 }
 
 export function remove(convId: string): void {

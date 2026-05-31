@@ -21,6 +21,7 @@ import type {
   RoleStateDto,
   ConversationDto,
   ConversationCreateDto,
+  ConversationTitleInput,
   MessageDto,
   MessageAppendDto
 } from '../main/ipc/contracts'
@@ -115,6 +116,8 @@ const api = {
       ipcRenderer.invoke('conversations:append', convId, input),
     rename: (convId: string, title: string): Promise<void> =>
       ipcRenderer.invoke('conversations:rename', convId, title),
+    title: (input: ConversationTitleInput): Promise<string> =>
+      ipcRenderer.invoke('conversations:title', input),
     remove: (convId: string): Promise<void> => ipcRenderer.invoke('conversations:remove', convId)
   }
 }

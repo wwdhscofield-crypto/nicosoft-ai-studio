@@ -127,6 +127,7 @@ export const useChat = create<ChatState>((set, get) => {
       ensureListeners()
       // Create the conversation on the first message of a fresh thread.
       let convId = get().activeConv
+      const isNew = !convId
       if (!convId) {
         if (creating) return // a create is already in flight for this fresh thread — drop the duplicate
         creating = true
@@ -167,6 +168,18 @@ export const useChat = create<ChatState>((set, get) => {
         content: text,
         attachments: userImages.map((i) => ({ url: i.url, name: i.name }))
       })
+
+      // First message of a fresh thread → generate a real title (Haiku→Sonnet→main model, in the
+      // backend) and patch it into the history list when it lands. Async, never blocks the reply.
+      if (isNew) {
+        void window.api.conversations
+          .title({ convId: cid, firstMessage: text.slice(0, 1000), fallbackEndpointId: endpointId, fallbackModel: model })
+          .then((title) => {
+            if (title)
+              set((s) => ({ conversations: s.conversations.map((c) => (c.id === cid ? { ...c, title } : c)) }))
+          })
+          .catch(() => {})
+      }
 
       const expert = STUDIO_DATA.EXPERT_BY_ID[expertId]
       const system = expert ? `You are ${expert.name}, ${expert.specialty.toLowerCase()}. ${expert.personality}.` : ''

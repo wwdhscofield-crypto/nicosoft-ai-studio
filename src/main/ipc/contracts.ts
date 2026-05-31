@@ -187,3 +187,9 @@ export interface MessageAppendDto {
   content: string
   attachments?: MessageAttachmentDto[]
 }
+export interface ConversationTitleInput {
+  convId: string
+  firstMessage: string
+  fallbackEndpointId: string // the conversation's own model, used when no Haiku/Sonnet is configured
+  fallbackModel: string
+}
