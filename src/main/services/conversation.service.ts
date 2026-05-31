@@ -72,8 +72,8 @@ export function rename(convId: string, title: string): void {
 export async function generateTitle(input: ConversationTitleInput): Promise<string> {
   const title = await titleService.generate({
     firstMessage: input.firstMessage,
-    fallbackEndpointId: input.fallbackEndpointId,
-    fallbackModel: input.fallbackModel
+    endpointId: input.endpointId,
+    model: input.model
   })
   convRepo.rename(input.convId, title)
   return title

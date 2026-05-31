@@ -173,7 +173,7 @@ export const useChat = create<ChatState>((set, get) => {
       // backend) and patch it into the history list when it lands. Async, never blocks the reply.
       if (isNew) {
         void window.api.conversations
-          .title({ convId: cid, firstMessage: text.slice(0, 1000), fallbackEndpointId: endpointId, fallbackModel: model })
+          .title({ convId: cid, firstMessage: text.slice(0, 1000), endpointId, model })
           .then((title) => {
             if (title)
               set((s) => ({ conversations: s.conversations.map((c) => (c.id === cid ? { ...c, title } : c)) }))

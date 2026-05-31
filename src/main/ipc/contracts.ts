@@ -190,6 +190,6 @@ export interface MessageAppendDto {
 export interface ConversationTitleInput {
   convId: string
   firstMessage: string
-  fallbackEndpointId: string // the conversation's own model, used when no Haiku/Sonnet is configured
-  fallbackModel: string
+  endpointId: string // the conversation's own endpoint — title generation stays on the same provider
+  model: string // the conversation's main model — fallback when the endpoint has no smaller sibling
 }
