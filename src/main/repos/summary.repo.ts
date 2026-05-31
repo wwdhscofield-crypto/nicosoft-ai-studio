@@ -1,4 +1,4 @@
-import { ulid } from 'ulid'
+import { ulid } from '../db/id'
 import { getDb } from '../db/connection'
 
 // summaries table — chain compression of a conversation. Each summary covers messages up to
@@ -64,7 +64,7 @@ export function create(input: SummaryCreateInput): SummaryRow {
 // in chat context assembly. Null when the conversation has never been compressed.
 export function getLatest(convId: string): SummaryRow | null {
   const row = getDb()
-    .prepare('SELECT * FROM summaries WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1')
+    .prepare('SELECT * FROM summaries WHERE conversation_id = ? ORDER BY created_at DESC, id DESC LIMIT 1')
     .get(convId) as unknown as SummaryRaw | undefined
   return row ? mapRow(row) : null
 }

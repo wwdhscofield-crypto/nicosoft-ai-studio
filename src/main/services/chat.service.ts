@@ -53,8 +53,11 @@ export async function send(
 async function buildContext(input: ChatSendInput): Promise<ChatMessage[]> {
   const history = convRepo.listByConversation(input.convId) // includes the just-persisted user turn
   const summary = summaryRepo.getLatest(input.convId)
+  // covered_up_to holds the id of the last folded message. Message ids are monotonic ULIDs (db/id.ts),
+  // so id ordering == creation order even within a millisecond, and ids are unique — a same-millisecond
+  // boundary message isn't dropped.
   const recent =
-    summary?.coveredUpTo != null ? history.filter((m) => m.createdAt > summary.coveredUpTo!) : history
+    summary?.coveredUpTo != null ? history.filter((m) => m.id > summary.coveredUpTo!) : history
 
   const memories = await memoryService.recall({
     convId: input.convId,

@@ -1,4 +1,4 @@
-import { ulid } from 'ulid'
+import { ulid } from '../db/id'
 import { getDb } from '../db/connection'
 
 // role_bindings + custom_roles + role_states tables. Pure SQL.

@@ -41,6 +41,14 @@ export interface ChatSendInput {
   thinking?: { effort?: 'minimal' | 'none' | 'low' | 'medium' | 'high' | 'xhigh'; budgetTokens?: number }
 }
 
+// Context-compression trigger — fired by the renderer after each assistant reply.
+export interface ChatCompressInput {
+  convId: string
+  roleId: string
+  endpointId: string
+  model: string
+}
+
 // Streaming events pushed to the renderer over `chat:delta` / `chat:done` / `chat:error`.
 export interface ChatDelta {
   streamId: string

@@ -88,6 +88,14 @@ export const useChat = create<ChatState>((set, get) => {
         endpointId: meta.endpointId,
         model: meta.model
       })
+      // Post-turn compression check — folds older messages into a summary if the conversation crossed
+      // 90% of the model's context window.
+      void window.api.chat.compress({
+        convId: meta.convId,
+        roleId: meta.expertId,
+        endpointId: meta.endpointId,
+        model: meta.model
+      })
     })
     api.onError((d) => {
       const meta = streamMeta.get(d.streamId)

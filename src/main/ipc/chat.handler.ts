@@ -1,8 +1,9 @@
 import { ipcMain } from 'electron'
 import { ulid } from 'ulid'
 import * as chatService from '../services/chat.service'
+import * as compressionService from '../services/compression.service'
 import { LlmError } from '../llm/types'
-import type { ChatSendInput } from './contracts'
+import type { ChatSendInput, ChatCompressInput } from './contracts'
 
 // Streaming chat over IPC: `chat:send` starts a stream and returns its streamId promptly; tokens
 // arrive on `chat:delta`, then `chat:done` or `chat:error`. `chat:stop` aborts in flight.
@@ -45,4 +46,7 @@ export function registerChatHandlers(): void {
     streams.get(streamId)?.abort()
     streams.delete(streamId)
   })
+
+  // Fire-and-forget from the renderer after each turn: compress the conversation if it crossed 90%.
+  ipcMain.handle('chat:compress', (_e, input: ChatCompressInput) => compressionService.maybeCompress(input))
 }

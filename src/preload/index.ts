@@ -4,6 +4,7 @@ import type {
   EndpointInput,
   EndpointTestResult,
   ChatSendInput,
+  ChatCompressInput,
   ChatDelta,
   ChatDone,
   ChatErrorDto,
@@ -62,6 +63,7 @@ const api = {
   chat: {
     send: (input: ChatSendInput): Promise<{ streamId: string }> => ipcRenderer.invoke('chat:send', input),
     stop: (streamId: string): Promise<void> => ipcRenderer.invoke('chat:stop', streamId),
+    compress: (input: ChatCompressInput): Promise<void> => ipcRenderer.invoke('chat:compress', input),
     onDelta: (cb: (d: ChatDelta) => void): (() => void) => {
       const h = (_e: IpcRendererEvent, d: ChatDelta): void => cb(d)
       ipcRenderer.on('chat:delta', h)

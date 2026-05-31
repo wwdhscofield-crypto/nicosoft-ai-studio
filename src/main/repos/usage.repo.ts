@@ -1,4 +1,4 @@
-import { ulid } from 'ulid'
+import { ulid } from '../db/id'
 import { getDb } from '../db/connection'
 
 // usage_events table: append-only token accounting. Pure SQL. `tool_calls` is JSON | null.

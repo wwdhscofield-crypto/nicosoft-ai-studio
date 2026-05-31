@@ -1,4 +1,4 @@
-import { ulid } from 'ulid'
+import { ulid } from '../db/id'
 import { getDb } from '../db/connection'
 
 // memories + memory_versions tables. Pure SQL. A memory is a durable fact/preference/learning, tagged
@@ -117,7 +117,7 @@ export function getById(id: string): MemoryRow | null {
 export function listForRole(roleId: string): MemoryRow[] {
   const rows = getDb()
     .prepare(
-      `SELECT * FROM memories WHERE layer = 'shared' OR (layer = 'role' AND role_id = ?) ORDER BY updated_at DESC`
+      `SELECT * FROM memories WHERE layer = 'shared' OR (layer = 'role' AND role_id = ?) ORDER BY updated_at DESC, id DESC`
     )
     .all(roleId) as unknown as MemoryRaw[]
   return rows.map(mapRow)
@@ -125,13 +125,13 @@ export function listForRole(roleId: string): MemoryRow[] {
 
 export function listShared(): MemoryRow[] {
   const rows = getDb()
-    .prepare(`SELECT * FROM memories WHERE layer = 'shared' ORDER BY updated_at DESC`)
+    .prepare(`SELECT * FROM memories WHERE layer = 'shared' ORDER BY updated_at DESC, id DESC`)
     .all() as unknown as MemoryRaw[]
   return rows.map(mapRow)
 }
 
 export function listAll(): MemoryRow[] {
-  const rows = getDb().prepare('SELECT * FROM memories ORDER BY updated_at DESC').all() as unknown as MemoryRaw[]
+  const rows = getDb().prepare('SELECT * FROM memories ORDER BY updated_at DESC, id DESC').all() as unknown as MemoryRaw[]
   return rows.map(mapRow)
 }
 

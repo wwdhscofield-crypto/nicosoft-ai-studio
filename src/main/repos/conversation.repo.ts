@@ -1,4 +1,4 @@
-import { ulid } from 'ulid'
+import { ulid } from '../db/id'
 import { getDb } from '../db/connection'
 
 // conversations + messages tables. Pure SQL. `attachments` (messages) is JSON parsed to an array;
@@ -192,8 +192,11 @@ export function append(conversationId: string, input: MessageAppendInput): Messa
 }
 
 export function listByConversation(convId: string): MessageRow[] {
+  // ORDER BY created_at, id: id is a monotonic ULID (db/id.ts), so within the same millisecond ids
+  // strictly increase — the tiebreaker keeps messages in true creation order, which summary
+  // covered_up_to slicing (by id) relies on.
   const rows = getDb()
-    .prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC')
+    .prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC, id ASC')
     .all(convId) as unknown as MessageRaw[]
   return rows.map(mapMessage)
 }
