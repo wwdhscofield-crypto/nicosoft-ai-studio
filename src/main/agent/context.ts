@@ -55,4 +55,5 @@ export interface AgentLlmAccess {
   baseUrl: string
   apiKey: string
   smallModel: string // a fast/cheap model for extraction (e.g. nicosoft/claude-haiku-4-5-...)
+  searchModel: string // a model that supports the server web_search tool (WebSearch's secondary request)
 }

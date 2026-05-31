@@ -13,6 +13,7 @@ import { readTool } from './tools/read'
 import { taskTool } from './tools/task'
 import { todoTool } from './tools/todo'
 import { webFetchTool } from './tools/web-fetch'
+import { webSearchTool } from './tools/web-search'
 import { writeTool } from './tools/write'
 
 export const CORE_TOOLS: readonly Tool[] = [
@@ -25,6 +26,7 @@ export const CORE_TOOLS: readonly Tool[] = [
   grepTool,
   bashTool,
   webFetchTool,
+  webSearchTool,
   todoTool,
   taskTool,
 ] as unknown as Tool[]
