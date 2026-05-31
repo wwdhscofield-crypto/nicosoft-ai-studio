@@ -8,7 +8,7 @@
 //   serialized to a text transcript first (capped), so the summary call never carries dangling
 //   tool_use blocks and can't itself overflow.
 
-import { callWithTools } from './llm'
+import { collectTurn } from './llm'
 import type { AgentMessage, ToolResultBlock, Usage } from './types'
 
 const COMPACTABLE_TOOLS = new Set(['Read', 'Bash', 'Grep', 'Glob', 'Edit', 'Write', 'MultiEdit', 'LS'])
@@ -156,7 +156,7 @@ export interface CompactConfig {
 export async function autocompact(messages: AgentMessage[], config: CompactConfig): Promise<AgentMessage[]> {
   try {
     const transcript = messagesToTranscript(messages)
-    const turn = await callWithTools({
+    const turn = await collectTurn({
       baseUrl: config.baseUrl,
       apiKey: config.apiKey,
       model: config.model, // session model — quality over cost

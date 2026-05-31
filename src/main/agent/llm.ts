@@ -1,16 +1,10 @@
 // Anthropic tool-use LLM call for the agent loop. Unlike llm/anthropic.ts (plain text chat), this
-// sends a `tools` param and assembles streamed tool_use blocks into a full assistant turn. Reuses
-// the shared SSE plumbing (openStream/iterSSE). See docs/nicosoft-studio/12-hex-coding-agent.md §2.4.
+// sends a `tools` param and YIELDS each tool_use block as it finishes streaming (so the loop can
+// start executing it before the turn completes), returning the full assistant turn at the end.
+// Reuses the shared SSE plumbing. See docs/nicosoft-studio/12-hex-coding-agent.md §2.4.
 
 import { iterSSE, openStream, parseJSON, toLlmError } from '../llm/_shared'
-import type {
-  AgentMessage,
-  AssistantTurn,
-  StopReason,
-  TextBlock,
-  ToolSchema,
-  ToolUseBlock,
-} from './types'
+import type { AgentMessage, AssistantTurn, StopReason, TextBlock, ToolSchema, ToolUseBlock } from './types'
 
 const PROVIDER = 'anthropic'
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -26,13 +20,13 @@ export interface AgentLlmRequest {
   signal?: AbortSignal
 }
 
-// Streaming events surfaced to the caller (UI): text deltas + tool-call lifecycle.
+// Text/tool-call lifecycle events surfaced to the caller for UI progress (not the loop's data path —
+// the loop drives execution off the YIELDED tool_use blocks).
 export type AgentLlmEvent =
   | { type: 'text'; delta: string }
   | { type: 'tool_use_start'; id: string; name: string }
   | { type: 'tool_use_input'; id: string; delta: string }
 
-// The subset of Anthropic SSE event fields we read. Everything else is ignored.
 interface StreamEvent {
   type: string
   index?: number
@@ -44,17 +38,17 @@ interface StreamEvent {
   usage?: { output_tokens?: number }
 }
 
-// Per-index accumulator. tool_use input streams as partial_json string fragments that only become
-// valid JSON once concatenated — never parse a fragment alone.
+// Per-index accumulator. tool_use input streams as partial_json fragments valid only once concatenated.
 type Accum =
   | { type: 'text'; text: string }
-  | { type: 'tool_use'; id: string; name: string; json: string }
+  | { type: 'tool_use'; id: string; name: string; json: string; input?: Record<string, unknown> }
 
-// POST /v1/messages (Anthropic protocol) with tools, stream the reply, assemble the assistant turn.
-export async function callWithTools(
+// POST /v1/messages (Anthropic protocol) with tools. Yields each completed tool_use block as it
+// finishes (content_block_stop); returns the assembled AssistantTurn when the stream ends.
+export async function* callWithTools(
   req: AgentLlmRequest,
   onEvent?: (e: AgentLlmEvent) => void,
-): Promise<AssistantTurn> {
+): AsyncGenerator<ToolUseBlock, AssistantTurn, void> {
   const url = `${req.baseUrl.replace(/\/$/, '')}/v1/messages`
   const body = {
     model: req.model,
@@ -75,7 +69,7 @@ export async function callWithTools(
     signal: req.signal,
   })
 
-  const blocks: Accum[] = []
+  const blocks: (Accum | undefined)[] = []
   let stopReason: StopReason = null
   let inTokens = 0
   let outTokens = 0
@@ -98,10 +92,8 @@ export async function callWithTools(
           if (cb?.type === 'text') {
             blocks[idx] = { type: 'text', text: cb.text ?? '' }
           } else if (cb?.type === 'tool_use') {
-            // Synthesize id/name if malformed so the block still round-trips and gets a paired
-            // tool_result — silently dropping it can empty the turn (→ 400 / false-complete). The
-            // random suffix keeps a synthetic id collision-proof across parent + parallel sub-agents
-            // (they share a session dir for persisted results).
+            // Synthesize id/name if malformed so the block still round-trips + gets a paired
+            // tool_result; random suffix keeps synthetic ids collision-proof across parent + sub-agents.
             const id = cb.id || `synthetic_${idx}_${Math.random().toString(36).slice(2, 8)}`
             const name = cb.name || 'unknown'
             blocks[idx] = { type: 'tool_use', id, name, json: '' }
@@ -115,13 +107,18 @@ export async function callWithTools(
           if (d?.type === 'text_delta' && blk?.type === 'text' && typeof d.text === 'string') {
             blk.text += d.text
             onEvent?.({ type: 'text', delta: d.text })
-          } else if (
-            d?.type === 'input_json_delta' &&
-            blk?.type === 'tool_use' &&
-            typeof d.partial_json === 'string'
-          ) {
+          } else if (d?.type === 'input_json_delta' && blk?.type === 'tool_use' && typeof d.partial_json === 'string') {
             blk.json += d.partial_json
             onEvent?.({ type: 'tool_use_input', id: blk.id, delta: d.partial_json })
+          }
+          break
+        }
+        case 'content_block_stop': {
+          const blk = blocks[idx]
+          if (blk?.type === 'tool_use') {
+            const input = (parseJSON(blk.json || '{}') as Record<string, unknown> | null) ?? {}
+            blk.input = input // keep for the final content assembly
+            yield { type: 'tool_use', id: blk.id, name: blk.name, input } // ← stream: loop starts execution
           }
           break
         }
@@ -137,17 +134,24 @@ export async function callWithTools(
     throw toLlmError(PROVIDER, err)
   }
 
-  // Finalize: parse each tool_use's accumulated JSON into an object.
+  // Assemble the full turn in index order.
   const content: Array<TextBlock | ToolUseBlock> = []
   for (const b of blocks) {
     if (!b) continue
-    if (b.type === 'text') {
-      content.push({ type: 'text', text: b.text })
-    } else {
-      const input = (parseJSON(b.json || '{}') as Record<string, unknown> | null) ?? {}
-      content.push({ type: 'tool_use', id: b.id, name: b.name, input })
-    }
+    if (b.type === 'text') content.push({ type: 'text', text: b.text })
+    else content.push({ type: 'tool_use', id: b.id, name: b.name, input: b.input ?? {} })
   }
-
   return { content, stopReason, usage: { inTokens, outTokens, cacheReadTokens, cacheCreationTokens } }
+}
+
+// Drain the generator to a full turn — for callers that don't stream tool execution (autocompact).
+export async function collectTurn(
+  req: AgentLlmRequest,
+  onEvent?: (e: AgentLlmEvent) => void,
+): Promise<AssistantTurn> {
+  const gen = callWithTools(req, onEvent)
+  for (;;) {
+    const step = await gen.next()
+    if (step.done) return step.value
+  }
 }

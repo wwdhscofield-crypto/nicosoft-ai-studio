@@ -1,7 +1,7 @@
-// Tool execution engine: a per-tool pipeline (schema-validate → value-validate → permission → call →
-// serialize) wrapped by a concurrency scheduler (partition contiguous same-safety blocks; read-only
-// batches run in parallel, writes serialize). Every tool_use yields exactly one tool_result with the
-// same id — the invariant that keeps the conversation valid. See §2.3 + §B.
+// Tool execution: a per-tool pipeline (schema-validate → value-validate → permission → call →
+// serialize → persist-if-large) + a StreamingToolExecutor that schedules tools AS they finish
+// streaming (read-only batches run in parallel, a write waits for the execution set to drain). Every
+// tool_use yields exactly one tool_result with the same id. See §2.3 + §B.
 
 import type { ZodError } from 'zod'
 import type { AgentContext } from './context'
@@ -52,7 +52,7 @@ async function checkPermission(
 }
 
 // Run one tool_use through the full pipeline. Always resolves to exactly one tool_result.
-async function runOne(
+export async function runOne(
   toolUse: ToolUseBlock,
   tools: readonly Tool[],
   ctx: AgentContext,
@@ -66,10 +66,8 @@ async function runOne(
   if (!parsed.success) return errorResult(toolUse.id, `InputValidationError: ${formatZodError(parsed.error)}`)
   const input = parsed.data as Record<string, unknown>
 
-  // 2-4. Value-validation → permission → execute → serialize, ALL wrapped: a throw anywhere — a
-  // tool's validateInput, the permission hook rejecting (e.g. the UI IPC channel dropped / user
-  // closed the dialog), or call itself — must still yield exactly one tool_result, or the dangling
-  // tool_use wedges the conversation (§3.5).
+  // 2-5. value-validate → permission → call → serialize → persist, ALL wrapped: any throw must still
+  // yield exactly one tool_result or the dangling tool_use wedges the conversation (§3.5).
   try {
     const valid = await tool.validateInput(input, ctx)
     if (!valid.result) return errorResult(toolUse.id, valid.message)
@@ -85,57 +83,62 @@ async function runOne(
   }
 }
 
-// Partition into maximal contiguous runs of the same concurrency-safety, preserving order. A throw
-// in isConcurrencySafe (or unparsable input) is treated as unsafe — conservative.
-function partition(
-  toolUses: ToolUseBlock[],
-  tools: readonly Tool[],
-): Array<{ safe: boolean; items: ToolUseBlock[] }> {
-  const groups: Array<{ safe: boolean; items: ToolUseBlock[] }> = []
-  for (const tu of toolUses) {
-    const tool = findTool(tools, tu.name)
-    let safe = false
-    try {
-      const parsed = tool?.inputSchema.safeParse(tu.input)
-      safe = tool != null && parsed?.success === true && tool.isConcurrencySafe(parsed.data)
-    } catch {
-      safe = false
-    }
-    const last = groups[groups.length - 1]
-    if (last && last.safe === safe) last.items.push(tu)
-    else groups.push({ safe, items: [tu] })
+// Whether a tool_use is concurrency-safe (read-only). Unparsable input or a throw → unsafe.
+export function isToolSafe(toolUse: ToolUseBlock, tools: readonly Tool[]): boolean {
+  const tool = findTool(tools, toolUse.name)
+  try {
+    const parsed = tool?.inputSchema.safeParse(toolUse.input)
+    return tool != null && parsed?.success === true && tool.isConcurrencySafe(parsed.data)
+  } catch {
+    return false
   }
-  return groups
 }
 
-// Map over items with a concurrency cap, preserving input order in the output.
-async function mapWithCap<T, R>(items: T[], cap: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length)
-  let next = 0
-  const worker = async (): Promise<void> => {
-    while (next < items.length) {
-      const i = next++
-      results[i] = await fn(items[i])
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(cap, items.length) }, () => worker()))
-  return results
-}
+// Schedules tools as they finish streaming. Read-only tools batch in parallel (cap 10); a write waits
+// for the execution set to be empty. Results are returned in original (add) order on drain().
+export class StreamingToolExecutor {
+  private readonly order: ToolUseBlock[] = []
+  private readonly results = new Map<string, ToolResultBlock>()
+  private readonly executing = new Map<string, { safe: boolean; promise: Promise<void> }>()
+  private readonly queue: ToolUseBlock[] = []
 
-// Execute all tool_use blocks → tool_result blocks in original order. Read-only batches run in
-// parallel (cap 10); writes serialize.
-export async function runTools(
-  toolUses: ToolUseBlock[],
-  tools: readonly Tool[],
-  ctx: AgentContext,
-): Promise<ToolResultBlock[]> {
-  const out: ToolResultBlock[] = []
-  for (const group of partition(toolUses, tools)) {
-    if (group.safe && group.items.length > 1) {
-      out.push(...(await mapWithCap(group.items, MAX_CONCURRENCY, (tu) => runOne(tu, tools, ctx))))
-    } else {
-      for (const tu of group.items) out.push(await runOne(tu, tools, ctx))
+  constructor(
+    private readonly tools: readonly Tool[],
+    private readonly ctx: AgentContext,
+  ) {}
+
+  add(block: ToolUseBlock): void {
+    this.order.push(block)
+    this.queue.push(block)
+    this.pump()
+  }
+
+  private pump(): void {
+    while (this.queue.length > 0) {
+      const block = this.queue[0]
+      const safe = isToolSafe(block, this.tools)
+      const allExecutingSafe = [...this.executing.values()].every((e) => e.safe)
+      // A write needs an empty execution set; a read joins a safe batch up to the cap.
+      const canRun =
+        this.executing.size === 0 || (safe && allExecutingSafe && this.executing.size < MAX_CONCURRENCY)
+      if (!canRun) break
+      this.queue.shift()
+      const promise = runOne(block, this.tools, this.ctx).then((r) => {
+        this.results.set(block.id, r)
+        this.executing.delete(block.id)
+        this.pump() // a slot freed — schedule whatever was waiting
+      })
+      this.executing.set(block.id, { safe, promise })
     }
   }
-  return out
+
+  // Wait for everything added to finish; results in original order.
+  async drain(): Promise<ToolResultBlock[]> {
+    while (this.queue.length > 0 || this.executing.size > 0) {
+      const running = [...this.executing.values()].map((e) => e.promise)
+      if (running.length > 0) await Promise.race(running)
+      this.pump()
+    }
+    return this.order.map((b) => this.results.get(b.id) as ToolResultBlock)
+  }
 }

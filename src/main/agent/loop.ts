@@ -13,8 +13,8 @@ import {
   SYSTEM_PROMPT_RESERVE,
   tokensFromUsage,
 } from './compact'
-import type { AgentContext } from './context'
-import { runTools } from './execution'
+import type { AgentContext, SpawnSubAgent } from './context'
+import { StreamingToolExecutor } from './execution'
 import { callWithTools, type AgentLlmEvent } from './llm'
 import type { Tool } from './tool'
 import type { AgentMessage, AssistantTurn, ToolSchema, ToolUseBlock, Usage } from './types'
@@ -78,14 +78,16 @@ export async function* runAgent(
   const threshold = autocompactThreshold(contextWindow)
   let reactiveCompacted = false // bounce guard: if a send overflows right after a reactive compact, fail
 
-  // The context tools run in, augmented with the Task-tool sub-agent spawner: an isolated inner loop
-  // with the same LLM config but no Task tool (recursion bounded to one level) and a fresh
-  // readFileState/todos, sharing cwd / signal / permission with the parent. Inside a sub-agent
-  // ctx.spawnSubAgent is already undefined (and Task is filtered out), so this no-ops there.
+  // Sub-agent spawner factory for the Task tool. Builds an isolated inner loop with the same LLM
+  // config but no Task tool (recursion bounded to one level) and a fresh readFileState/todos,
+  // sharing cwd / permission with the parent. The TURN's abort signal is threaded in (see the
+  // per-turn AbortController in the loop) so a reactive-compaction abort tears down an in-flight
+  // child too, instead of leaving it running detached. Inside a sub-agent spawnSubAgent is undefined
+  // (and Task is filtered out), so it can't recurse further.
   const subAgentTools = tools.filter((t) => t.name !== 'Task')
-  const execCtx: AgentContext = {
-    ...ctx,
-    spawnSubAgent: async ({ prompt }) => {
+  const makeSpawnSubAgent =
+    (signal: AbortSignal): SpawnSubAgent =>
+    async ({ prompt }) => {
       const sub = runAgent({
         baseUrl,
         apiKey,
@@ -93,7 +95,7 @@ export async function* runAgent(
         system: SUBAGENT_SYSTEM,
         messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
         tools: subAgentTools,
-        ctx: { ...ctx, readFileState: new Map(), todos: [], spawnSubAgent: undefined },
+        ctx: { ...ctx, signal, readFileState: new Map(), todos: [], spawnSubAgent: undefined },
         maxTokens,
         maxTurns: Math.min(maxTurns, SUBAGENT_MAX_TURNS),
       })
@@ -117,8 +119,7 @@ export async function* runAgent(
         return `${last ? `${last}\n\n` : ''}(Note: sub-agent was aborted before completing.)`
       }
       return last
-    },
-  }
+    }
 
   while (true) {
     // Layer 2: microcompact every turn (clear old tool-result content, keep the recent 5) — cheap,
@@ -143,14 +144,38 @@ export async function* runAgent(
       }
     }
 
-    let assistant: AssistantTurn
+    // assigned in the stream loop below; the catch only continues or throws, so it's always set after.
+    let assistant!: AssistantTurn
+    // Per-turn abort, child of ctx.signal. Aborted in the catch so a failed turn's in-flight tools —
+    // already executing as they streamed in — are torn down instead of running detached. Without it,
+    // an overflow mid-stream → reactive compaction → retry re-issues the same tool_use blocks and
+    // they execute a SECOND time (bash / Write double-fire). AbortSignal.any keeps the parent
+    // ctx.signal wired through, and the composite is GC'd once the turn ends.
+    const turnAbort = new AbortController()
+    const turnSignal = AbortSignal.any([ctx.signal, turnAbort.signal])
+    const turnCtx: AgentContext = { ...ctx, signal: turnSignal, spawnSubAgent: makeSpawnSubAgent(turnSignal) }
+    const streamExec = new StreamingToolExecutor(tools, turnCtx)
     try {
-      assistant = await callWithTools(
+      // Stream the turn: each tool_use block is yielded as it finishes, so execution starts
+      // immediately (read-only tools batch in parallel) instead of waiting for the whole message.
+      const gen = callWithTools(
         { baseUrl, apiKey, model, system, messages, tools: toolSchemas, maxTokens, signal: ctx.signal },
         params.onStream,
       )
+      for (;;) {
+        const step = await gen.next()
+        if (step.done) {
+          assistant = step.value
+          break
+        }
+        streamExec.add(step.value)
+      }
       reactiveCompacted = false // a successful send clears the bounce guard
     } catch (err) {
+      // Stop this turn's in-flight tools (bash gets SIGTERM, queued tools see aborted and no-op)
+      // before retrying or propagating — otherwise they run detached and, on a reactive-compaction
+      // retry, get re-issued and executed twice.
+      turnAbort.abort()
       // Reactive compaction: an overflow status (400/413) that slipped past the proactive check →
       // compact once and retry. Gate on STATUS + a "haven't already compacted for this send" guard,
       // NOT on the error message (a proxy may reshape it). If it overflows again right after a reactive
@@ -182,10 +207,9 @@ export async function* runAgent(
     const toolUses = assistant.content.filter((b): b is ToolUseBlock => b.type === 'tool_use')
     if (toolUses.length === 0) return { reason: 'completed', messages, turns }
 
-    // Append tool_results immediately after the assistant turn — keeps tool_use/tool_result pairing
-    // valid by construction. (A real mid-crash repair pass — ensurePairing — lands in H2.) Push and
-    // yield the SAME object so a future ensurePairing rewrite stays consistent across both views.
-    const results = await runTools(toolUses, tools, execCtx)
+    // The tools were already executing as they streamed in (StreamingToolExecutor); drain for results
+    // in original order. Pairing holds by construction (one result per tool_use, same id, in order).
+    const results = await streamExec.drain()
     const userMsg: AgentMessage = { role: 'user', content: results }
     messages.push(userMsg)
     yield { type: 'tool_results', message: userMsg }
