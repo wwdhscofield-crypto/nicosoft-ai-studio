@@ -199,22 +199,23 @@ const ENDPOINT_HEALTH: EndpointHealth[] = [
   { family: 'Gemini', status: 'healthy', models: 3, checked: '1m ago' }
 ]
 
+// All three route through nsai (api.nicosoft.ai) — one key, three protocols, slugs per protocol.
+// The real key lives in the OS keychain (Batch 2), never in source; this masked tail is display-only.
 const ENDPOINTS: EndpointRow[] = [
-  { name: 'Anthropic', proto: 'anthropic', status: 'healthy', models: ['claude-haiku-4', 'claude-sonnet-4.6'], key: '••••••7f2a' },
-  { name: 'OpenAI', proto: 'openai', status: 'healthy', models: ['gpt-5-mini', 'gpt-5'], key: '••••••a91c' },
-  { name: 'Google Gemini', proto: 'gemini', status: 'healthy', models: ['gemini-2.5-flash', 'gemini-2.5-pro', 'imagen-4'], key: '••••••3d80' },
-  { name: 'My Gateway', proto: 'openai', status: 'degraded', models: ['nicosoft/claude-opus-4-7', 'nicosoft/gpt-5.4', 'nicosoft/claude-sonnet-4-6', 'nicosoft/gpt-5.4-mini'], key: '••••••0c4e' }
+  { name: 'Anthropic', proto: 'anthropic', status: 'healthy', models: ['nicosoft/claude-sonnet-4-6', 'nicosoft/claude-haiku-4-5-20251001'], key: '••••••8lHs', baseURL: 'https://api.nicosoft.ai' },
+  { name: 'OpenAI', proto: 'openai', status: 'healthy', models: ['nicosoft/gpt-5.4-mini', 'nicosoft/gpt-5.4'], key: '••••••8lHs', baseURL: 'https://api.nicosoft.ai' },
+  { name: 'Google Gemini', proto: 'gemini', status: 'healthy', models: ['gemini-2.5-flash', 'gemini-2.5-pro', 'imagen-4'], key: '••••••8lHs', baseURL: 'https://api.nicosoft.ai' }
 ]
 
 const ROLE_BINDINGS: RoleBinding[] = [
-  { id: 'atlas', family: 'anthropic', model: 'claude-haiku-4' },
-  { id: 'iris', family: 'openai', model: 'gpt-5-mini' },
-  { id: 'hex', family: 'anthropic', model: 'claude-sonnet-4.6' },
+  { id: 'atlas', family: 'anthropic', model: 'nicosoft/claude-haiku-4-5-20251001' },
+  { id: 'iris', family: 'openai', model: 'nicosoft/gpt-5.4-mini' },
+  { id: 'hex', family: 'anthropic', model: 'nicosoft/claude-sonnet-4-6' },
   { id: 'lyra', family: 'gemini', model: 'imagen-4' },
   { id: 'echo', family: 'gemini', model: 'gemini-2.5-flash' },
   { id: 'sage', family: 'gemini', model: 'gemini-2.5-flash' },
-  { id: 'quant', family: 'openai', model: 'gpt-5' },
-  { id: 'mercury', family: 'openai', model: 'gpt-5-mini' }
+  { id: 'quant', family: 'openai', model: 'nicosoft/gpt-5.4' },
+  { id: 'mercury', family: 'openai', model: 'nicosoft/gpt-5.4-mini' }
 ]
 
 const GREETINGS: Record<string, Greeting> = {
