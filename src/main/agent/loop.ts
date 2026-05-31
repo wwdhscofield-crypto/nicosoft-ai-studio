@@ -39,8 +39,8 @@ export interface RunAgentParams {
   maxTokens?: number
   maxTurns?: number
   contextWindow?: number // model's context window, drives the autocompact threshold (default 200K)
-  smallModel?: string // fast/cheap model for WebFetch extraction; default below
-  searchModel?: string // model that supports server web_search, for WebSearch; default below
+  smallModel?: string // model for WebFetch extraction; defaults to the main model
+  searchModel?: string // model for WebSearch's server web_search call; defaults to the main model
   onStream?: (e: AgentLlmEvent) => void // forwarded straight from the LLM call (text + tool deltas)
 }
 
@@ -61,12 +61,6 @@ const SUBAGENT_SYSTEM =
 // Sub-agents get a lower turn cap than the parent to bound the fan-out blast radius (a runaway child
 // can't burn the parent's full budget).
 const SUBAGENT_MAX_TURNS = 20
-
-// Default fast/cheap model for WebFetch content extraction. Anthropic-protocol so it routes the same.
-const DEFAULT_SMALL_MODEL = 'nicosoft/claude-haiku-4-5-20251001'
-// WebSearch's secondary request needs a model that supports the server web_search tool — Haiku 4.5 is
-// rejected for it on the OAuth channel, so default to Sonnet (verified working, cheaper than Opus).
-const DEFAULT_SEARCH_MODEL = 'nicosoft/claude-sonnet-4-6'
 
 // tool_search variant used when tools opt into deferral. Regex flavour (the model builds a Python
 // regex over tool names/descriptions); bm25 is the alternative.
@@ -106,11 +100,12 @@ export async function* runAgent(
 ): AsyncGenerator<AgentEvent, AgentResult, void> {
   const { baseUrl, apiKey, model, system, tools } = params
   const maxTokens = params.maxTokens ?? 8192
-  const smallModel = params.smallModel ?? DEFAULT_SMALL_MODEL
-  const searchModel = params.searchModel ?? DEFAULT_SEARCH_MODEL
-  // Augment the caller's context with LLM access so tools (WebFetch / WebSearch) can call a model —
-  // defaults to the agent's own creds + a fast extraction model + a search-capable model; the caller
-  // can override ctx.llm.
+  // Tools that call a model (WebFetch extraction, WebSearch's secondary request) default to the MAIN
+  // model — always available and protocol-compatible — so the agent isn't pinned to any provider's
+  // model slugs and works against a raw Anthropic endpoint too. The caller can pass smallModel /
+  // searchModel (e.g. a cheaper Haiku / Sonnet, where configured) to override.
+  const smallModel = params.smallModel ?? model
+  const searchModel = params.searchModel ?? model
   const ctx: AgentContext = { ...params.ctx, llm: params.ctx.llm ?? { baseUrl, apiKey, smallModel, searchModel } }
   const maxTurns = params.maxTurns ?? 50
   const contextWindow = params.contextWindow ?? 200_000
