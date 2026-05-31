@@ -20,6 +20,12 @@ import { fileToImage, imagesFromClipboard, type ImageAttachment } from '@/lib/im
 import { getThinkingCapability, resolveThinking, type ThinkingDepth } from '@/lib/thinking'
 import type { Expert } from '@/types'
 
+// Compact token readout: K below 1M, M at/above it (1M, 1.05M, 1.5M — trailing zeros trimmed).
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${parseFloat((n / 1_000_000).toFixed(2))}M`
+  return `${parseFloat((n / 1000).toFixed(1))}K`
+}
+
 /* — One message in the list (user or assistant), with optional images — */
 function ChatSegment({
   msg,
@@ -161,7 +167,7 @@ function Composer({
             <ThinkingPicker family={b.family} model={b.model} depth={effectiveDepth} onChange={b.onDepth} disabled={!ready} />
             {b.contextLength > 0 ? (
               <span className={'cmp-tokens' + (tokenAmber ? ' amber' : '')}>
-                {(usedTokens / 1000).toFixed(1)}K / {Math.round(b.contextLength / 1000)}K
+                {fmtTokens(usedTokens)} / {fmtTokens(b.contextLength)}
               </span>
             ) : null}
           </div>
