@@ -79,6 +79,11 @@ const api = {
     onPermissionCancel: (cb: (d: AgentPermissionCancel) => void): (() => void) => agentListen('agent:permission:cancel', cb),
     onDone: (cb: (d: AgentDone) => void): (() => void) => agentListen('agent:done', cb),
     onError: (cb: (d: AgentErrorDto) => void): (() => void) => agentListen('agent:error', cb)
+  },
+
+  project: {
+    pick: (): Promise<string | null> => ipcRenderer.invoke('project:pick'),
+    branch: (cwd: string): Promise<string | null> => ipcRenderer.invoke('project:branch', cwd)
   }
 }
 

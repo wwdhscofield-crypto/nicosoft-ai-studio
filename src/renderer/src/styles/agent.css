@@ -138,25 +138,29 @@
 .ap-deny kbd { background: var(--bg-3); }
 .ap-allow kbd { background: rgba(255, 255, 255, 0.18); }
 
-/* — cwd bar + composer for the Hex agent view — */
-.hex-cwd {
+/* — Project-path selector: Claude-style chip row above the composer (no icon / divider / worktree) — */
+.path-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--border-1);
-  font-size: 12px;
-  color: var(--text-3);
+  gap: 6px;
+  padding: 2px 2px 8px;
+  width: 100%;
+  text-align: left;
+  overflow: hidden;
 }
-.hex-cwd input {
-  flex: 1;
+.path-chip {
   font-family: var(--mono);
-  font-size: 12px;
-  color: var(--text-2);
+  font-size: 11.5px;
+  color: var(--text-3);
   background: var(--bg-2);
   border: 1px solid var(--border-1);
   border-radius: var(--r-sm);
-  padding: 5px 9px;
-  outline: none;
+  padding: 3px 8px;
+  white-space: nowrap;
+  flex: none;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.hex-cwd input:focus { border-color: var(--border-2); }
+.path-bar:hover .path-chip { color: var(--text-2); border-color: var(--border-2); }
+.path-chip.muted { color: var(--text-4); }

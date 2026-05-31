@@ -13,11 +13,44 @@ import { ToolBubble } from '@/components/tool-bubble'
 import { useHex, type HexMessage } from '@/stores/hex'
 import type { Expert } from '@/types'
 
-const FolderIcon = (): ReactElement => (
-  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-  </svg>
-)
+// Project-path selector — Claude-style chip row (Local · folder · branch) above the composer. No
+// icon / divider / worktree (per the design). Clicking opens a native folder picker.
+function PathBar(): ReactElement {
+  const cwd = useHex((s) => s.cwd)
+  const setCwd = useHex((s) => s.setCwd)
+  const [branch, setBranch] = useState<string | null>(null)
+  useEffect(() => {
+    let alive = true
+    if (!cwd) {
+      setBranch(null)
+      return
+    }
+    void window.api.project.branch(cwd).then((b) => {
+      if (alive) setBranch(b)
+    })
+    return () => {
+      alive = false
+    }
+  }, [cwd])
+  const pick = async (): Promise<void> => {
+    const dir = await window.api.project.pick()
+    if (dir) setCwd(dir)
+  }
+  const name = cwd ? (cwd.split('/').filter(Boolean).pop() ?? cwd) : null
+  return (
+    <button className="path-bar" onClick={() => void pick()} title={cwd || 'Choose a project folder'}>
+      {name ? (
+        <>
+          <span className="path-chip">Local</span>
+          <span className="path-chip">{name}</span>
+          {branch ? <span className="path-chip">{branch}</span> : null}
+        </>
+      ) : (
+        <span className="path-chip muted">Choose a project folder…</span>
+      )}
+    </button>
+  )
+}
 
 function HexSegment({ msg, expert }: { msg: HexMessage; expert: Expert }): ReactElement {
   const isUser = msg.role === 'user'
@@ -52,14 +85,18 @@ export function HexAgentView({ expert, onOpenSettings }: { expert: Expert; onOpe
     let alive = true
     void window.api.endpoints.list().then((eps) => {
       if (!alive) return
+      // Hex's loop speaks the Anthropic Messages protocol — pick the first enabled, keyed endpoint on
+      // that protocol (any provider's Anthropic-compatible endpoint, e.g. a gateway) and use its
+      // configured model. The model itself can be anything the endpoint serves.
       const ep = eps.find((e) => e.enabled && e.hasKey && e.protocol === 'anthropic')
-      if (ep) setEndpoint({ id: ep.id, model: ep.defaultModel || expert.model || '' })
+      const model = ep?.defaultModel || ep?.availableModels?.[0]
+      if (ep && model) setEndpoint({ id: ep.id, model })
       else setNoEndpoint(true)
     })
     return () => {
       alive = false
     }
-  }, [expert.model])
+  }, [])
 
   useEffect(() => {
     const el = listRef.current
@@ -75,16 +112,6 @@ export function HexAgentView({ expert, onOpenSettings }: { expert: Expert; onOpe
 
   return (
     <div className="main-col">
-      <div className="hex-cwd">
-        <FolderIcon />
-        <input
-          placeholder="/path/to/your/project — Hex's working directory"
-          value={hex.cwd}
-          onChange={(e) => hex.setCwd(e.target.value)}
-          spellCheck={false}
-        />
-      </div>
-
       <div className="msg-list" ref={listRef}>
         <div className="msg-inner">
           {hex.messages.map((m) => (
@@ -108,12 +135,13 @@ export function HexAgentView({ expert, onOpenSettings }: { expert: Expert; onOpe
           {noEndpoint ? (
             <div className="dock-banner">
               <Icons.plug size={15} style={{ color: 'var(--text-3)' }} />
-              <span>Add an Anthropic endpoint with an API key to run Hex</span>
+              <span>Configure an endpoint and model to run Hex</span>
               <span className="db-arrow" onClick={onOpenSettings}>
                 Open settings <Icons.arrowRight size={13} />
               </span>
             </div>
           ) : null}
+          <PathBar />
           <div className="composer2">
             <textarea
               className="cmp-textarea"
@@ -122,7 +150,10 @@ export function HexAgentView({ expert, onOpenSettings }: { expert: Expert; onOpe
               placeholder={`Ask ${expert.name} to build, fix, or investigate — Enter to send`}
               onChange={(e) => setValue(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
+                // Enter sends, Shift+Enter newlines; never submit mid-IME-composition (CJK candidate
+                // selection) — nativeEvent.isComposing / keyCode 229 (older Firefox) flag it.
+                const native = e.nativeEvent as KeyboardEvent
+                if (e.key === 'Enter' && !e.shiftKey && !native.isComposing && native.keyCode !== 229) {
                   e.preventDefault()
                   send()
                 }

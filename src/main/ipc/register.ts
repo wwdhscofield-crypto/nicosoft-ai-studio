@@ -1,5 +1,6 @@
 import { registerAgentHandlers } from './agent.handler'
 import { registerEndpointHandlers } from './endpoints.handler'
+import { registerProjectHandlers } from './project.handler'
 import { registerSettingsHandlers } from './settings.handler'
 import { registerChatHandlers } from './chat.handler'
 
@@ -9,4 +10,5 @@ export function registerIpc(): void {
   registerSettingsHandlers()
   registerChatHandlers()
   registerAgentHandlers()
+  registerProjectHandlers()
 }
