@@ -150,3 +150,40 @@ export interface RoleStateDto {
   enabled: boolean
   selfLearningEnabled: boolean
 }
+
+// === Conversations (persisted chat threads) ===
+export interface MessageAttachmentDto {
+  url: string
+  name?: string
+  mime?: string
+}
+export interface ConversationDto {
+  id: string
+  kind: string // single | multi
+  primaryRoleId: string | null
+  title: string | null
+  createdAt: string
+  updatedAt: string
+}
+export interface ConversationCreateDto {
+  kind: string
+  primaryRoleId?: string
+  title?: string
+}
+export interface MessageDto {
+  id: string
+  conversationId: string
+  author: string // user | expert
+  expertId: string | null
+  model: string | null
+  content: string
+  attachments: MessageAttachmentDto[]
+  createdAt: string
+}
+export interface MessageAppendDto {
+  author: string
+  expertId?: string
+  model?: string
+  content: string
+  attachments?: MessageAttachmentDto[]
+}

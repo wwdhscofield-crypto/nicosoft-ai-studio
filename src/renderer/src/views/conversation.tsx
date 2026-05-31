@@ -78,8 +78,9 @@ function Composer({
   const taRef = useRef<HTMLTextAreaElement>(null)
   const [attach, setAttach] = useState<ImageAttachment[]>([])
 
-  const streaming = chat.streaming[expert.id] ?? false
-  const messages = chat.byExpert[expert.id] ?? []
+  const activeConv = chat.activeConv
+  const streaming = activeConv ? (chat.streaming[activeConv] ?? false) : false
+  const messages = activeConv ? (chat.byConversation[activeConv] ?? []) : []
   const usedTokens = messages.reduce((s, m) => s + m.text.length, 0) / 4 + value.length / 4
   const tokenAmber = b.contextLength > 0 && usedTokens / b.contextLength > 0.85
   const selectedEp = b.endpoints.find((e) => e.id === b.endpointId)
@@ -181,7 +182,7 @@ function Composer({
             <input ref={fileInputRef} type="file" accept="image/*" multiple hidden onChange={onPickFiles} />
             <div className="tb-spacer" />
             {streaming ? (
-              <button className="cmp-stop" onClick={() => chat.stop(expert.id)}>
+              <button className="cmp-stop" onClick={() => chat.stop()}>
                 <span className="stop-sq" /> Stop
               </button>
             ) : (
@@ -199,8 +200,9 @@ function Composer({
 /* — The full conversation view for a non-Hex role — */
 export function ChatView({ expert, onOpenSettings }: { expert: Expert; onOpenSettings?: () => void }): ReactElement {
   const chat = useChat()
-  const messages = chat.byExpert[expert.id] ?? []
-  const error = chat.error[expert.id]
+  const activeConv = chat.activeConv
+  const messages = activeConv ? (chat.byConversation[activeConv] ?? []) : []
+  const error = activeConv ? chat.error[activeConv] : null
   const listRef = useRef<HTMLDivElement>(null)
   const [value, setValue] = useState('')
   const [viewer, setViewer] = useState<{ items: ViewerImage[]; index: number } | null>(null)

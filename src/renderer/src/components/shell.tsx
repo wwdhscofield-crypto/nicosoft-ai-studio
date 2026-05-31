@@ -9,6 +9,7 @@ import { ConfirmDialog } from '@/components/dialogs'
 import { STUDIO_DATA } from '@/data/studio-data'
 import { useRoles } from '@/stores/roles'
 import type { Expert } from '@/types'
+import type { ConversationDto } from '@/lib/api'
 
 /* — Top bar: quiet right-aligned icon cluster, no border, no endpoint pills, no title.
    View-aware: a conversation view passes `workspace` to surface the panel toggle + actions. — */
@@ -155,6 +156,7 @@ function SideSectionHead({
 export function Sidebar({
   activeExpert,
   activeConv,
+  conversations,
   studioActive,
   extensionsActive,
   projectsActive,
@@ -171,6 +173,7 @@ export function Sidebar({
 }: {
   activeExpert?: string | null
   activeConv?: string | null
+  conversations: ConversationDto[]
   studioActive?: boolean
   extensionsActive?: boolean
   projectsActive?: boolean
@@ -185,7 +188,7 @@ export function Sidebar({
   onNewRole: () => void
   onNewConversation: () => void
 }): ReactElement {
-  const { EXPERTS, HISTORY, EXPERT_BY_ID } = STUDIO_DATA
+  const { EXPERTS, EXPERT_BY_ID } = STUDIO_DATA
   const roles = useRoles()
   const atlas = EXPERTS.find((e) => e.coordinator)
   const rest = EXPERTS.filter((e) => !e.coordinator && !roles.isDeleted(e.id))
@@ -249,24 +252,24 @@ export function Sidebar({
         <div className="side-divider" />
 
         <SideSectionHead label="History" collapsed={!histOpen} onToggle={() => setHistOpen((s) => !s)} />
-        {histOpen && (HISTORY.length === 0 ? (
-          <div className="empty-history">No conversations yet. Pick an expert above to start one.</div>
-        ) : HISTORY.map((group) => (
-          <div key={group.group}>
-            <div className="hist-group-label">{group.group}</div>
-            {group.items.map((item) => {
-              const e = EXPERT_BY_ID[item.expert]
+        {histOpen &&
+          (conversations.length === 0 ? (
+            <div className="empty-history">No conversations yet. Pick an expert above to start one.</div>
+          ) : (
+            conversations.map((c) => {
+              const e = c.primaryRoleId ? EXPERT_BY_ID[c.primaryRoleId] : null
               return (
-                <div key={item.id}
-                  className={"hist-row" + (activeConv === item.id ? " active" : "")}
-                  onClick={() => onSelectConv(item.id)}>
-                  <span className="hist-dot" style={{ background: e.color }} />
-                  <span className="hist-title">{item.title}</span>
+                <div
+                  key={c.id}
+                  className={'hist-row' + (activeConv === c.id ? ' active' : '')}
+                  onClick={() => onSelectConv(c.id)}
+                >
+                  <span className="hist-dot" style={{ background: e?.color ?? 'var(--text-4)' }} />
+                  <span className="hist-title">{c.title || 'Untitled'}</span>
                 </div>
               )
-            })}
-          </div>
-        )))}
+            })
+          ))}
       </div>
     </div>
   )

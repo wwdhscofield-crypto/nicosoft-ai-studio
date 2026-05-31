@@ -1,4 +1,5 @@
 import { registerAgentHandlers } from './agent.handler'
+import { registerConversationHandlers } from './conversations.handler'
 import { registerEndpointHandlers } from './endpoints.handler'
 import { registerProjectHandlers } from './project.handler'
 import { registerRoleHandlers } from './roles.handler'
@@ -13,4 +14,5 @@ export function registerIpc(): void {
   registerAgentHandlers()
   registerProjectHandlers()
   registerRoleHandlers()
+  registerConversationHandlers()
 }

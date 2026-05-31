@@ -16,12 +16,12 @@ import { ExpertDetail } from '@/views/expert'
 import { ChatView } from '@/views/conversation'
 import { HexAgentView } from '@/views/hex'
 import { WorkspaceDrawer } from '@/views/workspace'
+import { useChat } from '@/stores/chat'
 
 const LS_KEY = 'nicosoft-studio-state-v1'
 
 interface PersistedState {
   view?: string
-  activeConv?: string | null
   activeExpert?: string
   settingsTab?: string
   drawerOpen?: boolean
@@ -44,11 +44,11 @@ function saveState(s: PersistedState): void {
 }
 
 export default function App(): ReactElement {
-  const { CONVERSATIONS, EXPERT_BY_ID } = STUDIO_DATA
+  const { EXPERT_BY_ID } = STUDIO_DATA
+  const chat = useChat()
   const persisted = loadState()
 
   const [view, setView] = useState<string>(persisted.view || 'onboarding')
-  const [activeConv, setActiveConv] = useState<string | null>(persisted.activeConv ?? 'oauth')
   const [activeExpert, setActiveExpert] = useState<string>(persisted.activeExpert || 'hex')
   const [settingsTab, setSettingsTab] = useState<string>(persisted.settingsTab || 'endpoints')
   const [cmdk, setCmdk] = useState(false)
@@ -57,8 +57,13 @@ export default function App(): ReactElement {
   const [activeProject, setActiveProject] = useState<string | null>(persisted.activeProject || null)
 
   useEffect(() => {
-    saveState({ view, activeConv, activeExpert, settingsTab, drawerOpen, activeProject })
-  }, [view, activeConv, activeExpert, settingsTab, drawerOpen, activeProject])
+    saveState({ view, activeExpert, settingsTab, drawerOpen, activeProject })
+  }, [view, activeExpert, settingsTab, drawerOpen, activeProject])
+
+  // Load the persisted conversation history once on mount.
+  useEffect(() => {
+    void chat.loadConversations()
+  }, [chat.loadConversations])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -76,15 +81,14 @@ export default function App(): ReactElement {
 
   const selectExpert = (id: string): void => {
     setActiveExpert(id)
-    setActiveConv(null)
+    chat.newConversation()
     setView('app')
     setCmdk(false)
   }
   const selectConv = (id: string): void => {
-    const c = CONVERSATIONS[id]
-    if (!c) return
-    setActiveConv(id)
-    setActiveExpert(c.expert)
+    const conv = chat.conversations.find((c) => c.id === id)
+    void chat.openConversation(id)
+    if (conv?.primaryRoleId) setActiveExpert(conv.primaryRoleId)
     setView('app')
     setCmdk(false)
   }
@@ -117,7 +121,6 @@ export default function App(): ReactElement {
   }
   const openProfile = (id: string): void => {
     setActiveExpert(id)
-    setActiveConv(null)
     setView('expert')
     setCmdk(false)
   }
@@ -135,7 +138,7 @@ export default function App(): ReactElement {
         <Onboarding
           onFinish={() => {
             setView('studio')
-            setActiveConv(null)
+            chat.newConversation()
             setActiveExpert('iris')
           }}
         />
@@ -159,13 +162,14 @@ export default function App(): ReactElement {
             onProjects={openProjects}
             onScheduled={openScheduled}
             activeExpert={navView ? null : activeExpert}
-            activeConv={navView ? null : activeConv}
+            activeConv={navView ? null : chat.activeConv}
+            conversations={chat.conversations}
             onSelectExpert={selectExpert}
             onOpenProfile={openProfile}
             onSelectConv={selectConv}
             onNewRole={() => setRoleDialog(true)}
             onNewConversation={() => {
-              setActiveConv(null)
+              chat.newConversation()
               setActiveExpert('iris')
               setView('app')
             }}

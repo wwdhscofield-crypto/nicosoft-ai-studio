@@ -18,7 +18,11 @@ import type {
   AgentErrorDto,
   RoleBindingDto,
   RoleBindingInput,
-  RoleStateDto
+  RoleStateDto,
+  ConversationDto,
+  ConversationCreateDto,
+  MessageDto,
+  MessageAppendDto
 } from '../main/ipc/contracts'
 
 // Typed bridge exposed to the renderer as `window.api`. Window controls (Batch 0) + Batch 1
@@ -100,6 +104,18 @@ const api = {
       roleId: string,
       state: { enabled: boolean; selfLearningEnabled: boolean }
     ): Promise<RoleStateDto> => ipcRenderer.invoke('roles:state:set', roleId, state)
+  },
+
+  conversations: {
+    list: (): Promise<ConversationDto[]> => ipcRenderer.invoke('conversations:list'),
+    create: (input: ConversationCreateDto): Promise<ConversationDto> =>
+      ipcRenderer.invoke('conversations:create', input),
+    messages: (convId: string): Promise<MessageDto[]> => ipcRenderer.invoke('conversations:messages', convId),
+    append: (convId: string, input: MessageAppendDto): Promise<MessageDto> =>
+      ipcRenderer.invoke('conversations:append', convId, input),
+    rename: (convId: string, title: string): Promise<void> =>
+      ipcRenderer.invoke('conversations:rename', convId, title),
+    remove: (convId: string): Promise<void> => ipcRenderer.invoke('conversations:remove', convId)
   }
 }
 

@@ -7,6 +7,7 @@ import { Icons } from '@/components/icons'
 import { Avatar } from '@/components/primitives'
 import { STUDIO_DATA } from '@/data/studio-data'
 import { useRoles } from '@/stores/roles'
+import { useChat } from '@/stores/chat'
 import type { Expert } from '@/types'
 import type { EndpointDto, EndpointInput, ModelInfo } from '@/lib/api'
 
@@ -299,18 +300,19 @@ export function CommandPalette({
   onStudio: () => void
   onNewRole: () => void
 }): ReactElement {
-  const { HISTORY, EXPERTS, EXPERT_BY_ID } = STUDIO_DATA
+  const { EXPERTS, EXPERT_BY_ID } = STUDIO_DATA
+  const chat = useChat()
   const roles = useRoles()
   const [q, setQ] = useState("")
   const [active, setActive] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   useEffect(() => { inputRef.current && inputRef.current.focus(); }, [])
 
-  const recents = HISTORY.flatMap((g) => g.items).slice(0, 4)
+  const recents = chat.conversations.slice(0, 4)
   const activeExperts = EXPERTS.filter((e) => !roles.isDeleted(e.id) && !roles.isDisabled(e.id))
   const rows: CmdkRow[] = []
   rows.push({ group: "Recent conversations" })
-  recents.forEach((c) => rows.push({ type: "conv", id: c.id, label: c.title, expert: c.expert }))
+  recents.forEach((c) => rows.push({ type: "conv", id: c.id, label: c.title ?? 'Untitled', expert: c.primaryRoleId ?? 'iris' }))
   rows.push({ group: "Roles" })
   activeExperts.forEach((e) => rows.push({ type: "expert", id: e.id, label: e.name, hint: e.specialty, avatar: e }))
   rows.push({ group: "Settings" })
