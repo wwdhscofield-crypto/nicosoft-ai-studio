@@ -94,12 +94,10 @@ export function HexAgentView({ expert, onOpenSettings }: { expert: Expert; onOpe
           ? 'Add an API key to this endpoint to run Hex'
           : !b.model
             ? 'Select a model to run Hex'
-            : !cwd
-              ? 'Choose a project folder for Hex to work in'
-              : null
-  // The cwd banner is a folder prompt (folder icon, no settings link); the rest are endpoint problems.
-  const bannerIsFolder = banner !== null && endpointReady && !cwd
-  const ready = b.loaded && banner === null
+            : null
+  // The banner only covers endpoint problems — a missing project folder is surfaced by the path bar's
+  // folder icon + the textarea placeholder, not a banner. But a run still needs a cwd, so `ready` keeps it.
+  const ready = b.loaded && banner === null && !!cwd
 
   // Hex defaults to medium thinking (a coding agent benefits from it); the picker writes the binding.
   const effectiveDepth = (b.depth || 'medium') as ThinkingDepth
@@ -167,17 +165,11 @@ export function HexAgentView({ expert, onOpenSettings }: { expert: Expert; onOpe
         <div className="input-dock-inner">
           {banner ? (
             <div className="dock-banner">
-              {bannerIsFolder ? (
-                <Icons.folder size={15} style={{ color: 'var(--text-3)' }} />
-              ) : (
-                <Icons.plug size={15} style={{ color: 'var(--text-3)' }} />
-              )}
+              <Icons.plug size={15} style={{ color: 'var(--text-3)' }} />
               <span>{banner}</span>
-              {bannerIsFolder ? null : (
-                <span className="db-arrow" onClick={onOpenSettings}>
-                  Open settings <Icons.arrowRight size={13} />
-                </span>
-              )}
+              <span className="db-arrow" onClick={onOpenSettings}>
+                Open settings <Icons.arrowRight size={13} />
+              </span>
             </div>
           ) : null}
           <PathBar cwd={cwd} onPick={(dir) => setCwd(expert.id, dir)} />
@@ -191,7 +183,11 @@ export function HexAgentView({ expert, onOpenSettings }: { expert: Expert; onOpe
               className="cmp-textarea"
               rows={1}
               value={value}
-              placeholder={`Ask ${expert.name} to build, fix, or investigate — Enter to send`}
+              placeholder={
+                !cwd && endpointReady
+                  ? 'Choose a project folder above to start'
+                  : `Ask ${expert.name} to build, fix, or investigate — Enter to send`
+              }
               onChange={(e) => setValue(e.target.value)}
               onPaste={onPaste}
               onKeyDown={(e) => {
