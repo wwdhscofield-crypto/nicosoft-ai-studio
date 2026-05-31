@@ -145,29 +145,29 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .main-row { flex: 1; display: flex; min-width: 0; min-height: 0; }
 
 /* Sidebar header strip — native macOS traffic lights sit at its top-left; whole strip drags */
+/* Sidebar header — native traffic lights live at the left (CSS leaves padding); the
+   new-conversation button is pinned to the right edge. No border (top blends into content). */
 .sidebar-header {
   height: 52px; flex: 0 0 52px;
-  display: flex; align-items: center; gap: 8px;
-  padding: 0 12px 0 78px;
-  border-bottom: 1px solid var(--border-1);
+  display: flex; align-items: center; justify-content: flex-end;
+  padding: 0 10px 0 78px;
   -webkit-app-region: drag;
   user-select: none;
 }
-.sidebar-header .app-name {
-  font-size: 13px; color: var(--text-2); font-weight: 500;
-  display: flex; align-items: center; gap: 8px; letter-spacing: -0.01em; white-space: nowrap;
+.sidebar-new {
+  width: 30px; height: 30px; border-radius: 7px;
+  display: grid; place-items: center;
+  color: var(--text-3);
+  transition: background 0.12s, color 0.12s;
+  -webkit-app-region: no-drag;
 }
-.sidebar-header .logo-mark {
-  width: 16px; height: 16px; border-radius: 5px; background: var(--accent);
-  display: grid; place-items: center; color: #fff; font-size: 10px; font-weight: 700;
-}
+.sidebar-new:hover { background: var(--bg-3); color: var(--text-1); }
 
 .topbar {
   height: 52px; flex: 0 0 52px;
   background: var(--bg-1);
-  border-bottom: 1px solid var(--border-1);
   display: flex; align-items: center;
-  padding: 0 14px; gap: 14px;
+  padding: 0 14px; gap: 8px;
   user-select: none;
   -webkit-app-region: drag;
 }

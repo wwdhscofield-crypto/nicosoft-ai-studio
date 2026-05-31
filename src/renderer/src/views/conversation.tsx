@@ -9,52 +9,6 @@ import { useRoles } from '@/stores/roles'
 import { Avatar, Segment, DispatchBadge } from '@/components/primitives'
 import type { Conversation, Expert } from '@/types'
 
-function ConversationHeader({
-  title,
-  subtitle,
-  onToggleDrawer,
-  drawerOpen
-}: {
-  title: string
-  subtitle?: string | null
-  onToggleDrawer?: (() => void) | null
-  drawerOpen?: boolean
-}): ReactElement {
-  const [menu, setMenu] = useState(false)
-  const [renaming, setRenaming] = useState(false)
-  const [name, setName] = useState(title)
-  useEffect(() => { setName(title); }, [title])
-  return (
-    <div className="conv-header">
-      {renaming ? (
-        <input className="input conv-rename" value={name} autoFocus
-          onChange={(e) => setName(e.target.value)}
-          onBlur={() => setRenaming(false)}
-          onKeyDown={(e) => { if (e.key === "Enter") setRenaming(false); }} />
-      ) : (
-        <span className="conv-title">{name}</span>
-      )}
-      {subtitle && <span className="conv-sub">{subtitle}</span>}
-      {onToggleDrawer && (
-        <button className={"icon-btn" + (drawerOpen ? " on" : "")} title="Workspace" onClick={onToggleDrawer}><Icons.panelRight size={17} /></button>
-      )}
-      <div className="conv-menu-wrap">
-        <button className="icon-btn" title="Actions" onClick={() => setMenu((s) => !s)}><Icons.more size={17} /></button>
-        {menu && (
-          <>
-            <div className="menu-backdrop" onClick={() => setMenu(false)} />
-            <div className="row-menu right">
-              <div className="rm-item" onClick={() => { setMenu(false); setRenaming(true); }}><Icons.edit size={14} /> Rename</div>
-              <div className="rm-item" onClick={() => setMenu(false)}><Icons.download size={14} /> Export</div>
-              <div className="rm-item danger" onClick={() => setMenu(false)}><Icons.trash size={14} /> Delete</div>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
-
 /* — Models that expose a reasoning / thinking-depth control — */
 const REASONING_MODELS = new Set(["claude-sonnet-4.6", "claude-opus-4", "gpt-5", "gpt-5-pro"])
 const COMPOSER_MODELS: Record<string, string[]> = {
@@ -279,14 +233,10 @@ function SkeletonSegment(): ReactElement {
 /* — The full conversation view — */
 function ConversationView({
   conv,
-  onOpenSettings,
-  onToggleDrawer,
-  drawerOpen
+  onOpenSettings
 }: {
   conv: Conversation
   onOpenSettings?: () => void
-  onToggleDrawer?: () => void
-  drawerOpen?: boolean
 }): ReactElement {
   const { EXPERT_BY_ID } = STUDIO_DATA
   const expert = EXPERT_BY_ID[conv.expert]
@@ -295,7 +245,6 @@ function ConversationView({
 
   return (
     <div className="main-col">
-      <ConversationHeader title={conv.title} subtitle={conv.collab ? "multi-expert" : null} onToggleDrawer={onToggleDrawer} drawerOpen={drawerOpen} />
       <div className="msg-list" ref={listRef}>
         <div className="msg-inner">
           {conv.collab && conv.dispatch && <DispatchBadge chain={conv.dispatch} />}
@@ -315,4 +264,4 @@ function ConversationView({
   )
 }
 
-export { ConversationView, ConversationHeader, Composer, EmptyState, SkeletonSegment }
+export { ConversationView, Composer, EmptyState, SkeletonSegment }

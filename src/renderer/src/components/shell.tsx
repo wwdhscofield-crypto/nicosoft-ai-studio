@@ -4,27 +4,54 @@
 import { useState } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
 import { Icons } from '@/components/icons'
-import { Avatar, HealthDot } from '@/components/primitives'
+import { Avatar } from '@/components/primitives'
 import { ConfirmDialog } from '@/components/dialogs'
 import { STUDIO_DATA } from '@/data/studio-data'
 import { useRoles } from '@/stores/roles'
 import type { Expert } from '@/types'
 
-export function Topbar({ onCommand, onSettings }: { onCommand: () => void; onSettings: () => void }): ReactElement {
-  const { ENDPOINT_HEALTH } = STUDIO_DATA
+/* — Top bar: quiet right-aligned icon cluster, no border, no endpoint pills, no title.
+   View-aware: a conversation view passes `workspace` to surface the panel toggle + actions. — */
+export function Topbar({
+  onCommand,
+  onSettings,
+  workspace
+}: {
+  onCommand: () => void
+  onSettings: () => void
+  workspace?: { open: boolean; onToggle: () => void } | null
+}): ReactElement {
+  const [menu, setMenu] = useState(false)
   return (
     <div className="topbar">
       <div className="spacer" />
-      <div className="health-cluster">
-        {ENDPOINT_HEALTH.map((h) => (
-          <div className="health-pill" key={h.family}>
-            <HealthDot status={h.status} />
-            <span>{h.family}</span>
-            <div className="tooltip">{h.family} · {h.status} · {h.models} models · last checked {h.checked}</div>
-          </div>
-        ))}
-      </div>
       <div className="top-actions">
+        {workspace && (
+          <>
+            <button
+              className={'icon-btn' + (workspace.open ? ' on' : '')}
+              title="Workspace"
+              onClick={workspace.onToggle}
+            >
+              <Icons.panelRight size={17} />
+            </button>
+            <div className="conv-menu-wrap">
+              <button className="icon-btn" title="Actions" onClick={() => setMenu((s) => !s)}>
+                <Icons.more size={17} />
+              </button>
+              {menu && (
+                <>
+                  <div className="menu-backdrop" onClick={() => setMenu(false)} />
+                  <div className="row-menu right">
+                    <div className="rm-item" onClick={() => setMenu(false)}><Icons.edit size={14} /> Rename</div>
+                    <div className="rm-item" onClick={() => setMenu(false)}><Icons.download size={14} /> Export</div>
+                    <div className="rm-item danger" onClick={() => setMenu(false)}><Icons.trash size={14} /> Delete</div>
+                  </div>
+                </>
+              )}
+            </div>
+          </>
+        )}
         <button className="kbd-hint" onClick={onCommand}>
           <Icons.search size={14} />
           <kbd>⌘K</kbd>
@@ -139,7 +166,8 @@ export function Sidebar({
   onSelectExpert,
   onOpenProfile,
   onSelectConv,
-  onNewRole
+  onNewRole,
+  onNewConversation
 }: {
   activeExpert?: string | null
   activeConv?: string | null
@@ -155,6 +183,7 @@ export function Sidebar({
   onOpenProfile: (id: string) => void
   onSelectConv: (id: string) => void
   onNewRole: () => void
+  onNewConversation: () => void
 }): ReactElement {
   const { EXPERTS, HISTORY, EXPERT_BY_ID } = STUDIO_DATA
   const roles = useRoles()
@@ -169,19 +198,14 @@ export function Sidebar({
   return (
     <div className="sidebar">
       <div className="sidebar-header">
-        <span className="app-name">
-          <span className="logo-mark">N</span>
-          NicoSoft AI Studio
-        </span>
+        <button className="sidebar-new" title="New conversation" onClick={onNewConversation}>
+          <Icons.edit size={17} />
+        </button>
       </div>
       <div className="sidebar-scroll">
         <div className={"studio-nav-row" + (studioActive ? " active" : "")} onClick={onStudio}>
           <span className="sn-grid"><Icons.layoutGrid size={16} /></span>
           Studio
-        </div>
-        <div className={"studio-nav-row" + (extensionsActive ? " active" : "")} onClick={onExtensions}>
-          <span className="sn-grid"><Icons.puzzle size={16} /></span>
-          Extensions
         </div>
         <div className={"studio-nav-row" + (projectsActive ? " active" : "")} onClick={onProjects}>
           <span className="sn-grid"><Icons.kanban size={16} /></span>
@@ -190,6 +214,10 @@ export function Sidebar({
         <div className={"studio-nav-row" + (scheduledActive ? " active" : "")} onClick={onScheduled}>
           <span className="sn-grid"><Icons.calendarClock size={16} /></span>
           Scheduled
+        </div>
+        <div className={"studio-nav-row" + (extensionsActive ? " active" : "")} onClick={onExtensions}>
+          <span className="sn-grid"><Icons.puzzle size={16} /></span>
+          Extensions
         </div>
 
         <SideSectionHead label="Roles" count={1 + enabledRest.length} collapsed={!rolesOpen} onToggle={() => setRolesOpen((s) => !s)} />

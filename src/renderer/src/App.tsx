@@ -13,7 +13,7 @@ import { ExtensionsView } from '@/views/extensions'
 import { ProjectsView } from '@/views/projects'
 import { ScheduledView } from '@/views/scheduled'
 import { ExpertDetail } from '@/views/expert'
-import { ConversationView, ConversationHeader, EmptyState, Composer } from '@/views/conversation'
+import { ConversationView, EmptyState, Composer } from '@/views/conversation'
 import { WorkspaceDrawer } from '@/views/workspace'
 
 const LS_KEY = 'nicosoft-studio-state-v1'
@@ -164,9 +164,18 @@ export default function App(): ReactElement {
             onOpenProfile={openProfile}
             onSelectConv={selectConv}
             onNewRole={() => setRoleDialog(true)}
+            onNewConversation={() => {
+              setActiveConv(null)
+              setActiveExpert('iris')
+              setView('app')
+            }}
           />
           <div className="main-area">
-            <Topbar onCommand={() => setCmdk(true)} onSettings={openSettings} />
+            <Topbar
+              onCommand={() => setCmdk(true)}
+              onSettings={openSettings}
+              workspace={view === 'app' ? { open: drawerOpen, onToggle: () => setDrawerOpen((s) => !s) } : null}
+            />
             <div className="main-row">
             {view === 'studio' ? (
             <StudioHome
@@ -194,19 +203,9 @@ export default function App(): ReactElement {
               onDeleted={openStudio}
             />
           ) : conv ? (
-            <ConversationView
-              conv={conv}
-              onOpenSettings={openSettings}
-              onToggleDrawer={() => setDrawerOpen((s) => !s)}
-              drawerOpen={drawerOpen}
-            />
+            <ConversationView conv={conv} onOpenSettings={openSettings} />
           ) : (
             <div className="main-col">
-              <ConversationHeader
-                title="New conversation"
-                onToggleDrawer={() => setDrawerOpen((s) => !s)}
-                drawerOpen={drawerOpen}
-              />
               <EmptyState expert={expert} onChip={() => {}} />
               <Composer
                 expert={expert}
