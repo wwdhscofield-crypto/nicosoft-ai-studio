@@ -39,6 +39,11 @@ function isReadOnlyCommand(command: string): boolean {
   if (/[;&|$`()<>\n\r]/.test(command)) return false
   if (DANGEROUS_FLAG.test(command)) return false
   const parts = command.trim().split(/\s+/)
+  // Reject path-ish args that escape the project (absolute or containing ..) — else a read command
+  // (cat/grep/...) could exfiltrate /etc/passwd or ../secret while auto-allowed AND unconfined (bash
+  // args don't go through confineReal). The dedicated Read/Grep tools confine; bash reads of
+  // outside-looking paths require approval (serialize, blocked in plan mode).
+  if (parts.slice(1).some((a) => !a.startsWith('-') && (a.startsWith('/') || a.includes('..')))) return false
   const first = parts[0]
   if (first === 'git') return GIT_READ_SUBS.has(parts[1] ?? '')
   return READ_ONLY_CMDS.has(first)

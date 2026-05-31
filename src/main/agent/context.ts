@@ -26,10 +26,16 @@ export interface PermissionDecision {
 // an approval dialog and blocks on the user, while a headless script can auto-allow/deny.
 export type RequestPermission = (req: PermissionRequest) => Promise<PermissionDecision>
 
+export interface TodoItem {
+  content: string
+  status: 'pending' | 'in_progress' | 'completed'
+}
+
 export interface AgentContext {
   cwd: string // confined project root; every tool path must resolve under this
   signal: AbortSignal // cancellation — threaded into bash spawns and sub-agents
   readFileState: Map<string, ReadFileEntry> // keyed by absolute path; powers stale-write detection
   permissionMode: PermissionMode
   requestPermission: RequestPermission
+  todos: TodoItem[] // the agent's working todo list (TodoWrite replaces it); UI renders it in H4
 }
