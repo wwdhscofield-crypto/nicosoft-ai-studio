@@ -38,15 +38,19 @@ async function checkPermission(
   }
 
   const result = await tool.checkPermissions(input, ctx)
-  if (result.behavior === 'allow') return { allow: true, updatedInput: result.updatedInput }
   if (result.behavior === 'deny') return { allow: false, message: result.message }
+  const allowedInput = result.behavior === 'allow' ? result.updatedInput : undefined
+  const askReason = result.behavior === 'ask' ? result.message : undefined
 
-  // 'ask': read-only tools auto-allow; otherwise prompt the user via the approval hook.
-  if (tool.isReadOnly(input)) return { allow: true }
-  const decision = await ctx.requestPermission({ toolName: tool.name, input, reason: result.message })
+  // Read-only tools auto-allow (a read never mutates). Anything that mutates asks the user in
+  // default/auto mode — even if the tool's own checkPermissions returned 'allow' — so a write never
+  // runs unattended outside bypass mode (which already returned above). This is what makes
+  // permissionMode 'default' actually gate writes/edits, not just bash-write commands.
+  if (tool.isReadOnly(input)) return { allow: true, updatedInput: allowedInput }
+  const decision = await ctx.requestPermission({ toolName: tool.name, input, reason: askReason })
   return {
     allow: decision.allow,
-    updatedInput: decision.updatedInput,
+    updatedInput: decision.updatedInput ?? allowedInput,
     message: decision.allow ? undefined : 'User denied permission',
   }
 }

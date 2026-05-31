@@ -53,3 +53,65 @@ export interface ChatErrorDto {
   code: string
   message: string
 }
+
+// === Agent (Hex coding agent) ===
+// `agent:run` starts an agent stream and returns its streamId; events arrive on the channels below,
+// then `agent:done` or `agent:error`. `agent:stop` aborts. A tool that needs approval pauses on
+// `agent:permission` until the renderer answers via `agent:permission:respond`.
+export interface AgentRunInput {
+  endpointId: string
+  model: string
+  prompt: string
+  cwd: string // the project directory Hex operates in (its tools are confined here)
+  convId?: string // session id for ~/.nsai/sessions/<convId>/ + transcript; new one if omitted
+  contextWindow?: number // model context window, drives compaction threshold (default 200K)
+}
+
+// Text streamed from the assistant as it generates (before the turn completes).
+export interface AgentTextDelta {
+  streamId: string
+  text: string
+}
+// A finished assistant turn: its content blocks (text + tool_use + opaque server blocks).
+export interface AgentAssistant {
+  streamId: string
+  blocks: AgentBlockDto[]
+}
+// Results of the tools the turn requested (one per tool_use, paired by toolUseId).
+export interface AgentToolResults {
+  streamId: string
+  results: AgentResultDto[]
+}
+export interface AgentResultDto {
+  toolUseId: string
+  content: string
+  isError: boolean
+}
+// A renderer-facing content block. tool_use carries name+input; server blocks are passed as opaque.
+export type AgentBlockDto =
+  | { type: 'text'; text: string }
+  | { type: 'tool_use'; id: string; name: string; input: unknown }
+  | { type: 'server'; serverType: string } // opaque (tool_search etc.) — shown as a faint status row
+// A permission request: the renderer shows an approval dialog and replies with the permissionId.
+export interface AgentPermissionRequest {
+  streamId: string
+  permissionId: string
+  toolName: string
+  input: unknown
+  reason?: string
+}
+export interface AgentPermissionResponse {
+  permissionId: string
+  allow: boolean
+  updatedInput?: Record<string, unknown>
+}
+export interface AgentDone {
+  streamId: string
+  reason: string
+  turns: number
+}
+export interface AgentErrorDto {
+  streamId: string
+  code: string
+  message: string
+}

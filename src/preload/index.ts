@@ -6,11 +6,27 @@ import type {
   ChatSendInput,
   ChatDelta,
   ChatDone,
-  ChatErrorDto
+  ChatErrorDto,
+  AgentRunInput,
+  AgentTextDelta,
+  AgentAssistant,
+  AgentToolResults,
+  AgentPermissionRequest,
+  AgentPermissionResponse,
+  AgentDone,
+  AgentErrorDto
 } from '../main/ipc/contracts'
 
 // Typed bridge exposed to the renderer as `window.api`. Window controls (Batch 0) + Batch 1
 // data/LLM IPC. Renderer never imports node — everything crosses here.
+
+// Subscribe to a main→renderer event channel; returns an unsubscribe fn.
+function agentListen<T>(channel: string, cb: (d: T) => void): () => void {
+  const h = (_e: IpcRendererEvent, d: T): void => cb(d)
+  ipcRenderer.on(channel, h)
+  return () => ipcRenderer.off(channel, h)
+}
+
 const api = {
   minimizeWindow: (): void => ipcRenderer.send('app:minimize'),
   maximizeWindow: (): void => ipcRenderer.send('app:maximize'),
@@ -48,6 +64,19 @@ const api = {
       ipcRenderer.on('chat:error', h)
       return () => ipcRenderer.off('chat:error', h)
     }
+  },
+
+  agent: {
+    run: (input: AgentRunInput): Promise<{ streamId: string }> => ipcRenderer.invoke('agent:run', input),
+    stop: (streamId: string): Promise<void> => ipcRenderer.invoke('agent:stop', streamId),
+    respondPermission: (resp: AgentPermissionResponse): Promise<void> =>
+      ipcRenderer.invoke('agent:permission:respond', resp),
+    onDelta: (cb: (d: AgentTextDelta) => void): (() => void) => agentListen('agent:delta', cb),
+    onAssistant: (cb: (d: AgentAssistant) => void): (() => void) => agentListen('agent:assistant', cb),
+    onResults: (cb: (d: AgentToolResults) => void): (() => void) => agentListen('agent:results', cb),
+    onPermission: (cb: (d: AgentPermissionRequest) => void): (() => void) => agentListen('agent:permission', cb),
+    onDone: (cb: (d: AgentDone) => void): (() => void) => agentListen('agent:done', cb),
+    onError: (cb: (d: AgentErrorDto) => void): (() => void) => agentListen('agent:error', cb)
   }
 }
 
