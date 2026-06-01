@@ -28,6 +28,9 @@ import type {
   RoleBindingDto,
   RoleBindingInput,
   RoleStateDto,
+  CustomRoleDto,
+  CustomRoleCreateDto,
+  CustomRoleUpdateDto,
   ConversationDto,
   ConversationCreateDto,
   ConversationTitleInput,
@@ -132,7 +135,12 @@ const api = {
       roleId: string,
       patch: { enabled?: boolean; selfLearningEnabled?: boolean }
     ): Promise<RoleStateDto> => ipcRenderer.invoke('roles:state:set', roleId, patch),
-    remove: (roleId: string): Promise<void> => ipcRenderer.invoke('roles:remove', roleId)
+    remove: (roleId: string): Promise<void> => ipcRenderer.invoke('roles:remove', roleId),
+    listCustom: (): Promise<CustomRoleDto[]> => ipcRenderer.invoke('roles:custom:list'),
+    createCustom: (input: CustomRoleCreateDto): Promise<CustomRoleDto> =>
+      ipcRenderer.invoke('roles:custom:create', input),
+    updateCustom: (id: string, patch: CustomRoleUpdateDto): Promise<CustomRoleDto | null> =>
+      ipcRenderer.invoke('roles:custom:update', id, patch)
   },
 
   conversations: {

@@ -7,6 +7,8 @@ import type { ReactElement } from 'react'
 import { STUDIO_DATA } from '@/data/studio-data'
 import { useMemory } from '@/stores/memory'
 import { useChat } from '@/stores/chat'
+import { useCustomRoles } from '@/stores/custom-roles'
+import { useAllExperts } from '@/lib/all-experts'
 import type { Expert, MemoryItem } from '@/types'
 import type { MemoryDto } from '@/lib/api'
 import { Icons } from '@/components/icons'
@@ -201,19 +203,31 @@ export function ExpertDetail({
   onChat,
   onOpenConv,
   onOpenEndpoint,
+  onEdit,
   onDeleted
 }: {
   expertId: string
   onChat: (id: string) => void
   onOpenConv: (id: string) => void
   onOpenEndpoint: () => void
+  onEdit?: (initialRole: { id: string; name: string; color: string | null; systemPrompt: string | null; greeting: string | null; tools: string[] }) => void
   onDeleted?: () => void
 }): ReactElement {
-  const { EXPERT_BY_ID } = STUDIO_DATA
+  const { byId: EXPERT_BY_ID } = useAllExperts()
   const roles = useRoles();
   const conversations = useChat((s) => s.conversations)
   const [confirm, setConfirm] = useState(false);
   const e = EXPERT_BY_ID[expertId];
+  // Custom role might still be loading on first render — guard the page so we don't crash on
+  // EXPERT_BY_ID[expertId] being undefined.
+  if (!e) {
+    return (
+      <div className="main-col">
+        <div className="conv-header"><span className="conv-title">Profile</span></div>
+        <div className="detail-body"><div className="detail-inner"><div className="detail-empty">Loading…</div></div></div>
+      </div>
+    )
+  }
   // Real conversations owned by this role (primary_role_id = expertId). For Atlas this surfaces every
   // routed conversation; for individual experts it's the direct-chat history. Most-recent-first; cap
   // to a sensible display count so the panel doesn't become a scroll trap.
@@ -295,11 +309,33 @@ export function ExpertDetail({
             )}
           </div>
 
-          {/* danger zone — custom roles only */}
+          {/* danger zone — custom roles only. Edit reads the current row from useCustomRoles so
+              the dialog preloads the persisted fields (not a stale snapshot from the Expert view). */}
           {e.custom && (
             <div className="detail-section">
-              <div className="ds-head"><span className="ds-title">Danger zone</span></div>
+              <div className="ds-head"><span className="ds-title">Manage</span></div>
               <div className="detail-card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
+                <span style={{ fontSize: 13, color: "var(--text-3)" }}>Edit this role's prompt, color, or binding.</span>
+                <button
+                  className="btn secondary sm"
+                  onClick={() => {
+                    if (!onEdit) return
+                    const row = useCustomRoles.getState().list.find((r) => r.id === expertId)
+                    if (!row) return
+                    onEdit({
+                      id: row.id,
+                      name: row.name,
+                      color: row.color,
+                      systemPrompt: row.systemPrompt,
+                      greeting: row.greeting,
+                      tools: row.tools
+                    })
+                  }}
+                >
+                  <Icons.edit size={14} /> Edit role
+                </button>
+              </div>
+              <div className="detail-card" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, marginTop: 8 }}>
                 <span style={{ fontSize: 13, color: "var(--text-3)" }}>Delete this custom role, its conversations, and its role memory. Shared memory is kept.</span>
                 <button className="btn danger sm" onClick={() => setConfirm(true)}><Icons.trash size={14} /> Delete role</button>
               </div>

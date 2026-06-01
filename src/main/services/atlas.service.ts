@@ -147,8 +147,11 @@ export async function route(userInput: string, history: convRepo.MessageRow[], s
   if (enabled.length === 0) return { mode: 'single', role: 'iris', reason: 'no roles enabled' }
 
   // 0. @mention 0-LLM fast path — user explicitly named a built-in role. Must be currently enabled;
-  //    a disabled @mention falls through to the LLM router. Custom-role @mention by name arrives in
-  //    Batch 3C (custom_roles primary key is a ULID, not a user-typed name).
+  //    a disabled @mention falls through to the LLM router. v0.1 LIMITATION: custom roles cannot be
+  //    routed by Atlas — neither via @mention (the router only knows the 7 built-in ids, see
+  //    ATLAS_ROUTER_PROMPT) nor via the LLM router. Users reach custom roles by clicking them in the
+  //    sidebar (direct chat path). Extending Atlas to dispatch into custom roles requires plumbing
+  //    custom-role names into the router prompt + buildRolePrompt fallback for arbitrary ids.
   const mention = /^@(\w+)/.exec(userInput)
   if (mention) {
     const id = mention[1].toLowerCase()

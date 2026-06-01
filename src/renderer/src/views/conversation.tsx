@@ -19,7 +19,7 @@ import { ApprovalDialog } from '@/components/approval-dialog'
 import { useRoleBinding } from '@/lib/use-role-binding'
 import { fileToImage, imagesFromClipboard, type ImageAttachment } from '@/lib/image'
 import { getThinkingCapability, resolveThinking, type ThinkingDepth } from '@/lib/thinking'
-import { STUDIO_DATA } from '@/data/studio-data'
+import { useAllExperts } from '@/lib/all-experts'
 import type { Expert } from '@/types'
 
 // Compact token readout: K below 1M, M at/above it (1M, 1.05M, 1.5M — trailing zeros trimmed).
@@ -39,16 +39,19 @@ function isSynthesis(msg: ChatMessage): boolean {
 function ChatSegment({
   msg,
   expert,
+  expertById,
   onOpenImage
 }: {
   msg: ChatMessage
   expert: Expert
+  expertById: Record<string, Expert>
   onOpenImage: (items: ViewerImage[], index: number) => void
 }): ReactElement {
   const isUser = msg.role === 'user'
   // Lookup the per-message expert if Atlas tagged it; fall back to the prop (the conversation's
-  // primary role) so direct chats / agents render the same as before.
-  const msgExpert: Expert | undefined = !isUser && msg.expertId ? STUDIO_DATA.EXPERT_BY_ID[msg.expertId] : undefined
+  // primary role) so direct chats / agents render the same as before. expertById is the merged
+  // built-in + custom-roles map.
+  const msgExpert: Expert | undefined = !isUser && msg.expertId ? expertById[msg.expertId] : undefined
   const renderExpert = msgExpert ?? expert
   const synthesis = isSynthesis(msg)
   const segColor = isUser ? 'var(--border-2)' : synthesis ? 'var(--accent)' : renderExpert.color
@@ -261,6 +264,7 @@ function Composer({
 /* — The full conversation view for a non-Hex role — */
 export function ChatView({ expert, onOpenSettings }: { expert: Expert; onOpenSettings?: () => void }): ReactElement {
   const chat = useChat()
+  const { byId: expertById } = useAllExperts()
   const activeConv = chat.activeConv
   const messages = activeConv ? (chat.byConversation[activeConv] ?? []) : []
   const error = activeConv ? chat.error[activeConv] : null
@@ -296,7 +300,7 @@ export function ChatView({ expert, onOpenSettings }: { expert: Expert; onOpenSet
               return (
                 <Fragment key={m.id}>
                   {showBadge ? <DispatchBadge chain={m.dispatch as string[]} /> : null}
-                  <ChatSegment msg={m} expert={expert} onOpenImage={openImage} />
+                  <ChatSegment msg={m} expert={expert} expertById={expertById} onOpenImage={openImage} />
                 </Fragment>
               )
             })

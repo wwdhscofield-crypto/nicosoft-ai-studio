@@ -2,7 +2,14 @@ import * as roleRepo from '../repos/role.repo'
 import * as memoryRepo from '../repos/memory.repo'
 import * as convRepo from '../repos/conversation.repo'
 import { transaction } from '../db/connection'
-import type { RoleBindingDto, RoleBindingInput, RoleStateDto } from '../ipc/contracts'
+import type {
+  CustomRoleCreateDto,
+  CustomRoleDto,
+  CustomRoleUpdateDto,
+  RoleBindingDto,
+  RoleBindingInput,
+  RoleStateDto
+} from '../ipc/contracts'
 
 // Business layer for role bindings (endpoint/model/thinking) + per-role state (enabled / self-learning).
 // Maps the repo rows to the renderer-facing DTOs. Never touches IPC; never writes SQL directly.
@@ -70,4 +77,42 @@ export function remove(roleId: string): void {
     roleRepo.removeState(roleId)
     roleRepo.removeCustom(roleId)
   })
+}
+
+// --- Custom roles ---
+
+function toCustomDto(r: roleRepo.CustomRoleRow): CustomRoleDto {
+  return {
+    id: r.id,
+    name: r.name,
+    avatar: r.avatar,
+    color: r.color,
+    systemPrompt: r.systemPrompt,
+    tools: r.tools,
+    greeting: r.greeting,
+    exampleQueries: r.exampleQueries,
+    createdAt: r.createdAt
+  }
+}
+
+export function listCustom(): CustomRoleDto[] {
+  return roleRepo.listCustom().map(toCustomDto)
+}
+
+// Create a new user-defined role. The fresh role starts ENABLED (no role_states row inserted; the
+// renderer treats "no row" as enabled). Bindings are set in a separate call once the user picks an
+// endpoint+model from the editor — keeps the create call cheap and idempotent.
+export function createCustom(input: CustomRoleCreateDto): CustomRoleDto {
+  const trimmed = input.name?.trim()
+  if (!trimmed) throw new Error('custom role name is required')
+  return toCustomDto(roleRepo.createCustom({ ...input, name: trimmed }))
+}
+
+// Update a custom role's fields. Built-in roles are NOT in custom_roles, so updateCustom on a
+// built-in id is a silent no-op (returns null) — the IPC layer surfaces that as null to the caller.
+export function updateCustom(id: string, patch: CustomRoleUpdateDto): CustomRoleDto | null {
+  const trimmed = patch.name?.trim()
+  const safe = trimmed !== undefined ? { ...patch, name: trimmed || undefined } : patch
+  const row = roleRepo.updateCustom(id, safe)
+  return row ? toCustomDto(row) : null
 }

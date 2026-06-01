@@ -217,6 +217,40 @@ export interface RoleStateDto {
   selfLearningEnabled: boolean
 }
 
+// === Custom roles (user-defined experts) ===
+// A custom role lives in custom_roles + has its own role_bindings/role_states row. Built-in roles
+// (atlas, iris, hex, lyra, echo, sage, quant, mercury) are NOT in custom_roles. The renderer renders
+// both alongside each other; the `custom: true` flag tells it to expose Delete (built-ins only Disable).
+export interface CustomRoleDto {
+  id: string
+  name: string
+  avatar: string | null
+  color: string | null
+  systemPrompt: string | null
+  tools: string[]
+  greeting: string | null
+  exampleQueries: string[]
+  createdAt: string
+}
+export interface CustomRoleCreateDto {
+  name: string
+  avatar?: string
+  color?: string
+  systemPrompt?: string
+  tools?: string[]
+  greeting?: string
+  exampleQueries?: string[]
+}
+export interface CustomRoleUpdateDto {
+  name?: string
+  avatar?: string | null
+  color?: string | null
+  systemPrompt?: string | null
+  tools?: string[]
+  greeting?: string | null
+  exampleQueries?: string[]
+}
+
 // === Conversations (persisted chat threads) ===
 export interface MessageAttachmentDto {
   url: string

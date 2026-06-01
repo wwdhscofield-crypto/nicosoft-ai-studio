@@ -8,6 +8,7 @@ import { Avatar } from '@/components/primitives'
 import { STUDIO_DATA } from '@/data/studio-data'
 import { useRoles } from '@/stores/roles'
 import { useChat } from '@/stores/chat'
+import { useCustomRoles } from '@/stores/custom-roles'
 import type { Expert } from '@/types'
 import type { EndpointDto, EndpointInput, ModelInfo } from '@/lib/api'
 
@@ -194,18 +195,101 @@ const ROLE_SWATCHES = [
 ]
 const ROLE_TOOLS = ["Web search", "Code execution", "Image generation", "File reading"]
 
-export function RoleEditorDialog({ onClose }: { onClose: () => void }): ReactElement {
-  const [name, setName] = useState("Pixel")
-  const [color, setColor] = useState("var(--exp-lyra)")
-  const [tools, setTools] = useState<Record<string, boolean>>({ "Image generation": true })
-  const previewExpert = { name: name || "?", color } as Expert
+// Create / edit dialog for a user-defined role. In `create` mode (initialRole=undefined) it builds a
+// blank form; in `edit` mode it preloads the existing role's fields + on save updates instead of
+// creating. After a successful create the dialog also writes a role_bindings row so the new role can
+// chat immediately without bouncing the user through the Roles settings page.
+export function RoleEditorDialog({
+  onClose,
+  initialRole
+}: {
+  onClose: () => void
+  initialRole?: { id: string; name: string; color: string | null; systemPrompt: string | null; greeting: string | null; tools: string[] }
+}): ReactElement {
+  const isEdit = !!initialRole
+  const [name, setName] = useState(initialRole?.name ?? '')
+  const [color, setColor] = useState(initialRole?.color || 'var(--exp-iris)')
+  const [systemPrompt, setSystemPrompt] = useState(initialRole?.systemPrompt ?? '')
+  const [greeting, setGreeting] = useState(initialRole?.greeting ?? '')
+  const [tools, setTools] = useState<Record<string, boolean>>(() => {
+    const out: Record<string, boolean> = {}
+    for (const t of initialRole?.tools ?? []) out[t] = true
+    return out
+  })
+  // Real endpoint+model pickers. Endpoints listed on mount; model list follows the selected endpoint.
+  const [endpoints, setEndpoints] = useState<EndpointDto[]>([])
+  const [endpointId, setEndpointId] = useState<string>('')
+  const [model, setModel] = useState<string>('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    void (async () => {
+      const eps = await window.api.endpoints.list()
+      setEndpoints(eps)
+      if (isEdit) {
+        // Preload the existing role's binding (if any) so edits don't blow it away.
+        const bindings = await window.api.roles.listBindings()
+        const b = bindings.find((x) => x.roleId === initialRole!.id)
+        if (b?.endpointId) setEndpointId(b.endpointId)
+        if (b?.model) setModel(b.model)
+      } else if (eps.length > 0) {
+        // First enabled endpoint with a key is the sensible default for a new role.
+        const first = eps.find((e) => e.enabled && e.hasKey) || eps[0]
+        setEndpointId(first.id)
+      }
+    })()
+  }, [isEdit, initialRole])
+
+  // When the chosen endpoint changes, reset the model dropdown to its default (or the first model).
+  useEffect(() => {
+    if (!endpointId) return
+    const ep = endpoints.find((e) => e.id === endpointId)
+    if (!ep) return
+    if (isEdit && initialRole && ep.availableModels.some((m) => modelIdOf(m) === model)) return
+    const next = ep.defaultModel || (ep.availableModels[0] ? modelIdOf(ep.availableModels[0]) : '')
+    setModel(next)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [endpointId, endpoints])
+
+  const previewExpert = { name: name || '?', color } as Expert
   const toggleTool = (t: string): void => setTools((prev) => ({ ...prev, [t]: !prev[t] }))
+  const valid = name.trim().length > 0 && !!endpointId && !!model
+
+  const onSave = async (): Promise<void> => {
+    if (!valid || saving) return
+    setSaving(true)
+    setError(null)
+    try {
+      const payload = {
+        name: name.trim(),
+        color,
+        systemPrompt: systemPrompt.trim() || undefined,
+        greeting: greeting.trim() || undefined,
+        tools: Object.entries(tools).filter(([, v]) => v).map(([k]) => k)
+      }
+      let roleId = initialRole?.id
+      if (isEdit) {
+        await useCustomRoles.getState().update(roleId!, payload)
+      } else {
+        const created = await useCustomRoles.getState().create(payload)
+        roleId = created.id
+      }
+      // Always (re)set the binding — covers both fresh creates and edit-time endpoint/model changes.
+      await window.api.roles.setBinding(roleId!, { endpointId, model })
+      onClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <div className="overlay" onMouseDown={onClose}>
       <div className="dialog wide" onMouseDown={(e) => e.stopPropagation()}>
         <div className="dialog-head">
-          <span className="dh-title">New role</span>
+          <span className="dh-title">{isEdit ? 'Edit role' : 'New role'}</span>
           <button className="icon-btn" onClick={onClose}><Icons.x size={16} /></button>
         </div>
         <div className="dialog-body">
@@ -233,17 +317,43 @@ export function RoleEditorDialog({ onClose }: { onClose: () => void }): ReactEle
           </div>
           <div>
             <label className="field-label">System prompt</label>
-            <textarea className="input" style={{ height: 70, paddingTop: 8, resize: "none" }}
-              defaultValue="You are Pixel, a focused image specialist. Be opinionated about composition and color. Always confirm the required text and aspect ratio before generating." />
+            <textarea className="input" style={{ height: 90, paddingTop: 8, resize: "vertical" }}
+              value={systemPrompt} onChange={(e) => setSystemPrompt(e.target.value)}
+              placeholder="What does this expert do? Tone? Constraints? Be specific." />
           </div>
           <div style={{ display: "flex", gap: 14 }}>
             <div style={{ flex: 1 }}>
               <label className="field-label">Endpoint</label>
-              <div className="select-box">Google Gemini <Icons.chevronDown size={14} className="chev" /></div>
+              <select
+                className="input"
+                style={{ appearance: 'none', WebkitAppearance: 'none', paddingRight: 24 }}
+                value={endpointId}
+                onChange={(e) => setEndpointId(e.target.value)}
+              >
+                {endpoints.length === 0 ? <option value="">No endpoints configured</option> : null}
+                {endpoints.map((e) => (
+                  <option key={e.id} value={e.id} disabled={!e.enabled || !e.hasKey}>
+                    {e.name} · {e.protocol}{!e.hasKey ? ' · no key' : !e.enabled ? ' · disabled' : ''}
+                  </option>
+                ))}
+              </select>
             </div>
             <div style={{ flex: 1 }}>
               <label className="field-label">Model</label>
-              <div className="select-box"><span style={{ fontFamily: "var(--mono)", fontSize: 12 }}>imagen-4</span> <Icons.chevronDown size={14} className="chev" /></div>
+              <select
+                className="input"
+                style={{ appearance: 'none', WebkitAppearance: 'none', paddingRight: 24, fontFamily: 'var(--mono)', fontSize: 12 }}
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+              >
+                {(endpoints.find((e) => e.id === endpointId)?.availableModels ?? []).map((m) => {
+                  const id = modelIdOf(m)
+                  return <option key={id} value={id}>{id}</option>
+                })}
+                {model && !((endpoints.find((e) => e.id === endpointId)?.availableModels ?? []).some((m) => modelIdOf(m) === model)) && (
+                  <option value={model}>{model}</option>
+                )}
+              </select>
             </div>
           </div>
           <div>
@@ -259,18 +369,27 @@ export function RoleEditorDialog({ onClose }: { onClose: () => void }): ReactEle
           </div>
           <div>
             <label className="field-label">Greeting <span style={{ color: "var(--text-4)", fontWeight: 400 }}>· optional</span></label>
-            <input className="input" defaultValue="Hi, I'm Pixel — tell me the vibe, the text, and the format."
+            <input className="input" value={greeting} onChange={(e) => setGreeting(e.target.value)}
               placeholder="First line the expert shows on a new conversation" />
           </div>
+          {error ? <div style={{ color: 'var(--danger, #d44)', fontSize: 12 }}>{error}</div> : null}
         </div>
         <div className="dialog-foot">
           <div className="df-spacer" />
-          <button className="btn ghost sm" onClick={onClose}>Cancel</button>
-          <button className="btn primary sm" onClick={onClose}>Create role</button>
+          <button className="btn ghost sm" onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="btn primary sm" onClick={() => { void onSave() }} disabled={!valid || saving}>
+            {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Create role'}
+          </button>
         </div>
       </div>
     </div>
   )
+}
+
+// EndpointDto.availableModels carries ModelInfo (slug + contextLength). Resolve to the wire-format
+// slug — this is what gets stored in role_bindings.model and sent to the LLM adapter.
+function modelIdOf(m: ModelInfo | string): string {
+  return typeof m === 'string' ? m : m.slug
 }
 
 /* — Command palette (⌘K) — */

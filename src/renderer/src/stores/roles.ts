@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { useChat } from './chat'
 import { useMemory } from './memory'
+import { useCustomRoles } from './custom-roles'
 
 // Role enable / disable / delete store. Backend-backed via window.api.roles — every mutation persists
 // to role_states (enable/disable) or cascades the delete (memory + bindings + state + custom row).
@@ -68,6 +69,9 @@ export const useRoles = create<RolesState>((set, get) => ({
     set((s) => ({ deleted: [...s.deleted, id], disabled: s.disabled.filter((x) => x !== id) }))
     void window.api.roles.remove(id).then(
       () => {
+        // Drop the row from the custom-roles list so the sidebar/settings re-render without it.
+        // (Built-in deletes are silently no-op'd at the backend; no list change is needed there.)
+        useCustomRoles.setState((s) => ({ list: s.list.filter((r) => r.id !== id) }))
         void useChat.getState().loadConversations()
         void useMemory.getState().load()
       },

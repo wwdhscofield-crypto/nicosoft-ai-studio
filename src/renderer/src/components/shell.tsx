@@ -8,6 +8,7 @@ import { Avatar } from '@/components/primitives'
 import { ConfirmDialog, PromptDialog } from '@/components/dialogs'
 import { STUDIO_DATA } from '@/data/studio-data'
 import { useRoles } from '@/stores/roles'
+import { useAllExperts } from '@/lib/all-experts'
 import { useChat } from '@/stores/chat'
 import type { Expert } from '@/types'
 import type { ConversationDto } from '@/lib/api'
@@ -218,7 +219,7 @@ export function Sidebar({
   onNewRole: () => void
   onNewConversation: () => void
 }): ReactElement {
-  const { EXPERTS, EXPERT_BY_ID } = STUDIO_DATA
+  const { experts: EXPERTS, byId: EXPERT_BY_ID } = useAllExperts()
   const roles = useRoles()
   const atlas = EXPERTS.find((e) => e.coordinator)
   const rest = EXPERTS.filter((e) => !e.coordinator && !roles.isDeleted(e.id))

@@ -17,6 +17,8 @@ import { ChatView } from '@/views/conversation'
 import { WorkspaceDrawer } from '@/views/workspace'
 import { useChat } from '@/stores/chat'
 import { useRoles } from '@/stores/roles'
+import { useCustomRoles } from '@/stores/custom-roles'
+import { useAllExperts } from '@/lib/all-experts'
 
 const LS_KEY = 'nicosoft-studio-state-v1'
 
@@ -44,15 +46,16 @@ function saveState(s: PersistedState): void {
 }
 
 export default function App(): ReactElement {
-  const { EXPERT_BY_ID } = STUDIO_DATA
   const chat = useChat()
+  const { byId: EXPERT_BY_ID } = useAllExperts()
   const persisted = loadState()
 
   const [view, setView] = useState<string>(persisted.view || 'onboarding')
   const [activeExpert, setActiveExpert] = useState<string>(persisted.activeExpert || 'hex')
   const [settingsTab, setSettingsTab] = useState<string>(persisted.settingsTab || 'endpoints')
   const [cmdk, setCmdk] = useState(false)
-  const [roleDialog, setRoleDialog] = useState(false)
+  // null = closed, {} = create mode, {initialRole} = edit mode for an existing custom role.
+  const [roleDialog, setRoleDialog] = useState<null | { initialRole?: { id: string; name: string; color: string | null; systemPrompt: string | null; greeting: string | null; tools: string[] } }>(null)
   const [drawerOpen, setDrawerOpen] = useState<boolean>(persisted.drawerOpen || false)
   const [activeProject, setActiveProject] = useState<string | null>(persisted.activeProject || null)
 
@@ -60,12 +63,13 @@ export default function App(): ReactElement {
     saveState({ view, activeExpert, settingsTab, drawerOpen, activeProject })
   }, [view, activeExpert, settingsTab, drawerOpen, activeProject])
 
-  // Load the persisted conversation history + role enable/disable states once on mount. Until
-  // useRoles.load() completes, every role is treated as enabled — that's the right default (no DB row
-  // = enabled), and the brief flash from "rendered enabled" to "rendered disabled" is benign.
+  // Load the persisted conversation history + role enable/disable states + user-defined custom roles
+  // once on mount. Until each store's load() completes, the sidebar shows built-ins only; customs
+  // appear once the list resolves (typically one frame).
   useEffect(() => {
     void chat.loadConversations()
     void useRoles.getState().load()
+    void useCustomRoles.getState().load()
   }, [chat.loadConversations])
 
   // First-run gate: when localStorage hasn't already chosen a view, honor the durable onboarded flag so
@@ -85,7 +89,7 @@ export default function App(): ReactElement {
         setCmdk((c) => !c)
       } else if (e.key === 'Escape') {
         setCmdk(false)
-        setRoleDialog(false)
+        setRoleDialog(null)
       }
     }
     window.addEventListener('keydown', onKey)
@@ -180,7 +184,7 @@ export default function App(): ReactElement {
             onSelectExpert={selectExpert}
             onOpenProfile={openProfile}
             onSelectConv={selectConv}
-            onNewRole={() => setRoleDialog(true)}
+            onNewRole={() => setRoleDialog({})}
             onNewConversation={() => {
               chat.newConversation()
               setActiveExpert('iris')
@@ -199,7 +203,7 @@ export default function App(): ReactElement {
               onOpenExpert={selectExpert}
               onOpenConv={selectConv}
               onOpenProject={openProject}
-              onNewRole={() => setRoleDialog(true)}
+              onNewRole={() => setRoleDialog({})}
             />
           ) : view === 'extensions' ? (
             <ExtensionsView />
@@ -217,6 +221,7 @@ export default function App(): ReactElement {
               onChat={selectExpert}
               onOpenConv={selectConv}
               onOpenEndpoint={openEndpointsSettings}
+              onEdit={(initialRole) => setRoleDialog({ initialRole })}
               onDeleted={openStudio}
             />
           ) : (
@@ -237,11 +242,11 @@ export default function App(): ReactElement {
           onStudio={openStudio}
           onNewRole={() => {
             setCmdk(false)
-            setRoleDialog(true)
+            setRoleDialog({})
           }}
         />
       )}
-      {roleDialog && <RoleEditorDialog onClose={() => setRoleDialog(false)} />}
+      {roleDialog && <RoleEditorDialog initialRole={roleDialog.initialRole} onClose={() => setRoleDialog(null)} />}
     </div>
   )
 }

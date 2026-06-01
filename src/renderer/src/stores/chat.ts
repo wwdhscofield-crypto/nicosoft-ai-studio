@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { STUDIO_DATA } from '@/data/studio-data'
+import { useCustomRoles } from '@/stores/custom-roles'
 import type { EffortLevel } from '@/lib/thinking'
 
 // Unified per-conversation chat store (L3). A conversation is a real DB row; messages persist to the
@@ -454,10 +455,17 @@ export const useChat = create<ChatState>((set, get) => {
       }
 
       // Chat path: persist the user turn (backend reads it from the DB to assemble context), then send.
-      const expert = STUDIO_DATA.EXPERT_BY_ID[expertId]
-      const systemPrompt = expert
-        ? `You are ${expert.name}, ${expert.specialty.toLowerCase()}. ${expert.personality}.`
-        : ''
+      // System prompt: custom roles use their user-defined systemPrompt field (from custom_roles);
+      // built-ins fall back to a brief identity built from STUDIO_DATA. An empty system prompt is the
+      // last-resort fallback (the LLM still gets the user message, just without identity priming).
+      const custom = useCustomRoles.getState().list.find((r) => r.id === expertId)
+      let systemPrompt = ''
+      if (custom) {
+        systemPrompt = custom.systemPrompt?.trim() || `You are ${custom.name}, a user-defined expert.`
+      } else {
+        const expert = STUDIO_DATA.EXPERT_BY_ID[expertId]
+        if (expert) systemPrompt = `You are ${expert.name}, ${expert.specialty.toLowerCase()}. ${expert.personality}.`
+      }
       try {
         await window.api.conversations.append(cid, {
           author: 'user',
