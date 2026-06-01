@@ -235,11 +235,13 @@ export interface RoleBindingDto {
   endpointId: string | null
   model: string | null
   thinkingDepth: string | null // 'low' | 'medium' | 'high' | 'max' | null
+  imageModel: string | null // designer's image backend slug (null = Nano Banana Pro default)
 }
 export interface RoleBindingInput {
   endpointId: string | null
   model: string | null
   thinkingDepth?: string | null
+  imageModel?: string | null
 }
 export interface RoleStateDto {
   roleId: string

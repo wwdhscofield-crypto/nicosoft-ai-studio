@@ -59,6 +59,7 @@ interface SendOpts {
   images?: { dataUrl: string; mime: string; name: string }[]
   cwd?: string // the project dir — required for agent roles, ignored for plain chat
   contextWindow?: number // agent roles pass the model's context window (drives compaction)
+  imageModel?: string // designer image backend slug (image-tool roles only)
 }
 
 interface ChatState {
@@ -455,7 +456,7 @@ export const useChat = create<ChatState>((set, get) => {
 
     newConversation: () => set({ activeConv: null }),
 
-    send: async ({ expertId, endpointId, model, thinking, text, images, cwd, contextWindow }) => {
+    send: async ({ expertId, endpointId, model, thinking, text, images, cwd, contextWindow, imageModel }) => {
       ensureListeners()
       let convId = get().activeConv
       const isNew = !convId
@@ -532,7 +533,7 @@ export const useChat = create<ChatState>((set, get) => {
             content: text,
             attachments: userImages.map((i) => ({ url: i.url, name: i.name }))
           })
-          const { streamId } = await window.api.imagetool.run({ convId: cid, endpointId, model, thinking, prompt: text })
+          const { streamId } = await window.api.imagetool.run({ convId: cid, endpointId, model, imageModel, thinking, prompt: text })
           imageToolMeta.set(streamId, { convId: cid, endpointId, model })
         } catch (e) {
           finishWithError(cid, e instanceof Error ? e.message : String(e))

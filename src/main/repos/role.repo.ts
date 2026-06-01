@@ -11,6 +11,7 @@ export interface RoleBinding {
   endpointId: string | null
   model: string | null
   thinkingDepth: string | null
+  imageModel: string | null
 }
 
 export interface RoleState {
@@ -56,6 +57,7 @@ interface RoleBindingRaw {
   endpoint_id: string | null
   model: string | null
   thinking_depth: string | null
+  image_model: string | null
 }
 
 interface RoleStateRaw {
@@ -81,7 +83,8 @@ function mapBinding(raw: RoleBindingRaw): RoleBinding {
     roleId: raw.role_id,
     endpointId: raw.endpoint_id,
     model: raw.model,
-    thinkingDepth: raw.thinking_depth
+    thinkingDepth: raw.thinking_depth,
+    imageModel: raw.image_model
   }
 }
 
@@ -118,17 +121,18 @@ export function getBinding(roleId: string): RoleBinding | null {
 
 export function setBinding(
   roleId: string,
-  patch: { endpointId: string | null; model: string | null; thinkingDepth: string | null }
+  patch: { endpointId: string | null; model: string | null; thinkingDepth: string | null; imageModel: string | null }
 ): void {
   getDb()
     .prepare(
-      `INSERT INTO role_bindings (role_id, endpoint_id, model, thinking_depth) VALUES (?, ?, ?, ?)
+      `INSERT INTO role_bindings (role_id, endpoint_id, model, thinking_depth, image_model) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(role_id) DO UPDATE SET
          endpoint_id = excluded.endpoint_id,
          model = excluded.model,
-         thinking_depth = excluded.thinking_depth`
+         thinking_depth = excluded.thinking_depth,
+         image_model = excluded.image_model`
     )
-    .run(roleId, patch.endpointId, patch.model, patch.thinkingDepth)
+    .run(roleId, patch.endpointId, patch.model, patch.thinkingDepth, patch.imageModel)
 }
 
 export function listBindings(): RoleBinding[] {

@@ -7,6 +7,7 @@ import type { ReactElement } from 'react'
 import { Icons } from '@/components/icons'
 import type { Family } from '@/types'
 import { getThinkingCapability, supportedDepths, THINKING_OPTIONS, type ThinkingDepth } from '@/lib/thinking'
+import { imageModelLabel } from '@/lib/image-models'
 
 // Model dropdown. `models` is the bound endpoint's configured slug list; a search box appears once the
 // list is long enough to be worth filtering.
@@ -111,6 +112,46 @@ export function ThinkingPicker({
               >
                 <span>{t.label}</span>
                 {t.value === depth ? <Icons.check size={13} /> : null}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// Image-backend dropdown for the designer composer (B7). Lists the Gemini image models (Nano Banana /
+// Imagen) the designer's ns_generate_image tool can target. Opens upward like the other composer menus.
+export function ImageModelPicker({
+  models,
+  value,
+  onChange,
+  disabled
+}: {
+  models: string[]
+  value: string
+  onChange: (m: string) => void
+  disabled?: boolean
+}): ReactElement {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="cmp-model" onClick={() => !disabled && setOpen((s) => !s)}>
+      <Icons.image size={13} />
+      <span className="cmp-model-id">{imageModelLabel(value)}</span>
+      <Icons.chevronDown size={12} />
+      {open && (
+        <>
+          <div className="menu-backdrop" onClick={(e) => { e.stopPropagation(); setOpen(false) }} />
+          <div className="row-menu up" onClick={(e) => e.stopPropagation()}>
+            {models.map((m) => (
+              <div
+                key={m}
+                className={'rm-item' + (m === value ? ' active' : '')}
+                onClick={() => { onChange(m); setOpen(false) }}
+              >
+                <span>{imageModelLabel(m)}</span>
+                {m === value ? <Icons.check size={13} /> : null}
               </div>
             ))}
           </div>

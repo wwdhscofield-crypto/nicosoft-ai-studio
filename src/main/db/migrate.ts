@@ -7,6 +7,7 @@ import { SCHEMA_SQL } from './schema'
 export function runMigrations(db: DatabaseSync): void {
   db.exec(SCHEMA_SQL)
   ensureColumn(db, 'role_bindings', 'thinking_depth', 'TEXT')
+  ensureColumn(db, 'role_bindings', 'image_model', 'TEXT')
   ensureColumn(db, 'messages', 'run_id', 'TEXT')
 }
 

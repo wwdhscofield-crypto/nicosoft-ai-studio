@@ -7,12 +7,12 @@ import type { ChangeEvent, ClipboardEvent as ReactClipboardEvent, CSSProperties,
 import { Icons } from '@/components/icons'
 import { AttachmentStrip } from '@/components/attachment-strip'
 import { ImageViewer, type ViewerImage } from '@/components/image-viewer'
-import { ModelPicker, ThinkingPicker } from '@/components/composer-controls'
+import { ModelPicker, ThinkingPicker, ImageModelPicker } from '@/components/composer-controls'
 import { EmptyState } from '@/components/empty-state'
 import { PathBar } from '@/components/path-bar'
 import { useWorkspace } from '@/stores/workspace'
 import { Avatar, DispatchBadge, NameChip } from '@/components/primitives'
-import { useChat, roleHasAgent, type ChatMessage } from '@/stores/chat'
+import { useChat, roleHasAgent, roleHasImageTool, type ChatMessage } from '@/stores/chat'
 import { ToolBubble } from '@/components/tool-bubble'
 import { Markdown } from '@/components/markdown'
 import { ApprovalDialog } from '@/components/approval-dialog'
@@ -261,7 +261,8 @@ function Composer({
       text,
       images: images.length ? images : undefined,
       cwd: agent ? cwd : undefined,
-      contextWindow: agent ? b.contextLength || undefined : undefined
+      contextWindow: agent ? b.contextLength || undefined : undefined,
+      imageModel: roleHasImageTool(expert.id) ? b.imageModel : undefined
     })
   }
 
@@ -286,6 +287,9 @@ function Composer({
           <div className="cmp-toolbar">
             <ModelPicker models={b.models} value={b.model} onChange={b.onModel} disabled={!ready} />
             <ThinkingPicker family={b.family} model={b.model} depth={effectiveDepth} onChange={b.onDepth} disabled={!ready} />
+            {roleHasImageTool(expert.id) ? (
+              <ImageModelPicker models={b.imageModels} value={b.imageModel} onChange={b.onImageModel} disabled={!ready} />
+            ) : null}
             {b.contextLength > 0 ? (
               <span className={'cmp-tokens' + (tokenAmber ? ' amber' : '')}>
                 {fmtTokens(usedTokens)} / {fmtTokens(b.contextLength)}

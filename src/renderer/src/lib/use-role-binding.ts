@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import type { Expert, Family } from '@/types'
 import type { EndpointDto } from '@/lib/api'
 import { getThinkingCapability, protocolToFamily, supportedDepths, type ThinkingDepth } from '@/lib/thinking'
+import { DEFAULT_IMAGE_MODEL, imageModelOptions } from '@/lib/image-models'
 
 export const FAMILY_LABEL: Record<string, string> = { anthropic: 'Anthropic', openai: 'OpenAI', gemini: 'Gemini' }
 
@@ -20,9 +21,12 @@ export interface RoleBindingControls {
   models: string[]
   contextLength: number
   depths: ThinkingDepth[]
+  imageModel: string // designer's image backend slug (defaults to Nano Banana Pro)
+  imageModels: string[] // image-backend options for the composer picker
   onEndpoint: (v: string) => void
   onModel: (v: string) => void
   onDepth: (v: string) => void
+  onImageModel: (v: string) => void
 }
 
 export function useRoleBinding(expert: Expert): RoleBindingControls {
@@ -31,6 +35,7 @@ export function useRoleBinding(expert: Expert): RoleBindingControls {
   const [endpointId, setEndpointId] = useState('')
   const [model, setModel] = useState('')
   const [depth, setDepth] = useState<ThinkingDepth | ''>('')
+  const [imageModel, setImageModel] = useState(DEFAULT_IMAGE_MODEL)
 
   useEffect(() => {
     let alive = true
@@ -43,6 +48,7 @@ export function useRoleBinding(expert: Expert): RoleBindingControls {
         eps[0] ||
         undefined
       const loadedModel = b?.model || expert.model || ep?.defaultModel || ep?.availableModels[0]?.slug || ''
+      const loadedImageModel = b?.imageModel || DEFAULT_IMAGE_MODEL
       const fam = ep ? protocolToFamily(ep.protocol) : expert.family
       const raw = (b?.thinkingDepth as ThinkingDepth | null) || ''
       const supported = supportedDepths(getThinkingCapability(fam, loadedModel))
@@ -56,6 +62,7 @@ export function useRoleBinding(expert: Expert): RoleBindingControls {
       setEndpointId(ep?.id ?? '')
       setModel(loadedModel)
       setDepth(clamped)
+      setImageModel(loadedImageModel)
       setLoaded(true)
     })
     return () => {
@@ -66,11 +73,12 @@ export function useRoleBinding(expert: Expert): RoleBindingControls {
   const selectedEp = endpoints.find((e) => e.id === endpointId) || null
   const family: Family = selectedEp ? protocolToFamily(selectedEp.protocol) : expert.family
   const models = (selectedEp?.availableModels ?? []).map((m) => m.slug)
+  const imageModels = imageModelOptions(models)
   const contextLength = selectedEp?.availableModels.find((m) => m.slug === model)?.contextLength ?? 0
   const depths = supportedDepths(getThinkingCapability(family, model))
 
-  const persist = (eId: string, m: string, d: ThinkingDepth | ''): void => {
-    void window.api.roles.setBinding(expert.id, { endpointId: eId || null, model: m || null, thinkingDepth: d || null })
+  const persist = (eId: string, m: string, d: ThinkingDepth | '', im: string): void => {
+    void window.api.roles.setBinding(expert.id, { endpointId: eId || null, model: m || null, thinkingDepth: d || null, imageModel: im || null })
   }
   const clamp = (fam: Family, m: string, d: ThinkingDepth | ''): ThinkingDepth | '' => {
     if (!d) return ''
@@ -84,18 +92,22 @@ export function useRoleBinding(expert: Expert): RoleBindingControls {
     setEndpointId(v)
     setModel(m)
     setDepth(d)
-    persist(v, m, d)
+    persist(v, m, d, imageModel)
   }
   const onModel = (v: string): void => {
     const d = clamp(family, v, depth)
     setModel(v)
     setDepth(d)
-    persist(endpointId, v, d)
+    persist(endpointId, v, d, imageModel)
   }
   const onDepth = (v: string): void => {
     setDepth(v as ThinkingDepth | '')
-    persist(endpointId, model, v as ThinkingDepth | '')
+    persist(endpointId, model, v as ThinkingDepth | '', imageModel)
+  }
+  const onImageModel = (v: string): void => {
+    setImageModel(v)
+    persist(endpointId, model, depth, v)
   }
 
-  return { loaded, endpoints, endpointId, model, depth, family, models, contextLength, depths, onEndpoint, onModel, onDepth }
+  return { loaded, endpoints, endpointId, model, depth, family, models, contextLength, depths, imageModel, imageModels, onEndpoint, onModel, onDepth, onImageModel }
 }

@@ -15,7 +15,7 @@ import type {
 // Maps the repo rows to the renderer-facing DTOs. Never touches IPC; never writes SQL directly.
 
 function toBindingDto(b: roleRepo.RoleBinding): RoleBindingDto {
-  return { roleId: b.roleId, endpointId: b.endpointId, model: b.model, thinkingDepth: b.thinkingDepth }
+  return { roleId: b.roleId, endpointId: b.endpointId, model: b.model, thinkingDepth: b.thinkingDepth, imageModel: b.imageModel }
 }
 
 function toStateDto(s: roleRepo.RoleState): RoleStateDto {
@@ -30,12 +30,19 @@ export function setBinding(roleId: string, input: RoleBindingInput): RoleBinding
   roleRepo.setBinding(roleId, {
     endpointId: input.endpointId ?? null,
     model: input.model ?? null,
-    thinkingDepth: input.thinkingDepth ?? null
+    thinkingDepth: input.thinkingDepth ?? null,
+    imageModel: input.imageModel ?? null
   })
   const b = roleRepo.getBinding(roleId)
   return b
     ? toBindingDto(b)
-    : { roleId, endpointId: input.endpointId ?? null, model: input.model ?? null, thinkingDepth: input.thinkingDepth ?? null }
+    : {
+        roleId,
+        endpointId: input.endpointId ?? null,
+        model: input.model ?? null,
+        thinkingDepth: input.thinkingDepth ?? null,
+        imageModel: input.imageModel ?? null
+      }
 }
 
 export function listStates(): RoleStateDto[] {

@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS role_bindings (
   endpoint_id    TEXT,
   model          TEXT,
   thinking_depth TEXT,                            -- low | medium | high | max (null = provider default)
+  image_model    TEXT,                            -- designer's image backend slug (null = Nano Banana Pro default)
   FOREIGN KEY (endpoint_id) REFERENCES endpoints (id) ON DELETE SET NULL
 );
 
