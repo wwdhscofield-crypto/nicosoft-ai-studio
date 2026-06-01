@@ -424,3 +424,57 @@ export function ConfirmDialog({
     </div>
   )
 }
+
+/* — Reusable single-input prompt dialog (e.g. rename a conversation) — */
+export function PromptDialog({
+  title,
+  initial,
+  confirmLabel,
+  placeholder,
+  onConfirm,
+  onClose
+}: {
+  title: string
+  initial?: string
+  confirmLabel: string
+  placeholder?: string
+  onConfirm: (value: string) => void
+  onClose: () => void
+}): ReactElement {
+  const [value, setValue] = useState(initial ?? '')
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    ref.current?.focus()
+    ref.current?.select()
+  }, [])
+  const submit = (): void => {
+    const v = value.trim()
+    if (v) onConfirm(v)
+    onClose()
+  }
+  return (
+    <div className="overlay" onMouseDown={onClose}>
+      <div className="dialog confirm" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="dialog-head">
+          <span className="dh-title">{title}</span>
+          <button className="icon-btn" onClick={onClose}><Icons.x size={16} /></button>
+        </div>
+        <div className="dialog-body">
+          <input
+            ref={ref}
+            className="input"
+            value={value}
+            placeholder={placeholder}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') submit(); else if (e.key === 'Escape') onClose() }}
+          />
+        </div>
+        <div className="dialog-foot">
+          <div className="df-spacer" />
+          <button className="btn ghost sm" onClick={onClose}>Cancel</button>
+          <button className="btn primary sm" onClick={submit}>{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  )
+}

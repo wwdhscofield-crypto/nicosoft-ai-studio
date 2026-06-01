@@ -14,6 +14,7 @@ import { useWorkspace } from '@/stores/workspace'
 import { Avatar, NameChip } from '@/components/primitives'
 import { useChat, roleHasAgent, type ChatMessage } from '@/stores/chat'
 import { ToolBubble } from '@/components/tool-bubble'
+import { Markdown } from '@/components/markdown'
 import { ApprovalDialog } from '@/components/approval-dialog'
 import { useRoleBinding } from '@/lib/use-role-binding'
 import { fileToImage, imagesFromClipboard, type ImageAttachment } from '@/lib/image'
@@ -46,7 +47,13 @@ function ChatSegment({
         </div>
       </div>
       <div className={'seg-body' + (isUser ? ' primary' : '')}>
-        {msg.text ? <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{msg.text}</p> : null}
+        {msg.text ? (
+          isUser ? (
+            <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{msg.text}</p>
+          ) : (
+            <Markdown>{msg.text}</Markdown>
+          )
+        ) : null}
         {msg.images && msg.images.length > 0 ? (
           <div className="msg-images">
             {msg.images.map((img, i) => (

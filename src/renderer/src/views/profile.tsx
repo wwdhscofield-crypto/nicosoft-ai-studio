@@ -2,7 +2,7 @@
    NicoSoft AI Studio — User profile / "About you"
    Shared context that helps every expert understand the user.
    ============================================================ */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
 import { Icons } from '@/components/icons'
 import { STUDIO_DATA } from '@/data/studio-data'
@@ -29,14 +29,13 @@ const TIMEZONES = [
 ]
 
 const PROFILE_DEFAULTS = {
-  name: 'Nico',
-  occupation: 'Indie developer',
-  stack: 'TypeScript · React · Python',
+  name: '',
+  occupation: '',
+  stack: '',
   tone: 'Friendly',
   lang: 'auto',
   tz: TIMEZONES[0],
-  about:
-    "Building a desktop AI workspace. I prefer terse, technical answers — code first, prose second — and I'd rather be told I'm wrong than flattered."
+  about: ''
 }
 
 interface SelectControlProps {
@@ -105,13 +104,35 @@ export function Dropdown({
 
 export function ProfileForm({ compact, nudgeName }: { compact?: boolean; nudgeName?: boolean }): ReactElement {
   const [p, setP] = useState(PROFILE_DEFAULTS)
+  const [loaded, setLoaded] = useState(false)
+  const [dirty, setDirty] = useState(false)
+  // Load the persisted profile once, then auto-save (debounced) ONLY after the user actually edits — a
+  // first-run user who never touches the form must not get blank/default values persisted as their
+  // profile (Batch 4 injects settings('profile') into every request as the shared context layer).
+  useEffect(() => {
+    void window.api.settings.get<Partial<typeof PROFILE_DEFAULTS>>('profile').then((saved) => {
+      if (saved) {
+        setP((prev) => ({ ...prev, ...saved }))
+        if (saved.name) STUDIO_DATA.USER_PROFILE.name = saved.name.trim()
+      }
+      setLoaded(true)
+    })
+  }, [])
+  useEffect(() => {
+    if (!loaded || !dirty) return
+    const t = setTimeout(() => void window.api.settings.set('profile', p), 400)
+    return () => clearTimeout(t)
+  }, [p, loaded, dirty])
   const set =
     (k: keyof typeof PROFILE_DEFAULTS) =>
-    (v: string): void =>
+    (v: string): void => {
       setP((prev) => ({ ...prev, [k]: v }))
+      setDirty(true)
+    }
   const setName = (v: string): void => {
     setP((prev) => ({ ...prev, name: v }))
-    if (STUDIO_DATA) STUDIO_DATA.USER_PROFILE.name = v.trim() // reflect in conversations
+    setDirty(true)
+    STUDIO_DATA.USER_PROFILE.name = v.trim() // reflect in conversations
   }
   // Settings (full form) uses dropdowns; the compact onboarding step keeps segmented.
   const ToneControl = compact ? Segmented : Dropdown

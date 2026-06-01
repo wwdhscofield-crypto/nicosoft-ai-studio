@@ -64,6 +64,16 @@ export default function App(): ReactElement {
     void chat.loadConversations()
   }, [chat.loadConversations])
 
+  // First-run gate: when localStorage hasn't already chosen a view, honor the durable onboarded flag so
+  // clearing localStorage doesn't replay onboarding once it's been completed.
+  useEffect(() => {
+    if (persisted.view) return
+    void window.api.settings.get<boolean>('onboarded').then((done) => {
+      if (done) setView('studio')
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {

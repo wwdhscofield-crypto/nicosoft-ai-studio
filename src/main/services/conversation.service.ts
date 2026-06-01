@@ -86,3 +86,25 @@ export async function generateTitle(input: ConversationTitleInput): Promise<stri
 export function remove(convId: string): void {
   convRepo.remove(convId)
 }
+
+// Serialize a conversation to Markdown or JSON for the export action (the handler writes it to disk).
+export function exportContent(convId: string, format: 'md' | 'json'): { content: string; suggestedName: string } {
+  const conv = convRepo.getById(convId)
+  const msgs = convRepo.listByConversation(convId)
+  const title = conv?.title || 'Conversation'
+  const safe = (title.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 50) || 'conversation').toLowerCase()
+  if (format === 'json') {
+    const payload = {
+      title,
+      exportedAt: new Date().toISOString(),
+      messages: msgs.map((m) => ({ author: m.author, expertId: m.expertId, model: m.model, content: m.content, createdAt: m.createdAt }))
+    }
+    return { content: JSON.stringify(payload, null, 2), suggestedName: `${safe}.json` }
+  }
+  const lines = [`# ${title}`, '']
+  for (const m of msgs) {
+    const who = m.author === 'user' ? 'You' : m.expertId ? m.expertId.charAt(0).toUpperCase() + m.expertId.slice(1) : 'Assistant'
+    lines.push(`## ${who}`, '', m.content, '')
+  }
+  return { content: lines.join('\n').trimEnd() + '\n', suggestedName: `${safe}.md` }
+}

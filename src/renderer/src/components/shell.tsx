@@ -5,9 +5,10 @@ import { useState } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
 import { Icons } from '@/components/icons'
 import { Avatar } from '@/components/primitives'
-import { ConfirmDialog } from '@/components/dialogs'
+import { ConfirmDialog, PromptDialog } from '@/components/dialogs'
 import { STUDIO_DATA } from '@/data/studio-data'
 import { useRoles } from '@/stores/roles'
+import { useChat } from '@/stores/chat'
 import type { Expert } from '@/types'
 import type { ConversationDto } from '@/lib/api'
 
@@ -22,7 +23,16 @@ export function Topbar({
   onSettings: () => void
   workspace?: { open: boolean; onToggle: () => void } | null
 }): ReactElement {
+  const chat = useChat()
+  const cid = chat.activeConv
+  const curTitle = chat.conversations.find((c) => c.id === cid)?.title ?? ''
   const [menu, setMenu] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+  const [confirmDel, setConfirmDel] = useState(false)
+  const doExport = (fmt: 'md' | 'json'): void => {
+    setMenu(false)
+    if (cid) void window.api.conversations.export(cid, fmt)
+  }
   return (
     <div className="topbar">
       <div className="spacer" />
@@ -44,9 +54,10 @@ export function Topbar({
                 <>
                   <div className="menu-backdrop" onClick={() => setMenu(false)} />
                   <div className="row-menu right">
-                    <div className="rm-item" onClick={() => setMenu(false)}><Icons.edit size={14} /> Rename</div>
-                    <div className="rm-item" onClick={() => setMenu(false)}><Icons.download size={14} /> Export</div>
-                    <div className="rm-item danger" onClick={() => setMenu(false)}><Icons.trash size={14} /> Delete</div>
+                    <div className="rm-item" onClick={() => { setMenu(false); setRenaming(true) }}><Icons.edit size={14} /> Rename</div>
+                    <div className="rm-item" onClick={() => doExport('md')}><Icons.download size={14} /> Export Markdown</div>
+                    <div className="rm-item" onClick={() => doExport('json')}><Icons.download size={14} /> Export JSON</div>
+                    <div className="rm-item danger" onClick={() => { setMenu(false); setConfirmDel(true) }}><Icons.trash size={14} /> Delete</div>
                   </div>
                 </>
               )}
@@ -61,6 +72,25 @@ export function Topbar({
           <Icons.settings size={17} />
         </button>
       </div>
+      {renaming && cid && (
+        <PromptDialog
+          title="Rename conversation"
+          initial={curTitle}
+          confirmLabel="Rename"
+          onConfirm={(v) => void chat.rename(cid, v)}
+          onClose={() => setRenaming(false)}
+        />
+      )}
+      {confirmDel && cid && (
+        <ConfirmDialog
+          title="Delete conversation"
+          body="This permanently deletes this conversation and its messages. This can't be undone."
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => void chat.removeConversation(cid)}
+          onClose={() => setConfirmDel(false)}
+        />
+      )}
     </div>
   )
 }

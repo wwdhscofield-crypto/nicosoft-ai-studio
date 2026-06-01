@@ -128,7 +128,9 @@ const api = {
       ipcRenderer.invoke('conversations:rename', convId, title),
     title: (input: ConversationTitleInput): Promise<string> =>
       ipcRenderer.invoke('conversations:title', input),
-    remove: (convId: string): Promise<void> => ipcRenderer.invoke('conversations:remove', convId)
+    remove: (convId: string): Promise<void> => ipcRenderer.invoke('conversations:remove', convId),
+    export: (convId: string, format: 'md' | 'json'): Promise<string | null> =>
+      ipcRenderer.invoke('conversations:export', convId, format)
   },
   memory: {
     list: (): Promise<MemoryDto[]> => ipcRenderer.invoke('memory:list'),

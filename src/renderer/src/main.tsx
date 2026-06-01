@@ -8,6 +8,7 @@ import '@fontsource/jetbrains-mono/600.css'
 
 import './styles/styles.css'
 import './styles/screens.css'
+import './styles/markdown.css'
 import './styles/agent.css'
 import './styles/electron-overrides.css'
 
