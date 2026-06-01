@@ -113,9 +113,13 @@ export function getThinkingCapability(family: Family, slug: string): ThinkingCap
     return depths.length === 0 ? { kind: 'none' } : { kind: 'effort', depths }
   }
   if (family === 'gemini') {
-    if (s.includes('gemini-3')) return { kind: 'effort', depths: GEMINI3_DEPTHS }
+    // Explicit 2.5 sub-models use token budgets — check BEFORE the -latest alias so any
+    // gemini-2.5-*-latest still maps to budget rather than effort.
     if (s.includes('gemini-2.5-pro')) return { kind: 'budget', mapping: GEMINI_PRO_BUDGET }
     if (s.includes('gemini-2.5-flash')) return { kind: 'budget', mapping: GEMINI_FLASH_BUDGET }
+    // Gemini 3.x and the rolling -latest aliases (gemini-pro-latest / gemini-flash-latest, which track
+    // the newest Gemini 3.x release) expose the effort knob: low / medium / high.
+    if (s.includes('gemini-3') || s.endsWith('-latest')) return { kind: 'effort', depths: GEMINI3_DEPTHS }
     return { kind: 'none' } // gemini-2.0 / 1.x / imagen
   }
   return { kind: 'none' }
