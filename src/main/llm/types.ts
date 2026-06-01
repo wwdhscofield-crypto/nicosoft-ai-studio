@@ -35,6 +35,8 @@ export interface ChatMessage {
   role: 'system' | 'user' | 'assistant'
   content: string
   attachments?: ChatAttachment[]
+  toolCalls?: ToolCall[] // assistant turn that called tools (Gemini functionCall)
+  toolResults?: ToolResult[] // user turn returning tool results (Gemini functionResponse)
 }
 
 // Resolved thinking directive. The renderer's thinking engine (renderer/src/lib/thinking.ts) picks
@@ -52,6 +54,7 @@ export interface ChatRequest {
   model: string
   messages: ChatMessage[]
   thinking?: ThinkingParam // only sent for models that support it (resolved by the thinking engine)
+  tools?: ToolDeclaration[] // function-calling declarations (Gemini-only for now; others ignore)
   signal?: AbortSignal
 }
 
@@ -64,6 +67,32 @@ export interface ChatResult {
   text: string
   usage: ChatUsage
   model: string
+  toolCalls?: ToolCall[] // tools the model called this turn, if any (drives the tool loop)
+}
+
+// Image generation result (Gemini image protocols — see llm/gemini-image.ts). One-shot, not streamed.
+export interface ImageGenResult {
+  images: { base64: string; mime: string }[]
+  note?: string // the model's own text description of the generated image, if it returned one
+}
+
+// Tool / function calling. A tool the model may call (Gemini functionDeclarations); JSON-Schema params.
+// Gemini-only for now — other adapters ignore `tools` and never emit toolCalls.
+export interface ToolDeclaration {
+  name: string
+  description: string
+  parameters: Record<string, unknown> // JSON Schema object
+}
+// A call the model emitted this turn, and the result fed back on the next turn.
+export interface ToolCall {
+  id: string
+  name: string
+  args: Record<string, unknown>
+}
+export interface ToolResult {
+  id: string
+  name: string
+  result: unknown
 }
 
 // Streaming delta callback — invoked per token/chunk as text arrives.

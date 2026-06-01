@@ -1,8 +1,13 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, protocol } from 'electron'
 import { join } from 'path'
 import { getDb } from './db/connection'
 import { registerIpc } from './ipc/register'
+import { registerMediaProtocol, MEDIA_PRIVILEGED_SCHEME } from './media/protocol'
 import { runIdleSweep } from './services/memory.service'
+
+// Privileged schemes MUST be declared before app.whenReady. nsai-media:// serves local image files
+// (media/storage.ts) so attachments load by reference instead of base64-inlining into the DB/DOM.
+protocol.registerSchemesAsPrivileged([MEDIA_PRIVILEGED_SCHEME])
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -53,6 +58,7 @@ ipcMain.on('app:maximize', (e) => {
 
 app.whenReady().then(() => {
   getDb() // open SQLite + run migrations (idempotent) before any IPC handler can hit it
+  registerMediaProtocol() // nsai-media:// → local image files, before the window loads any attachment
   registerIpc()
   createWindow()
   // Idle memory-extraction sweep: every minute, extract for conversations whose idle timer elapsed.

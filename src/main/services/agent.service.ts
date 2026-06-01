@@ -20,6 +20,7 @@ import { ENGINEER_SYSTEM_PROMPT } from '../agent/system-prompt'
 import type { AgentRunInput, ToolCallDto } from '../ipc/contracts'
 import * as keychain from '../keychain/keychain'
 import { LlmError } from '../llm/types'
+import { resolveToDataUrl } from '../media/storage'
 import * as endpointRepo from '../repos/endpoint.repo'
 import * as convRepo from '../repos/conversation.repo'
 import * as summaryRepo from '../repos/summary.repo'
@@ -212,7 +213,7 @@ function conversationToAgentMessages(messages: convRepo.MessageRow[]): AgentMess
       if (m.content) content.push({ type: 'text', text: m.content })
       for (const a of m.attachments as { url?: string }[]) {
         if (typeof a.url !== 'string') continue
-        const mm = /^data:([^;]+);base64,(.*)$/s.exec(a.url)
+        const mm = /^data:([^;]+);base64,(.*)$/s.exec(resolveToDataUrl(a.url))
         if (mm) content.push({ type: 'image', source: { type: 'base64', media_type: mm[1], data: mm[2] } })
       }
       if (content.length === 0) content.push({ type: 'text', text: '' })

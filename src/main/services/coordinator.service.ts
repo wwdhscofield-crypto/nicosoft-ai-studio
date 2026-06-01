@@ -28,6 +28,7 @@ import { chat as llmChat } from '../llm/client'
 import { countContext } from './token-count.service'
 import { pickSmallModel } from './model-select'
 import { LlmError, type ChatAttachment, type ChatMessage } from '../llm/types'
+import { resolveToDataUrl } from '../media/storage'
 import {
   COORDINATOR_COUNCIL_SYNTHESIS_PROMPT,
   COORDINATOR_DIRECT_PROMPT,
@@ -527,7 +528,7 @@ function messageAttachments(raw: unknown): ChatAttachment[] {
   if (!Array.isArray(raw)) return []
   const out: ChatAttachment[] = []
   for (const a of raw as { url?: string; mime?: string }[]) {
-    if (typeof a.url === 'string') out.push({ type: 'image', url: a.url, mime: a.mime })
+    if (typeof a.url === 'string') out.push({ type: 'image', url: resolveToDataUrl(a.url), mime: a.mime })
   }
   return out
 }
@@ -625,7 +626,7 @@ async function facilitate(question: string, positions: { role: string; text: str
       const obj = JSON.parse(m[0]) as { action?: unknown; role?: unknown }
       if (obj.action === 'add' && typeof obj.role === 'string') {
         const rid = roleIdFromName(obj.role)
-        if (available.includes(rid)) return { action: 'add', role: rid }
+        if (available.some((r) => r === rid)) return { action: 'add', role: rid }
       }
       if (obj.action === 'continue') return { action: 'continue' }
     }

@@ -10,7 +10,7 @@ import { runMigrations } from './migrate'
 // default userData dir.
 let instance: DatabaseSync | null = null
 
-function dataDir(): string {
+export function dataDir(): string {
   const dir = join(homedir(), '.nsai')
   mkdirSync(dir, { recursive: true })
   return dir

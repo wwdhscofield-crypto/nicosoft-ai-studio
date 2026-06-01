@@ -1,5 +1,6 @@
 import * as convRepo from '../repos/conversation.repo'
 import * as titleService from './title.service'
+import { persistDataUrl, removeConversationMedia } from '../media/storage'
 import type {
   ConversationCreateDto,
   ConversationDto,
@@ -55,12 +56,16 @@ export function messages(convId: string): MessageDto[] {
 }
 
 export function append(convId: string, input: MessageAppendDto): MessageDto {
+  // Every image attachment is written to the media store first; the DB keeps only the nsai-media://
+  // reference (a base64 data: URL would bloat sqlite). Non-image / already-referenced attachments
+  // pass through untouched. Covers ALL roles — user vision uploads, designer art, anyone's pictures.
+  const attachments = (input.attachments ?? []).map((a) => persistDataUrl(convId, a))
   const row = convRepo.append(convId, {
     author: input.author,
     expertId: input.expertId,
     model: input.model,
     content: input.content,
-    attachments: input.attachments ?? [],
+    attachments,
     runId: input.runId,
     inTokens: input.inputTokens,
     dispatch: input.dispatch
@@ -87,6 +92,7 @@ export async function generateTitle(input: ConversationTitleInput): Promise<stri
 
 export function remove(convId: string): void {
   convRepo.remove(convId)
+  removeConversationMedia(convId) // DB rows cascade via FK; the media files don't — drop them too
 }
 
 // Serialize a conversation to Markdown or JSON for the export action (the handler writes it to disk).

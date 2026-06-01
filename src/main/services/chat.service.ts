@@ -10,6 +10,7 @@ import { pickSmallModel } from './model-select'
 import { LlmError } from '../llm/types'
 import type { ChatAttachment, ChatMessage, ChatResult } from '../llm/types'
 import type { ChatSendInput } from '../ipc/contracts'
+import { resolveToDataUrl } from '../media/storage'
 
 // Chat send. The backend assembles the full 5-layer context from the conversation id (the renderer no
 // longer ships the message array): system prompt + recalled memories + conversation summary + recent
@@ -98,7 +99,7 @@ async function buildContext(input: ChatSendInput): Promise<ChatMessage[]> {
     const atts = Array.isArray(m.attachments)
       ? (m.attachments as { url?: string; mime?: string }[])
           .filter((a) => typeof a.url === 'string')
-          .map((a) => ({ type: 'image' as const, url: a.url as string, mime: a.mime }))
+          .map((a) => ({ type: 'image' as const, url: resolveToDataUrl(a.url as string), mime: a.mime }))
       : []
     messages.push({ role, content: m.content, ...(atts.length ? { attachments: atts } : {}) })
   }

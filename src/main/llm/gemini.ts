@@ -4,8 +4,9 @@
 // mislabel it text/event-stream while still sending a bare array). Each array element carries text in
 // candidates[0].content.parts and cumulative usage in usageMetadata.
 
-import type { ChatAttachment, ChatFn, ChatMessage, ChatRequest, ChatResult, OnDelta } from './types'
+import type { ChatAttachment, ChatFn, ChatMessage, ChatRequest, ChatResult, OnDelta, ToolCall } from './types'
 import { openStream, parseJSON, toLlmError } from './_shared'
+import { ulid } from '../db/id'
 
 const PROVIDER = 'gemini'
 
@@ -15,17 +16,29 @@ interface TextPart {
 interface InlineDataPart {
   inlineData: { mimeType: string; data: string }
 }
-type Part = TextPart | InlineDataPart
+interface FunctionCallPart {
+  functionCall: { name: string; args?: Record<string, unknown> }
+}
+interface FunctionResponsePart {
+  functionResponse: { name: string; response: Record<string, unknown> }
+}
+type Part = TextPart | InlineDataPart | FunctionCallPart | FunctionResponsePart
 
 interface Content {
   role: 'user' | 'model'
   parts: Part[]
 }
 
+interface FunctionDeclaration {
+  name: string
+  description: string
+  parameters: Record<string, unknown>
+}
 interface GeminiBody {
   contents: Content[]
   systemInstruction?: { parts: TextPart[] }
   generationConfig?: { thinkingConfig: { thinkingBudget: number } }
+  tools?: { functionDeclarations: FunctionDeclaration[] }[]
 }
 
 // Build an inlineData part from an attachment. Gemini wants raw base64 (no data: prefix) plus mime.
@@ -45,6 +58,13 @@ function inlinePart(att: ChatAttachment): InlineDataPart | null {
   return null
 }
 
+// Gemini's functionResponse.response must be a JSON object — wrap a non-object result.
+function asResponse(result: unknown): Record<string, unknown> {
+  return result && typeof result === 'object' && !Array.isArray(result)
+    ? (result as Record<string, unknown>)
+    : { result }
+}
+
 function toContents(messages: ChatMessage[]): Content[] {
   const out: Content[] = []
   for (const m of messages) {
@@ -54,6 +74,10 @@ function toContents(messages: ChatMessage[]): Content[] {
       const p = inlinePart(att)
       if (p) parts.push(p)
     }
+    // An assistant turn may carry tool calls (functionCall); a user turn may carry their results
+    // (functionResponse). These let the designer's chat+tool loop replay a multi-turn function call.
+    for (const tc of m.toolCalls ?? []) parts.push({ functionCall: { name: tc.name, args: tc.args } })
+    for (const tr of m.toolResults ?? []) parts.push({ functionResponse: { name: tr.name, response: asResponse(tr.result) } })
     if (m.content) parts.push({ text: m.content })
     if (parts.length === 0) parts.push({ text: '' })
     out.push({ role: m.role === 'assistant' ? 'model' : 'user', parts })
@@ -74,11 +98,17 @@ function buildBody(req: ChatRequest): GeminiBody {
   if (typeof budget === 'number' && budget > 0) {
     body.generationConfig = { thinkingConfig: { thinkingBudget: budget } }
   }
+  if (req.tools?.length) {
+    body.tools = [
+      { functionDeclarations: req.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })) }
+    ]
+  }
   return body
 }
 
 interface GeminiPart {
   text?: string
+  functionCall?: { name?: string; args?: Record<string, unknown> }
 }
 interface GeminiChunk {
   candidates?: { content?: { parts?: GeminiPart[] } }[]
@@ -157,6 +187,7 @@ export const chatGemini: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Pr
   let text = ''
   let inTokens = 0
   let outTokens = 0
+  const toolCalls: ToolCall[] = []
 
   try {
     for await (const chunk of iterJsonArray(reader)) {
@@ -164,6 +195,12 @@ export const chatGemini: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Pr
       if (delta.length > 0) {
         text += delta
         onDelta({ text: delta })
+      }
+      // Collect any functionCall parts the model emitted (function calling — drives the tool loop).
+      for (const c of chunk.candidates ?? []) {
+        for (const p of c.content?.parts ?? []) {
+          if (p.functionCall?.name) toolCalls.push({ id: ulid(), name: p.functionCall.name, args: p.functionCall.args ?? {} })
+        }
       }
       const u = chunk.usageMetadata
       if (u) {
@@ -176,5 +213,5 @@ export const chatGemini: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Pr
     throw toLlmError(PROVIDER, err)
   }
 
-  return { text, usage: { inTokens, outTokens }, model: req.model }
+  return { text, usage: { inTokens, outTokens }, model: req.model, ...(toolCalls.length ? { toolCalls } : {}) }
 }

@@ -253,9 +253,10 @@ export interface CustomRoleUpdateDto {
 
 // === Conversations (persisted chat threads) ===
 export interface MessageAttachmentDto {
-  url: string
+  url: string // nsai-media://<convId>/<imgId>.<ext> reference (image kind); never base64 in the DB
   name?: string
   mime?: string
+  kind?: string // 'image' for pictures persisted to the media store. See main/media/storage.ts.
 }
 export interface ConversationDto {
   id: string
