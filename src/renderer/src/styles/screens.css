@@ -16,8 +16,8 @@
 
 /* message list */
 .msg-list { flex: 1; overflow-y: auto; overflow-x: hidden; }
-.msg-inner { max-width: 760px; margin: 0 auto; padding: 24px 28px 28px; }
-.w-1024 .msg-inner { max-width: 680px; padding: 22px 24px 26px; }
+.msg-inner { max-width: 760px; margin: 0 auto; padding: 24px 0 28px; }
+.w-1024 .msg-inner { max-width: 680px; padding: 22px 0 26px; }
 
 /* dispatch badge */
 .dispatch {
@@ -35,18 +35,12 @@
 /* message segment */
 .segment {
   position: relative;
-  padding: 14px 0 14px 18px;
+  padding: 14px 0;
   animation: fade-in 0.25s both;
 }
-.segment::before {
-  content: ""; position: absolute; left: 0; top: 16px; bottom: 16px;
-  width: 1px; border-radius: 1px; background: var(--seg-color, var(--border-2));
-}
-.segment.user::before { background: var(--border-2); left: auto; right: 0; }
-
 /* user's own messages sit on the RIGHT, experts stay left full-width */
 .segment.user {
-  padding-left: 0; padding-right: 18px;
+  padding-left: 0; padding-right: 0;
   display: flex; flex-direction: column; align-items: flex-end;
 }
 .segment.user .seg-head { flex-direction: row-reverse; }
