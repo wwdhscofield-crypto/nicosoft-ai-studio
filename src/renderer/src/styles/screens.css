@@ -67,6 +67,14 @@
   padding: 1px 6px; border-radius: 4px;
 }
 .seg-head .ts { font-size: 11px; color: var(--text-4); margin-left: auto; font-variant-numeric: tabular-nums; }
+/* Folding: collapsed dispatched-expert steps (parallel/council) show a one-line preview; click to expand. */
+.seg-head.foldable { cursor: pointer; border-radius: 6px; margin-left: -4px; padding: 2px 4px; }
+.seg-head.foldable:hover { background: rgba(255, 255, 255, 0.04); }
+.seg-head .fold-caret { font-size: 10px; color: var(--text-4); flex-shrink: 0; }
+.seg-meta .fold-preview-inline { color: var(--text-4); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.segment.folded { opacity: 0.82; }
+.segment.folded:hover { opacity: 1; }
+.segment.folded .seg-head { margin-bottom: 0; }
 
 /* segment body markdown */
 .seg-body { color: var(--text-2); font-size: 14px; line-height: 1.6; }

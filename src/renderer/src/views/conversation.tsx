@@ -55,13 +55,39 @@ function ChatSegment({
   const renderExpert = msgExpert ?? expert
   const synthesis = isSynthesis(msg)
   const segColor = isUser ? 'var(--border-2)' : synthesis ? 'var(--accent)' : renderExpert.color
+  // Foldable: a dispatched expert step inside a panel/debate (has a chain, isn't Atlas's intro/synthesis).
+  // Parallel/council stack many of these, so once a step finishes streaming we collapse it to a one-line
+  // summary — the user watches it stream live, then it folds away, leaving Atlas's synthesis prominent.
+  const foldable = !isUser && !synthesis && !!msg.dispatch?.length && msg.expertId != null && msg.expertId !== 'atlas'
+  const [collapsed, setCollapsed] = useState(false)
+  const [touched, setTouched] = useState(false)
+  useEffect(() => {
+    if (foldable && !msg.streaming && !touched) setCollapsed(true)
+  }, [foldable, msg.streaming, touched])
+  const toggle = (): void => { setTouched(true); setCollapsed((c) => !c) }
+  const firstLine = (msg.text.split('\n').find((l) => l.trim()) ?? '').replace(/^#+\s*/, '').replace(/\*\*/g, '')
+  if (foldable && collapsed) {
+    return (
+      <div className="segment folded" style={{ '--seg-color': segColor } as CSSProperties}>
+        <div className="seg-head foldable" onClick={toggle}>
+          <Avatar expert={renderExpert} size={28} />
+          <div className="seg-meta">
+            <NameChip expert={renderExpert} />
+            <span className="fold-caret">▸</span>
+            <span className="fold-preview-inline">{firstLine.slice(0, 90)}{firstLine.length > 90 ? '…' : ''}</span>
+          </div>
+        </div>
+      </div>
+    )
+  }
   return (
     <div className={'segment' + (isUser ? ' user' : '')} style={{ '--seg-color': segColor } as CSSProperties}>
-      <div className="seg-head">
+      <div className={'seg-head' + (foldable ? ' foldable' : '')} onClick={foldable ? toggle : undefined}>
         <Avatar expert={isUser ? null : renderExpert} you={isUser} size={28} streaming={msg.streaming} />
         <div className="seg-meta">
           <NameChip expert={isUser ? null : renderExpert} neutral={isUser} />
           {synthesis ? <span className="synthesis-tag">synthesis</span> : null}
+          {foldable ? <span className="fold-caret">▾</span> : null}
         </div>
       </div>
       <div className={'seg-body' + (isUser || synthesis ? ' primary' : '')}>
