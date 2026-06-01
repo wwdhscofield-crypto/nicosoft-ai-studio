@@ -43,7 +43,9 @@ await page.keyboard.press('Enter')
 const t0 = Date.now()
 let textAt = 0
 let imgAt = 0
-for (let i = 0; i < 180; i++) {
+let textLenAtImg = 0
+let lastTextLen = 0
+for (let i = 0; i < 220; i++) {
   await page.waitForTimeout(200)
   const st = await page.evaluate(() => {
     const segs = [...document.querySelectorAll('.segment')]
@@ -60,16 +62,21 @@ for (let i = 0; i < 180; i++) {
     return { textLen, hasImg, streaming: !!document.querySelector('.cmp-stop') }
   })
   if (!textAt && st.textLen > 3) textAt = Date.now() - t0
-  if (!imgAt && st.hasImg) imgAt = Date.now() - t0
-  if (textAt && imgAt) break
-  if (!st.streaming && i > 3) break
+  if (!imgAt && st.hasImg) {
+    imgAt = Date.now() - t0
+    textLenAtImg = st.textLen
+  }
+  lastTextLen = st.textLen
+  if (!st.streaming && i > 3 && imgAt) break // turn finished after the image landed
 }
-console.log(`text@${textAt}ms  image@${imgAt}ms`)
+console.log(`text@${textAt}ms  image@${imgAt}ms  textLen@image=${textLenAtImg} final=${lastTextLen}`)
 await page.screenshot({ path: '/tmp/designer-async.png', fullPage: true })
 assert.ok(textAt > 0, 'assistant produced reply text')
 assert.ok(imgAt > 0, 'async image generation completed and rendered')
 assert.ok(textAt < imgAt, `TEXT-FIRST violated: text@${textAt}ms not before image@${imgAt}ms`)
 console.log(`✓ text-first: reply text led the image by ${imgAt - textAt}ms`)
+assert.ok(lastTextLen > textLenAtImg, `closing follow-up expected: reply text should grow after the image (@image ${textLenAtImg}, final ${lastTextLen})`)
+console.log(`✓ closing follow-up: designer added +${lastTextLen - textLenAtImg} chars after the image landed`)
 
 console.log(errors.length ? '✗ page errors: ' + JSON.stringify(errors) : '✓ no page errors')
 await app.close()

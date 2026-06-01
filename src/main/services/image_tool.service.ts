@@ -147,6 +147,7 @@ export async function run(input: ImageToolRunInput, cb: ImageToolCallbacks, sign
   // multi-second render — so the model speaks in the next round while the image lands later via
   // cb.onImage. The turn awaits all pending generations before persisting so no attachment is lost.
   const pending: Promise<void>[] = []
+  let imageRequested = false
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const result = await chatGemini(
       { protocol: 'gemini', baseUrl: ep.baseUrl, apiKey, model: input.model, messages, thinking: input.thinking, tools: [NS_GENERATE_IMAGE], signal },
@@ -156,8 +157,14 @@ export async function run(input: ImageToolRunInput, cb: ImageToolCallbacks, sign
     outTokens += result.usage.outTokens
     if (result.text) finalText += result.text
 
-    if (!result.toolCalls?.length) break // model produced its final reply
+    if (!result.toolCalls?.length) {
+      // No more tool calls — this is the model's text-first acknowledgement ("I'm generating…"). Keep it
+      // in history so the closing follow-up below sees the full thread.
+      if (result.text) messages.push({ role: 'assistant', content: result.text })
+      break
+    }
 
+    imageRequested = true
     // Replay the model's tool call + our results so the next round sees them (Gemini functionResponse).
     messages.push({ role: 'assistant', content: result.text, toolCalls: result.toolCalls })
     const toolResults: ToolResult[] = []
@@ -172,7 +179,6 @@ export async function run(input: ImageToolRunInput, cb: ImageToolCallbacks, sign
           })
           .catch(() => {
             // Generation failed — the unfulfilled placeholder is dropped when the turn finishes (onDone).
-            // The model already told the user it was generating, so there's no synchronous error to inject.
           })
       )
       toolResults.push({
@@ -184,7 +190,33 @@ export async function run(input: ImageToolRunInput, cb: ImageToolCallbacks, sign
     messages.push({ role: 'user', content: '', toolResults })
   }
 
-  await Promise.allSettled(pending) // every async image is captured before the turn is persisted
+  await Promise.allSettled(pending) // every async image is captured before the closing reply + persist
+
+  // Closing follow-up: once the image(s) have actually landed, let the designer present the result — the
+  // way nsai chat speaks after its image tool finishes. The generation ran async for text-first, so the
+  // model already said it was creating the image; now we prompt one short wrap-up on the finished result.
+  // The synthetic system-style user turn only carries the outcome to the model; it's never persisted.
+  if (imageRequested) {
+    const n = attachments.length
+    messages.push({
+      role: 'user',
+      content:
+        n > 0
+          ? `[System: the ${n} image${n === 1 ? '' : 's'} you requested have finished generating and are now displayed to the user above.] In 1–2 short sentences, present the result and offer one refinement or next step. It is already done — do not say you are still generating.`
+          : '[System: the image generation failed.] In one short sentence, apologize and suggest trying again or adjusting the request.'
+    })
+    if (finalText) {
+      cb.onDelta('\n\n') // visual break between the "generating…" line and the closing presentation
+      finalText += '\n\n'
+    }
+    const closing = await chatGemini(
+      { protocol: 'gemini', baseUrl: ep.baseUrl, apiKey, model: input.model, messages, thinking: input.thinking, signal },
+      (d) => cb.onDelta(d.text)
+    )
+    if (closing.text) finalText += closing.text
+    inTokens = closing.usage.inTokens || inTokens
+    outTokens += closing.usage.outTokens
+  }
 
   usageRepo.record({ model: input.model, provider: 'gemini', inTokens, outTokens })
 
