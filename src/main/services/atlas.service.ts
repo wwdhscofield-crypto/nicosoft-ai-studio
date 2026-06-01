@@ -29,6 +29,8 @@ import { countContext } from './token-count.service'
 import { pickSmallModel } from './model-select'
 import { LlmError, type ChatAttachment, type ChatMessage } from '../llm/types'
 import {
+  ATLAS_CONVERGENCE_PROMPT,
+  ATLAS_COUNCIL_SYNTHESIS_PROMPT,
   ATLAS_DIRECT_PROMPT,
   ATLAS_PARALLEL_SYNTHESIS_PROMPT,
   ATLAS_ROUTER_PROMPT,
@@ -38,7 +40,7 @@ import {
 } from '../agent/roles/prompts'
 
 export interface RouteDecision {
-  mode: 'direct' | 'single' | 'pipeline' | 'parallel'
+  mode: 'direct' | 'single' | 'pipeline' | 'parallel' | 'council'
   role?: string
   roles?: string[]
   reason: string
@@ -138,6 +140,50 @@ export async function run(input: AtlasRunInput, cb: AtlasCallbacks, signal: Abor
     })
     const last = outputs[outputs.length - 1]
     fireSideEffects(input.convId, last.role, last.endpointId, last.model, last.inputTokens)
+    return { inputTokens: synth.inputTokens }
+  }
+
+  if (decision.mode === 'council') {
+    // B2: a multi-round DEBATE. Round 1 = independent proposals (like parallel); round 2+ = each expert
+    // sees everyone's prior positions and critiques/refines (adversarial). After each round Atlas judges
+    // convergence (pure judgment). MAX_ROUNDS is a runaway backstop, NOT the convergence strategy —
+    // normally Atlas stops at 2-3. Final: Atlas writes the converged verdict.
+    const MAX_ROUNDS = 6
+    const roles = decision.roles!
+    const fullChain = [...roles, 'atlas']
+    cb.onDispatch(fullChain, decision.reason)
+    if (decision.intro) emitAtlasIntro(input.convId, decision.intro, cb)
+
+    let positions: { role: string; text: string }[] = []
+    for (let round = 1; round <= MAX_ROUNDS; round++) {
+      const prev = positions
+      const settled = await Promise.all(
+        roles.map((roleId) => {
+          const prompt = round === 1 ? buildPanelPrompt(input.prompt, roleId) : buildCritiquePrompt(input.prompt, prev, roleId)
+          return runRoleStep({ convId: input.convId, roleId, prompt, dispatch: fullChain, includeHistory: false, cb, signal })
+            .then((out) => ({ role: roleId, text: out.text }))
+            .catch(() => null)
+        })
+      )
+      if (signal.aborted) throw new LlmError('network', 'aborted mid-council')
+      positions = settled.filter((p): p is { role: string; text: string } => !!p && !!p.text)
+      if (positions.length === 0) throw new LlmError('upstream', 'council produced no positions')
+      if (positions.length === 1) break // only one voice left → nothing left to debate
+      if (await checkConvergence(input.prompt, positions, round, signal)) break
+    }
+
+    const synthInput = buildCouncilSynthesisInput(input.prompt, positions)
+    const synth = await runRoleStep({
+      convId: input.convId,
+      roleId: 'atlas',
+      prompt: synthInput,
+      dispatch: fullChain,
+      includeHistory: false,
+      isCouncilSynthesis: true,
+      cb,
+      signal
+    })
+    fireSideEffects(input.convId, 'atlas', synth.endpointId, synth.model, synth.inputTokens)
     return { inputTokens: synth.inputTokens }
   }
 
@@ -306,10 +352,14 @@ export function parseRouteDecision(raw: string, enabled: readonly string[]): Rou
       ) {
         return { mode: obj.mode, roles: obj.roles as string[], reason, intro }
       }
-      // mode=council from the spec gracefully degrades to its first role (v0.3 feature).
-      if (obj.mode === 'council' && Array.isArray(obj.roles) && obj.roles.length > 0) {
-        const first = obj.roles.find((r: unknown) => typeof r === 'string' && enabled.includes(r as string))
-        if (typeof first === 'string') return { mode: 'single', role: first, reason: 'council→single (v0.3)' }
+      if (
+        obj.mode === 'council' &&
+        Array.isArray(obj.roles) &&
+        obj.roles.length >= 2 &&
+        obj.roles.length <= 3 &&
+        obj.roles.every((r: unknown) => typeof r === 'string' && enabled.includes(r))
+      ) {
+        return { mode: 'council', roles: obj.roles as string[], reason, intro }
       }
     } catch {
       /* try next candidate */
@@ -360,10 +410,13 @@ interface RunStepOptions {
   // isParallelSynthesis=true → Atlas merges a parallel panel (B1): use ATLAS_PARALLEL_SYNTHESIS_PROMPT,
   // skip memory recall like normal synthesis.
   isParallelSynthesis?: boolean
+  // isCouncilSynthesis=true → Atlas closes a multi-round debate (B2): use ATLAS_COUNCIL_SYNTHESIS_PROMPT,
+  // skip memory recall.
+  isCouncilSynthesis?: boolean
 }
 
 async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputTokens: number; endpointId: string; model: string }> {
-  const { convId, roleId, prompt, dispatch, cb, signal, includeHistory = false, isSynthesis = false, isDirect = false, isParallelSynthesis = false } = opts
+  const { convId, roleId, prompt, dispatch, cb, signal, includeHistory = false, isSynthesis = false, isDirect = false, isParallelSynthesis = false, isCouncilSynthesis = false } = opts
   const binding = roleRepo.getBinding(roleId)
   if (!binding?.endpointId || !binding.model) {
     throw new LlmError('bad_request', `role "${roleId}" has no endpoint binding`)
@@ -378,13 +431,15 @@ async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputT
     ? ATLAS_DIRECT_PROMPT
     : isParallelSynthesis
       ? ATLAS_PARALLEL_SYNTHESIS_PROMPT
-      : isSynthesis
-        ? ATLAS_SYNTHESIS_PROMPT
-        : buildRolePrompt(roleId)
+      : isCouncilSynthesis
+        ? ATLAS_COUNCIL_SYNTHESIS_PROMPT
+        : isSynthesis
+          ? ATLAS_SYNTHESIS_PROMPT
+          : buildRolePrompt(roleId)
   if (!systemPrompt) throw new LlmError('bad_request', `unknown role "${roleId}"`)
 
   const parts = [systemPrompt]
-  if (!isSynthesis && !isParallelSynthesis) {
+  if (!isSynthesis && !isParallelSynthesis && !isCouncilSynthesis) {
     // Inject memories + summary the same way chat.service does, so dispatched roles see what they've
     // learned about the user. Synthesis skips this (see RunStepOptions doc).
     const memories = await memoryService.recall({ convId, roleId, endpointId: binding.endpointId, model: binding.model })
@@ -502,6 +557,54 @@ function buildParallelSynthesisInput(originalQuery: string, outputs: { role: str
   for (const o of outputs) sections.push('', `## ${o.role}`, o.text)
   sections.push('', 'Now synthesize the panel for the user. Follow the rules in your system prompt — lead with your recommendation, surface agreement vs divergence, attribute distinct points.')
   return sections.join('\n')
+}
+
+// B2 council round 2+: each expert sees everyone's prior-round positions and critiques/refines.
+function buildCritiquePrompt(question: string, positions: { role: string; text: string }[], roleId: string): string {
+  const sections = [`Original question:\n${question}`, '', `The experts' positions so far (including yours):`]
+  for (const p of positions) sections.push('', `## ${p.role}${p.role === roleId ? ' (you)' : ''}`, p.text)
+  sections.push('', `You are ${roleId}. Critique and refine. Where another expert is wrong or missed something, say so directly and explain why. Where they convinced you, concede and update. Then restate YOUR position — sharper, accounting for the others. Don't agree just to agree; don't dig in out of stubbornness. Be substantive and concise, and don't label your answer with a round number.`)
+  return sections.join('\n')
+}
+
+function buildConvergenceInput(question: string, positions: { role: string; text: string }[], round: number): string {
+  const sections = [`Question:\n${question}`, '', `Round ${round} — current expert positions:`]
+  for (const p of positions) sections.push('', `## ${p.role}`, p.text)
+  sections.push('', 'Has the debate converged? Respond with ONLY the JSON object.')
+  return sections.join('\n')
+}
+
+function buildCouncilSynthesisInput(question: string, positions: { role: string; text: string }[]): string {
+  const sections = [`Original question:\n${question}`, '', 'Final expert positions after the debate:']
+  for (const p of positions) sections.push('', `## ${p.role}`, p.text)
+  sections.push('', 'Now write the final verdict for the user. Follow the rules in your system prompt — lead with the resolved answer, explain how disagreement resolved, attribute decisive moves.')
+  return sections.join('\n')
+}
+
+// B2: after each council round Atlas judges convergence (its own binding, no prefill — Sonnet 4.6).
+// Returns true to stop, false to run another round. Any failure → true (stop safely; MAX_ROUNDS also caps).
+async function checkConvergence(question: string, positions: { role: string; text: string }[], round: number, signal: AbortSignal): Promise<boolean> {
+  const binding = roleRepo.getBinding('atlas')
+  if (!binding?.endpointId || !binding.model) return true
+  const ep = endpointRepo.getById(binding.endpointId)
+  if (!ep || !ep.enabled) return true
+  const apiKey = keychain.getApiKey(binding.endpointId)
+  if (!apiKey) return true
+  const messages: ChatMessage[] = [
+    { role: 'system', content: ATLAS_CONVERGENCE_PROMPT },
+    { role: 'user', content: buildConvergenceInput(question, positions, round) }
+  ]
+  try {
+    const result = await llmChat({ protocol: ep.protocol, baseUrl: ep.baseUrl, apiKey, model: binding.model, messages, signal }, () => {})
+    const m = result.text.match(/\{[\s\S]*\}/)
+    if (m) {
+      const obj = JSON.parse(m[0]) as { converged?: unknown }
+      return obj.converged === true
+    }
+  } catch {
+    /* fall through — couldn't judge */
+  }
+  return false // unparseable → keep debating (bounded by MAX_ROUNDS)
 }
 
 // ------- Helpers -------
