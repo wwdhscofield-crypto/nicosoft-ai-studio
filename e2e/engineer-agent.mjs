@@ -12,11 +12,8 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 
 const PROJECT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CWD = '/tmp/engineer-test'
-const NS_KEY = process.env.NS_KEY
-if (!NS_KEY) {
-  console.error('NS_KEY env required')
-  process.exit(1)
-}
+// NS_KEY optional: only backfills endpoints missing a key. Configured studio.db -> run with no env.
+const NS_KEY = process.env.NS_KEY || ''
 
 // a tiny buggy file for Engineer to read
 mkdirSync(CWD, { recursive: true })
@@ -47,7 +44,7 @@ const epInfo = await page.evaluate(async (key) => {
   const engineerB = bindings.find((b) => b.roleId === 'engineer')
   const eps = await window.api.endpoints.list()
   const ep = eps.find((e) => e.id === engineerB?.endpointId)
-  if (ep && !ep.hasKey) await window.api.endpoints.update(ep.id, { apiKey: key })
+  if (ep && !ep.hasKey && key) await window.api.endpoints.update(ep.id, { apiKey: key })
   return { endpointId: engineerB?.endpointId, model: engineerB?.model, protocol: ep?.protocol }
 }, NS_KEY)
 console.log('engineer endpoint:', JSON.stringify(epInfo))

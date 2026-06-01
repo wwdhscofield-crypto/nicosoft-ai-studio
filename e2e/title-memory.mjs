@@ -11,8 +11,8 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
 const PROJECT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const NS_KEY = process.env.NS_KEY
-if (!NS_KEY) { console.error('NS_KEY env required'); process.exit(1) }
+// NS_KEY optional: only backfills endpoints missing a key. Configured studio.db -> run with no env.
+const NS_KEY = process.env.NS_KEY || ''
 
 const errors = []
 const app = await _electron.launch({ args: ['out/main/index.js'], cwd: PROJECT })
@@ -25,7 +25,7 @@ await page.waitForTimeout(1000)
 const result = await page.evaluate(async (key) => {
   const b = (await window.api.roles.listBindings()).find((x) => x.roleId === 'engineer')
   const ep = (await window.api.endpoints.list()).find((e) => e.id === b?.endpointId)
-  if (ep && !ep.hasKey) await window.api.endpoints.update(ep.id, { apiKey: key })
+  if (ep && !ep.hasKey && key) await window.api.endpoints.update(ep.id, { apiKey: key })
   const cfg = { endpointId: b.endpointId, model: b.model }
 
   // 1) Title generation — a clear topic must yield a short title, not the first-message fallback.

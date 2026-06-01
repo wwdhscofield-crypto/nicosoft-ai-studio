@@ -322,7 +322,7 @@ function buildRouterMessages(
   // Reinforce the JSON contract on the LAST user message — OAuth gateways (nicosoft/*, Claude Code
   // identity injection) may overwrite system prompts, so the routing instructions MUST also live in a
   // user message to survive. (Lesson from Batch 2.)
-  const reinforcer = `\n\n---\nRoute the above. Respond with ONLY a JSON object — no markdown, no explanation, no leading text. Format:\n{"mode":"direct","reason":"<≤8 words>"}\nor\n{"mode":"single","role":"<id>","intro":"<one sentence to the user>","reason":"<≤8 words>"}\nor\n{"mode":"pipeline","roles":["<id>","<id>"],"intro":"<one sentence>","reason":"<≤8 words>"}`
+  const reinforcer = `\n\n---\nRoute the above. Respond with ONLY a JSON object — no markdown, no explanation, no leading text. Format:\n{"mode":"direct","reason":"<≤8 words>"}\nor\n{"mode":"single","role":"<name>","intro":"<one sentence to the user>","reason":"<≤8 words>"}\nor\n{"mode":"pipeline","roles":["<name>","<name>"],"intro":"<one sentence>","reason":"<≤8 words>"}`
   if (lastUserInHistory >= 0 && messages[lastUserInHistory].content === userInput) {
     messages[lastUserInHistory] = { ...messages[lastUserInHistory], content: userInput + reinforcer }
   } else {
@@ -540,7 +540,7 @@ function messageAttachments(raw: unknown): ChatAttachment[] {
 function buildHandoffPrompt(originalQuery: string, priorSteps: { role: string; text: string }[], nextRoleId: string): string {
   const sections = [`Original user request:\n${originalQuery}`, '', 'Prior pipeline steps:']
   for (const s of priorSteps) sections.push('', `## ${displayName(s.role)}`, s.text)
-  sections.push('', `Now continue the user's task as ${nextRoleId}. Build on the prior step's output — don't repeat what's already been said, and don't ask the user to restate the question.`)
+  sections.push('', `Now continue the user's task as ${displayName(nextRoleId)}. Build on the prior step's output — don't repeat what's already been said, and don't ask the user to restate the question.`)
   return sections.join('\n')
 }
 
