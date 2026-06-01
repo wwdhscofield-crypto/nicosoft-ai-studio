@@ -29,6 +29,7 @@ import { countContext } from './token-count.service'
 import { pickSmallModel } from './model-select'
 import { LlmError, type ChatAttachment, type ChatMessage } from '../llm/types'
 import {
+  ATLAS_DIRECT_PROMPT,
   ATLAS_ROUTER_PROMPT,
   ATLAS_SYNTHESIS_PROMPT,
   DISPATCHABLE_ROLE_IDS,
@@ -36,7 +37,7 @@ import {
 } from '../agent/roles/prompts'
 
 export interface RouteDecision {
-  mode: 'single' | 'pipeline'
+  mode: 'direct' | 'single' | 'pipeline'
   role?: string
   roles?: string[]
   reason: string
@@ -66,6 +67,25 @@ export async function run(input: AtlasRunInput, cb: AtlasCallbacks, signal: Abor
   const history = convRepo.listByConversation(input.convId)
   const decision = await route(input.prompt, history, signal)
   if (signal.aborted) throw new LlmError('network', 'aborted before dispatch')
+
+  if (decision.mode === 'direct') {
+    // B0: Atlas takes the turn himself — simple/general enough that a specialist would be overkill. His
+    // own binding + the direct persona, full history for multi-turn continuity. No intro: the reply IS
+    // Atlas speaking, not a hand-off announcement.
+    cb.onDispatch(['atlas'], decision.reason)
+    const out = await runRoleStep({
+      convId: input.convId,
+      roleId: 'atlas',
+      prompt: input.prompt,
+      dispatch: null,
+      includeHistory: true,
+      isDirect: true,
+      cb,
+      signal
+    })
+    fireSideEffects(input.convId, 'atlas', out.endpointId, out.model, out.inputTokens)
+    return { inputTokens: out.inputTokens }
+  }
 
   if (decision.mode === 'single') {
     // Single: just the expert. No dispatch chain stored — UI shows no badge (the message's own avatar
@@ -210,7 +230,7 @@ function buildRouterMessages(
   // Reinforce the JSON contract on the LAST user message — OAuth gateways (nicosoft/*, Claude Code
   // identity injection) may overwrite system prompts, so the routing instructions MUST also live in a
   // user message to survive. (Lesson from Batch 2.)
-  const reinforcer = `\n\n---\nRoute the above. Respond with ONLY a JSON object — no markdown, no explanation, no leading text. Format:\n{"mode":"single","role":"<id>","intro":"<one sentence to the user>","reason":"<≤8 words>"}\nor\n{"mode":"pipeline","roles":["<id>","<id>"],"intro":"<one sentence>","reason":"<≤8 words>"}`
+  const reinforcer = `\n\n---\nRoute the above. Respond with ONLY a JSON object — no markdown, no explanation, no leading text. Format:\n{"mode":"direct","reason":"<≤8 words>"}\nor\n{"mode":"single","role":"<id>","intro":"<one sentence to the user>","reason":"<≤8 words>"}\nor\n{"mode":"pipeline","roles":["<id>","<id>"],"intro":"<one sentence>","reason":"<≤8 words>"}`
   if (lastUserInHistory >= 0 && messages[lastUserInHistory].content === userInput) {
     messages[lastUserInHistory] = { ...messages[lastUserInHistory], content: userInput + reinforcer }
   } else {
@@ -236,6 +256,9 @@ export function parseRouteDecision(raw: string, enabled: readonly string[]): Rou
       const obj = JSON.parse(c) as { mode?: string; role?: unknown; roles?: unknown; reason?: unknown; intro?: unknown }
       const reason = typeof obj.reason === 'string' ? obj.reason : 'routed'
       const intro = typeof obj.intro === 'string' && obj.intro.trim() ? obj.intro.trim() : undefined
+      if (obj.mode === 'direct') {
+        return { mode: 'direct', reason }
+      }
       if (obj.mode === 'single' && typeof obj.role === 'string' && enabled.includes(obj.role)) {
         return { mode: 'single', role: obj.role, reason, intro }
       }
@@ -296,10 +319,13 @@ interface RunStepOptions {
   // isSynthesis=true → skip memory recall (the prompt itself is a synthesis directive — Atlas's own
   // memories would only blur the merge) and use the Atlas synthesis system prompt.
   isSynthesis?: boolean
+  // isDirect=true → Atlas answers the turn himself (B0): use ATLAS_DIRECT_PROMPT instead of a role
+  // section. Memory recall still runs (Atlas's own memories help), unlike synthesis.
+  isDirect?: boolean
 }
 
 async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputTokens: number; endpointId: string; model: string }> {
-  const { convId, roleId, prompt, dispatch, cb, signal, includeHistory = false, isSynthesis = false } = opts
+  const { convId, roleId, prompt, dispatch, cb, signal, includeHistory = false, isSynthesis = false, isDirect = false } = opts
   const binding = roleRepo.getBinding(roleId)
   if (!binding?.endpointId || !binding.model) {
     throw new LlmError('bad_request', `role "${roleId}" has no endpoint binding`)
@@ -310,7 +336,7 @@ async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputT
   const apiKey = keychain.getApiKey(binding.endpointId)
   if (!apiKey) throw new LlmError('bad_key', `no API key for role "${roleId}"`)
 
-  const systemPrompt = isSynthesis ? ATLAS_SYNTHESIS_PROMPT : buildRolePrompt(roleId)
+  const systemPrompt = isDirect ? ATLAS_DIRECT_PROMPT : isSynthesis ? ATLAS_SYNTHESIS_PROMPT : buildRolePrompt(roleId)
   if (!systemPrompt) throw new LlmError('bad_request', `unknown role "${roleId}"`)
 
   const parts = [systemPrompt]
