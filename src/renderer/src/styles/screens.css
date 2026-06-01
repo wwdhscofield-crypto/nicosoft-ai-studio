@@ -67,14 +67,21 @@
   padding: 1px 6px; border-radius: 4px;
 }
 .seg-head .ts { font-size: 11px; color: var(--text-4); margin-left: auto; font-variant-numeric: tabular-nums; }
-/* Folding: collapsed dispatched-expert steps (parallel/council) show a one-line preview; click to expand. */
-.seg-head.foldable { cursor: pointer; border-radius: 6px; margin-left: -4px; padding: 2px 4px; }
-.seg-head.foldable:hover { background: rgba(255, 255, 255, 0.04); }
-.seg-head .fold-caret { font-size: 10px; color: var(--text-4); flex-shrink: 0; }
-.seg-meta .fold-preview-inline { color: var(--text-4); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.segment.folded { opacity: 0.82; }
-.segment.folded:hover { opacity: 1; }
-.segment.folded .seg-head { margin-bottom: 0; }
+/* Folding: dispatched-expert steps (parallel/council/pipeline) render in a fixed-height scroll window
+   from the start; "View full" expands to full height. Atlas intro/synthesis + single/direct never fold. */
+.seg-head .fold-toggle {
+  font-size: 11px; color: var(--text-4); background: none;
+  border: 1px solid var(--border-2); border-radius: 5px;
+  padding: 1px 8px; cursor: pointer; flex-shrink: 0; margin-left: auto;
+}
+.seg-head .fold-toggle:hover { color: var(--text-2); border-color: var(--text-4); }
+.seg-body.fold-window {
+  max-height: 160px; overflow-y: auto; padding-right: 10px;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent);
+}
+.seg-body.fold-window::-webkit-scrollbar { width: 6px; }
+.seg-body.fold-window::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 3px; }
 
 /* segment body markdown */
 .seg-body { color: var(--text-2); font-size: 14px; line-height: 1.6; }

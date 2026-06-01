@@ -59,38 +59,29 @@ function ChatSegment({
   // Parallel/council stack many of these, so once a step finishes streaming we collapse it to a one-line
   // summary — the user watches it stream live, then it folds away, leaving Atlas's synthesis prominent.
   const foldable = !isUser && !synthesis && !!msg.dispatch?.length && msg.expertId != null && msg.expertId !== 'atlas'
-  const [collapsed, setCollapsed] = useState(false)
-  const [touched, setTouched] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  // Folded expert steps render in a fixed-height scroll WINDOW from the start (not collapsed to a line):
+  // while streaming, the window follows the text to the bottom so you watch it write in a small footprint.
+  // "View full" expands to the complete height; collapsing returns to the window. Single-dispatch experts,
+  // direct, intro, and synthesis never fold (foldable already excludes them).
+  const windowed = foldable && !expanded
   useEffect(() => {
-    if (foldable && !msg.streaming && !touched) setCollapsed(true)
-  }, [foldable, msg.streaming, touched])
-  const toggle = (): void => { setTouched(true); setCollapsed((c) => !c) }
-  const firstLine = (msg.text.split('\n').find((l) => l.trim()) ?? '').replace(/^#+\s*/, '').replace(/\*\*/g, '')
-  if (foldable && collapsed) {
-    return (
-      <div className="segment folded" style={{ '--seg-color': segColor } as CSSProperties}>
-        <div className="seg-head foldable" onClick={toggle}>
-          <Avatar expert={renderExpert} size={28} />
-          <div className="seg-meta">
-            <NameChip expert={renderExpert} />
-            <span className="fold-caret">▸</span>
-            <span className="fold-preview-inline">{firstLine.slice(0, 90)}{firstLine.length > 90 ? '…' : ''}</span>
-          </div>
-        </div>
-      </div>
-    )
-  }
+    if (windowed && bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
+  }, [msg.text, windowed])
   return (
     <div className={'segment' + (isUser ? ' user' : '')} style={{ '--seg-color': segColor } as CSSProperties}>
-      <div className={'seg-head' + (foldable ? ' foldable' : '')} onClick={foldable ? toggle : undefined}>
+      <div className="seg-head">
         <Avatar expert={isUser ? null : renderExpert} you={isUser} size={28} streaming={msg.streaming} />
         <div className="seg-meta">
           <NameChip expert={isUser ? null : renderExpert} neutral={isUser} />
           {synthesis ? <span className="synthesis-tag">synthesis</span> : null}
-          {foldable ? <span className="fold-caret">▾</span> : null}
+          {foldable ? (
+            <button className="fold-toggle" onClick={() => setExpanded((e) => !e)}>{expanded ? 'Collapse' : 'View full'}</button>
+          ) : null}
         </div>
       </div>
-      <div className={'seg-body' + (isUser || synthesis ? ' primary' : '')}>
+      <div ref={bodyRef} className={'seg-body' + (isUser || synthesis ? ' primary' : '') + (windowed ? ' fold-window' : '')}>
         {msg.text ? (
           isUser ? (
             <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{msg.text}</p>
