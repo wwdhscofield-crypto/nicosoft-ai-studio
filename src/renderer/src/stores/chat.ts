@@ -10,10 +10,13 @@ import type { EffortLevel } from '@/lib/thinking'
 
 type ConversationDto = Awaited<ReturnType<typeof window.api.conversations.list>>[number]
 
-// Roles whose replies come from the agent (tool use). This version: Hex only. Add ids as more roles
-// get an agent.
+// Roles whose replies come from the agent (tool use). This version: Hex only when the user talks to
+// it directly from the sidebar. When Atlas pipelines into Hex, the dispatch uses chat mode (no tools)
+// because the atlas.service runs each step through llmChat. Atlas itself routes through window.api.atlas.
 const AGENT_ROLES = new Set(['hex'])
+const ATLAS_ID = 'atlas'
 export const roleHasAgent = (expertId: string): boolean => AGENT_ROLES.has(expertId)
+export const roleIsAtlas = (expertId: string): boolean => expertId === ATLAS_ID
 
 export interface ToolCall {
   id: string
@@ -29,6 +32,11 @@ export interface ChatMessage {
   images?: { url: string; name: string }[]
   tools?: ToolCall[] // present on agent (tool-using) turns
   streaming?: boolean
+  // Atlas-dispatched message: the contributing expert (hex/echo/...) and (pipeline only) the dispatch
+  // chain shared by every step of that turn. The renderer reads both to switch avatar/name per message
+  // and draw a single dispatch badge spanning consecutive same-chain messages.
+  expertId?: string | null
+  dispatch?: string[] | null
 }
 export interface PermissionPrompt {
   permissionId: string
@@ -70,6 +78,7 @@ const uid = (): string => globalThis.crypto.randomUUID()
 type Meta = { convId: string; expertId: string; endpointId: string; model: string }
 const streamMeta = new Map<string, Meta>() // chat (plain text) path: streamId → conversation
 const agentMeta = new Map<string, Meta>() // agent (tool use) path: streamId → conversation
+const atlasMeta = new Map<string, { convId: string; endpointId: string; model: string }>() // atlas: streamId → conversation
 let creating = false // sync guard: blocks a double-create when a fresh thread's first message fires twice
 let listening = false
 
@@ -215,6 +224,78 @@ export const useChat = create<ChatState>((set, get) => {
       agentMeta.delete(d.streamId)
       if (meta) finishWithError(meta.convId, d.message)
     })
+
+    // ---- atlas (router + multi-expert dispatch) path ----
+    // Event lifecycle per turn:
+    //   1. step:start arrives BEFORE any delta for that step. We rebind the placeholder assistant
+    //      message (created in send() optimistically) to the actual roleId for the first step, and
+    //      attach the dispatch chain (pipeline only — single mode passes dispatch=null). Subsequent
+    //      step:start events APPEND a fresh streaming assistant message tagged with that step's role.
+    //   2. delta accumulates text into the most recent streaming assistant.
+    //   3. step:done marks the current message non-streaming + sets the authoritative text.
+    //   4. done clears the conversation's streaming flag + reloads history.
+    const at = window.api.atlas
+    at.onDispatch(() => {
+      // chain is already stored per-message via step:start.dispatch; nothing global to update here.
+      // Future: surface decision.reason as a debug tooltip on the badge.
+    })
+    at.onStepStart((d) => {
+      const meta = atlasMeta.get(d.streamId)
+      if (!meta) return
+      set((s) => {
+        const msgs = (s.byConversation[meta.convId] ?? []).map((m) => ({ ...m }))
+        const cur = msgs[msgs.length - 1]
+        // Optimistic placeholder from send() is the FIRST step's slot — reuse it (rebinding role).
+        // If it's already been finalized (subsequent steps), append a new streaming placeholder.
+        if (cur && cur.role === 'assistant' && cur.streaming && !cur.expertId) {
+          cur.expertId = d.roleId
+          cur.dispatch = d.dispatch
+        } else {
+          msgs.push({ id: uid(), role: 'assistant', text: '', streaming: true, expertId: d.roleId, dispatch: d.dispatch })
+        }
+        return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
+      })
+    })
+    at.onDelta((d) => {
+      const meta = atlasMeta.get(d.streamId)
+      if (meta) appendDelta(meta.convId, d.text)
+    })
+    at.onStepDone((d) => {
+      const meta = atlasMeta.get(d.streamId)
+      if (!meta) return
+      set((s) => {
+        const msgs = (s.byConversation[meta.convId] ?? []).map((m) => ({ ...m }))
+        const cur = msgs[msgs.length - 1]
+        if (cur && cur.role === 'assistant' && cur.expertId === d.roleId) {
+          cur.text = d.text // step:done is authoritative; the delta accumulator was a preview
+          cur.streaming = false
+        }
+        return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
+      })
+    })
+    at.onDone((d) => {
+      const meta = atlasMeta.get(d.streamId)
+      atlasMeta.delete(d.streamId)
+      if (!meta) return
+      set((s) => {
+        const msgs = (s.byConversation[meta.convId] ?? []).map((m) => ({ ...m }))
+        // Belt-and-suspenders: clear streaming flag on the last assistant (in case step:done was missed).
+        const cur = msgs[msgs.length - 1]
+        if (cur && cur.role === 'assistant') cur.streaming = false
+        return {
+          byConversation: { ...s.byConversation, [meta.convId]: msgs },
+          streaming: { ...s.streaming, [meta.convId]: false },
+          contextTokens:
+            typeof d.inputTokens === 'number' ? { ...s.contextTokens, [meta.convId]: d.inputTokens } : s.contextTokens
+        }
+      })
+      void get().loadConversations() // bump title / updated_at
+    })
+    at.onError((d) => {
+      const meta = atlasMeta.get(d.streamId)
+      atlasMeta.delete(d.streamId)
+      if (meta) finishWithError(meta.convId, d.message)
+    })
   }
 
   // Drop the trailing streaming placeholder + surface the error (shared by both paths).
@@ -256,7 +337,9 @@ export const useChat = create<ChatState>((set, get) => {
         role: m.author === 'user' ? 'user' : 'assistant',
         text: m.content,
         images: m.attachments.length ? m.attachments.map((a) => ({ url: a.url, name: a.name ?? 'image' })) : undefined,
-        tools: m.author !== 'user' && m.runId && tools[m.runId]?.length ? tools[m.runId] : undefined
+        tools: m.author !== 'user' && m.runId && tools[m.runId]?.length ? tools[m.runId] : undefined,
+        expertId: m.author === 'user' ? null : m.expertId,
+        dispatch: m.dispatch
       }))
       // Seed the composer readout from the most recent assistant turn's measured prompt tokens.
       const lastCtx = [...rows].reverse().find((m) => m.author !== 'user' && m.inputTokens > 0)?.inputTokens
@@ -313,6 +396,25 @@ export const useChat = create<ChatState>((set, get) => {
             if (title) set((s) => ({ conversations: s.conversations.map((c) => (c.id === cid ? { ...c, title } : c)) }))
           })
           .catch(() => {})
+      }
+
+      if (roleIsAtlas(expertId)) {
+        // Atlas path: renderer persists the user turn (chat-path style), then atlas.run does the route
+        // → dispatch → (optional) synthesize. atlas.service reads the just-persisted user message + any
+        // attachments straight from the conversation history; we don't re-ship images over IPC.
+        try {
+          await window.api.conversations.append(cid, {
+            author: 'user',
+            expertId,
+            content: text,
+            attachments: userImages.map((i) => ({ url: i.url, name: i.name }))
+          })
+          const { streamId } = await window.api.atlas.run({ convId: cid, prompt: text })
+          atlasMeta.set(streamId, { convId: cid, endpointId, model })
+        } catch (e) {
+          finishWithError(cid, e instanceof Error ? e.message : String(e))
+        }
+        return
       }
 
       if (roleHasAgent(expertId)) {
@@ -383,6 +485,12 @@ export const useChat = create<ChatState>((set, get) => {
         if (meta.convId === cid) {
           void window.api.agent.stop(sid)
           agentMeta.delete(sid)
+        }
+      }
+      for (const [sid, meta] of atlasMeta) {
+        if (meta.convId === cid) {
+          void window.api.atlas.stop(sid)
+          atlasMeta.delete(sid)
         }
       }
       // Also clear any pending approval: stop just deleted the agentMeta, so the backend's done/cancel

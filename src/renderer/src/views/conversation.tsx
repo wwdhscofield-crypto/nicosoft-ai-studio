@@ -2,7 +2,7 @@
    NicoSoft AI Studio — regular role conversation (real streaming via chat store)
    Composer (model + thinking + path + image attachments) · ChatView · EmptyState
    ============================================================ */
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, ClipboardEvent as ReactClipboardEvent, CSSProperties, ReactElement } from 'react'
 import { Icons } from '@/components/icons'
 import { AttachmentStrip } from '@/components/attachment-strip'
@@ -11,7 +11,7 @@ import { ModelPicker, ThinkingPicker } from '@/components/composer-controls'
 import { EmptyState } from '@/components/empty-state'
 import { PathBar } from '@/components/path-bar'
 import { useWorkspace } from '@/stores/workspace'
-import { Avatar, NameChip } from '@/components/primitives'
+import { Avatar, DispatchBadge, NameChip } from '@/components/primitives'
 import { useChat, roleHasAgent, type ChatMessage } from '@/stores/chat'
 import { ToolBubble } from '@/components/tool-bubble'
 import { Markdown } from '@/components/markdown'
@@ -19,6 +19,7 @@ import { ApprovalDialog } from '@/components/approval-dialog'
 import { useRoleBinding } from '@/lib/use-role-binding'
 import { fileToImage, imagesFromClipboard, type ImageAttachment } from '@/lib/image'
 import { getThinkingCapability, resolveThinking, type ThinkingDepth } from '@/lib/thinking'
+import { STUDIO_DATA } from '@/data/studio-data'
 import type { Expert } from '@/types'
 
 // Compact token readout: K below 1M, M at/above it (1M, 1.05M, 1.5M — trailing zeros trimmed).
@@ -27,7 +28,14 @@ function fmtTokens(n: number): string {
   return `${parseFloat((n / 1000).toFixed(1))}K`
 }
 
-/* — One message in the list (user or assistant), with optional images — */
+// True when this assistant message represents Atlas's synthesis step — the final pipeline message
+// where Atlas merges the experts' outputs. Detected by being expertId='atlas' inside a dispatch chain.
+function isSynthesis(msg: ChatMessage): boolean {
+  return msg.role === 'assistant' && (msg.expertId ?? null) === 'atlas' && Array.isArray(msg.dispatch) && msg.dispatch.length > 0
+}
+
+/* — One message in the list (user or assistant). For Atlas-routed conversations the contributing
+ *   expert can vary per message — resolve the expert from msg.expertId (with the prop as a fallback). — */
 function ChatSegment({
   msg,
   expert,
@@ -38,15 +46,22 @@ function ChatSegment({
   onOpenImage: (items: ViewerImage[], index: number) => void
 }): ReactElement {
   const isUser = msg.role === 'user'
+  // Lookup the per-message expert if Atlas tagged it; fall back to the prop (the conversation's
+  // primary role) so direct chats / agents render the same as before.
+  const msgExpert: Expert | undefined = !isUser && msg.expertId ? STUDIO_DATA.EXPERT_BY_ID[msg.expertId] : undefined
+  const renderExpert = msgExpert ?? expert
+  const synthesis = isSynthesis(msg)
+  const segColor = isUser ? 'var(--border-2)' : synthesis ? 'var(--accent)' : renderExpert.color
   return (
-    <div className={'segment' + (isUser ? ' user' : '')} style={{ '--seg-color': isUser ? 'var(--border-2)' : expert.color } as CSSProperties}>
+    <div className={'segment' + (isUser ? ' user' : '')} style={{ '--seg-color': segColor } as CSSProperties}>
       <div className="seg-head">
-        <Avatar expert={isUser ? null : expert} you={isUser} size={28} streaming={msg.streaming} />
+        <Avatar expert={isUser ? null : renderExpert} you={isUser} size={28} streaming={msg.streaming} />
         <div className="seg-meta">
-          <NameChip expert={isUser ? null : expert} neutral={isUser} />
+          <NameChip expert={isUser ? null : renderExpert} neutral={isUser} />
+          {synthesis ? <span className="synthesis-tag">synthesis</span> : null}
         </div>
       </div>
-      <div className={'seg-body' + (isUser ? ' primary' : '')}>
+      <div className={'seg-body' + (isUser || synthesis ? ' primary' : '')}>
         {msg.text ? (
           isUser ? (
             <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{msg.text}</p>
@@ -72,6 +87,15 @@ function ChatSegment({
       </div>
     </div>
   )
+}
+
+// Two dispatch chains match when they're the same array contents in the same order. Used to decide
+// whether a message starts a fresh dispatch group (badge above) or continues an existing one.
+function sameChain(a: string[] | null | undefined, b: string[] | null | undefined): boolean {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
 }
 
 /* — Composer: real model/thinking pickers, path bar, image paste, streams via the chat store — */
@@ -259,7 +283,23 @@ export function ChatView({ expert, onOpenSettings }: { expert: Expert; onOpenSet
           {messages.length === 0 ? (
             <EmptyState expert={expert} onChip={setValue} />
           ) : (
-            messages.map((m) => <ChatSegment key={m.id} msg={m} expert={expert} onOpenImage={openImage} />)
+            messages.map((m, i) => {
+              // Show the dispatch badge above the FIRST message of each pipeline turn — detected by a
+              // non-empty dispatch chain that differs from the previous message's chain (or the
+              // previous message has none). Single-mode atlas turns have dispatch=null → no badge.
+              const prev = i > 0 ? messages[i - 1] : null
+              const showBadge =
+                m.role === 'assistant' &&
+                Array.isArray(m.dispatch) &&
+                m.dispatch.length > 0 &&
+                !sameChain(prev?.dispatch, m.dispatch)
+              return (
+                <Fragment key={m.id}>
+                  {showBadge ? <DispatchBadge chain={m.dispatch as string[]} /> : null}
+                  <ChatSegment msg={m} expert={expert} onOpenImage={openImage} />
+                </Fragment>
+              )
+            })
           )}
           {error ? (
             <div className="inline-notice">

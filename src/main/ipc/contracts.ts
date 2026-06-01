@@ -148,6 +148,55 @@ export interface ToolCallDto {
   result?: string
 }
 
+// === Atlas (router + multi-expert dispatch) ===
+// `atlas:run` starts a routed turn for the conversation. The user message (+ any image attachments)
+// is already persisted by the renderer (chat-path style), so atlas:run only needs the convId. Atlas
+// decides single vs pipeline, runs the dispatched experts, persists each step as its own assistant
+// message, and emits the event stream below ending in `atlas:done` or `atlas:error`. `atlas:stop`
+// aborts in flight.
+export interface AtlasRunInputDto {
+  convId: string
+  prompt: string
+}
+// Fired once per turn, after the route decision, before any text streams. `chain` lists the steps
+// the badge should render. Length 1 for single mode (no badge needed); for a pipeline = `[...experts,
+// 'atlas']` (experts in order plus the trailing Atlas synthesis). The renderer's DispatchBadge
+// already prefixes its own "Atlas · routing →" label, so the leading atlas is NOT in the chain.
+export interface AtlasDispatchEvent {
+  streamId: string
+  chain: string[]
+  reason: string
+}
+// Fired before each step's text starts streaming. `dispatch` carries the full chain (same array for
+// every step of one pipeline turn) or null for single mode — that's what gets stored on each persisted
+// message and what the renderer uses to draw badges.
+export interface AtlasStepStart {
+  streamId: string
+  roleId: string
+  dispatch: string[] | null
+  model: string
+}
+export interface AtlasStepDelta {
+  streamId: string
+  roleId: string
+  text: string
+}
+export interface AtlasStepDone {
+  streamId: string
+  roleId: string
+  text: string
+  inputTokens: number
+}
+export interface AtlasDoneDto {
+  streamId: string
+  inputTokens?: number // tokens of the LAST step in the turn — drives the composer readout
+}
+export interface AtlasErrorDto {
+  streamId: string
+  code: string
+  message: string
+}
+
 // === Roles (expert → endpoint/model binding + per-role state) ===
 // A role's binding: which endpoint/model it runs on + its default thinking depth (applied when a task
 // is dispatched to it; the chat composer can still override per-conversation). null = provider default.
@@ -197,6 +246,7 @@ export interface MessageDto {
   attachments: MessageAttachmentDto[]
   runId: string | null // agent run id (Hex); null for plain chat
   inputTokens: number // exact prompt context counted before this turn was sent (0 if unknown)
+  dispatch: string[] | null // atlas pipeline chain; null for single-expert / direct chat / agent turns
   createdAt: string
 }
 export interface MessageAppendDto {
@@ -207,6 +257,7 @@ export interface MessageAppendDto {
   attachments?: MessageAttachmentDto[]
   runId?: string
   inputTokens?: number // exact prompt context for this turn (assistant messages)
+  dispatch?: string[] // set by atlas.service for pipeline steps; renderer reads it via MessageDto.dispatch
 }
 export interface ConversationTitleInput {
   convId: string

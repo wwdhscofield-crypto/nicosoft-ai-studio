@@ -18,6 +18,13 @@ import type {
   AgentDone,
   AgentErrorDto,
   ToolCallDto,
+  AtlasRunInputDto,
+  AtlasDispatchEvent,
+  AtlasStepStart,
+  AtlasStepDelta,
+  AtlasStepDone,
+  AtlasDoneDto,
+  AtlasErrorDto,
   RoleBindingDto,
   RoleBindingInput,
   RoleStateDto,
@@ -96,6 +103,17 @@ const api = {
     onError: (cb: (d: AgentErrorDto) => void): (() => void) => agentListen('agent:error', cb),
     transcript: (convId: string): Promise<Record<string, ToolCallDto[]>> =>
       ipcRenderer.invoke('agent:transcript', convId)
+  },
+
+  atlas: {
+    run: (input: AtlasRunInputDto): Promise<{ streamId: string }> => ipcRenderer.invoke('atlas:run', input),
+    stop: (streamId: string): Promise<void> => ipcRenderer.invoke('atlas:stop', streamId),
+    onDispatch: (cb: (d: AtlasDispatchEvent) => void): (() => void) => agentListen('atlas:dispatch', cb),
+    onStepStart: (cb: (d: AtlasStepStart) => void): (() => void) => agentListen('atlas:step:start', cb),
+    onDelta: (cb: (d: AtlasStepDelta) => void): (() => void) => agentListen('atlas:delta', cb),
+    onStepDone: (cb: (d: AtlasStepDone) => void): (() => void) => agentListen('atlas:step:done', cb),
+    onDone: (cb: (d: AtlasDoneDto) => void): (() => void) => agentListen('atlas:done', cb),
+    onError: (cb: (d: AtlasErrorDto) => void): (() => void) => agentListen('atlas:error', cb)
   },
 
   project: {
