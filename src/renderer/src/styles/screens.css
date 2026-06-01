@@ -40,7 +40,7 @@
 }
 .segment::before {
   content: ""; position: absolute; left: 0; top: 16px; bottom: 16px;
-  width: 2px; border-radius: 2px; background: var(--seg-color, var(--border-2));
+  width: 1px; border-radius: 1px; background: var(--seg-color, var(--border-2));
 }
 .segment.user::before { background: var(--border-2); left: auto; right: 0; }
 
