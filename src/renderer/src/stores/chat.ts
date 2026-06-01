@@ -55,6 +55,7 @@ interface ChatState {
   streaming: Record<string, boolean>
   error: Record<string, string | null>
   permission: Record<string, PermissionPrompt | null> // per-conversation (future: parallel agent runs)
+  contextTokens: Record<string, number> // per-conversation exact prompt tokens of the last sent turn
   loadConversations: () => Promise<void>
   openConversation: (convId: string) => Promise<void>
   newConversation: () => void
@@ -115,11 +116,14 @@ export const useChat = create<ChatState>((set, get) => {
           streaming: { ...s.streaming, [meta.convId]: false }
         }
       })
+      const ctxTok = d.inputTokens
+      if (typeof ctxTok === 'number')
+        set((s) => ({ contextTokens: { ...s.contextTokens, [meta.convId]: ctxTok } }))
       void window.api.conversations
-        .append(meta.convId, { author: 'expert', expertId: meta.expertId, model: meta.model, content: d.text })
+        .append(meta.convId, { author: 'expert', expertId: meta.expertId, model: meta.model, content: d.text, inputTokens: ctxTok })
         .then(() => get().loadConversations())
       void window.api.memory.onTurn({ convId: meta.convId, roleId: meta.expertId, endpointId: meta.endpointId, model: meta.model })
-      void window.api.chat.compress({ convId: meta.convId, roleId: meta.expertId, endpointId: meta.endpointId, model: meta.model })
+      void window.api.chat.compress({ convId: meta.convId, roleId: meta.expertId, endpointId: meta.endpointId, model: meta.model, currentTokens: ctxTok })
     })
     api.onError((d) => {
       const meta = streamMeta.get(d.streamId)
@@ -197,7 +201,11 @@ export const useChat = create<ChatState>((set, get) => {
         return {
           byConversation: { ...s.byConversation, [meta.convId]: msgs },
           streaming: { ...s.streaming, [meta.convId]: false },
-          permission: { ...s.permission, [meta.convId]: null }
+          permission: { ...s.permission, [meta.convId]: null },
+          contextTokens:
+            typeof d.inputTokens === 'number'
+              ? { ...s.contextTokens, [meta.convId]: d.inputTokens }
+              : s.contextTokens
         }
       })
       void get().loadConversations() // backend persisted the final reply + maybe a title
@@ -229,6 +237,7 @@ export const useChat = create<ChatState>((set, get) => {
     streaming: {},
     error: {},
     permission: {},
+    contextTokens: {},
 
     loadConversations: async () => {
       set({ conversations: await window.api.conversations.list() })
@@ -249,7 +258,12 @@ export const useChat = create<ChatState>((set, get) => {
         images: m.attachments.length ? m.attachments.map((a) => ({ url: a.url, name: a.name ?? 'image' })) : undefined,
         tools: m.author !== 'user' && m.runId && tools[m.runId]?.length ? tools[m.runId] : undefined
       }))
-      set((s) => ({ byConversation: { ...s.byConversation, [convId]: mapped } }))
+      // Seed the composer readout from the most recent assistant turn's measured prompt tokens.
+      const lastCtx = [...rows].reverse().find((m) => m.author !== 'user' && m.inputTokens > 0)?.inputTokens
+      set((s) => ({
+        byConversation: { ...s.byConversation, [convId]: mapped },
+        contextTokens: lastCtx ? { ...s.contextTokens, [convId]: lastCtx } : s.contextTokens
+      }))
     },
 
     newConversation: () => set({ activeConv: null }),

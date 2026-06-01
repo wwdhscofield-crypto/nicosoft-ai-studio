@@ -28,7 +28,13 @@ export function registerChatHandlers(): void {
       )
       .then((result) => {
         if (!sender.isDestroyed())
-          sender.send('chat:done', { streamId, text: result.text, usage: result.usage, model: result.model })
+          sender.send('chat:done', {
+            streamId,
+            text: result.text,
+            usage: result.usage,
+            model: result.model,
+            inputTokens: result.promptTokens
+          })
       })
       .catch((err: unknown) => {
         const code = err instanceof LlmError ? err.code : 'unknown'

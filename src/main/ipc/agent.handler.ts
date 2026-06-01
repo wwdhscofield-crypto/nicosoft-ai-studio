@@ -104,7 +104,7 @@ export function registerAgentHandlers(): void {
         },
         controller.signal,
       )
-      .then((r) => send('agent:done', { streamId, reason: r.reason, turns: r.turns }))
+      .then((r) => send('agent:done', { streamId, reason: r.reason, turns: r.turns, inputTokens: r.promptTokens }))
       .catch((err: unknown) => {
         const code = err instanceof LlmError ? err.code : 'unknown'
         const message = err instanceof Error ? err.message : String(err)

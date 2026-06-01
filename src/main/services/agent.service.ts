@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { ulid } from '../db/id'
 import type { AgentContext, RequestPermission } from '../agent/context'
 import type { AgentLlmEvent } from '../agent/llm'
-import { runAgent, type AgentEvent, type AgentResult } from '../agent/loop'
+import { runAgent, buildToolsParam, type AgentEvent, type AgentResult } from '../agent/loop'
 import { isContentBlock } from '../agent/types'
 import type { AgentMessage, AnyBlock } from '../agent/types'
 import { CORE_TOOLS } from '../agent/registry'
@@ -28,6 +28,8 @@ import type { MemoryRow } from '../repos/memory.repo'
 import * as convService from './conversation.service'
 import * as memoryService from './memory.service'
 import * as compressionService from './compression.service'
+import { pickSmallModel } from './model-select'
+import { countAnthropic } from './token-count.service'
 
 const HEX_ROLE_ID = 'hex' // this version's agent is Hex-only
 
@@ -41,7 +43,7 @@ export async function run(
   input: AgentRunInput,
   cb: AgentCallbacks,
   signal: AbortSignal,
-): Promise<{ reason: string; turns: number; convId: string; runId: string }> {
+): Promise<{ reason: string; turns: number; convId: string; runId: string; promptTokens: number }> {
   const ep = endpointRepo.getById(input.endpointId)
   if (!ep) throw new LlmError('bad_request', 'endpoint not found')
   // Hex's loop speaks the Anthropic Messages protocol (tool use over /v1/messages).
@@ -81,6 +83,20 @@ export async function run(
   const mapped = conversationToAgentMessages(recent)
   const firstUser = mapped.findIndex((m) => m.role === 'user')
   const seed = firstUser > 0 ? mapped.slice(firstUser) : mapped
+
+  // Exact prompt tokens for this turn (system + seed + tool schemas) — free via count_tokens, falls
+  // back to a small-model probe then chars/4. Drives the composer readout + the compression threshold.
+  const toolSchemas = buildToolsParam(CORE_TOOLS, input.model)
+  const promptTokens = await countAnthropic({
+    baseUrl: ep.baseUrl,
+    apiKey: key,
+    model: input.model,
+    system,
+    messages: seed as { role: string; content: unknown }[],
+    tools: toolSchemas,
+    thinkingBudget: input.thinking?.budgetTokens,
+    smallModel: pickSmallModel('anthropic', ep.availableModels, input.model)
+  })
 
   const sessionDir = join(homedir(), '.nsai', 'sessions', convId)
   await mkdir(join(sessionDir, 'tool-results'), { recursive: true })
@@ -146,6 +162,7 @@ export async function run(
       model: input.model,
       content: finalText,
       runId,
+      inputTokens: promptTokens,
     })
   }
 
@@ -165,10 +182,11 @@ export async function run(
       endpointId: input.endpointId,
       model: input.model,
       contextWindow: input.contextWindow,
+      currentTokens: promptTokens,
     })
     .catch(() => {})
 
-  return { reason: result.reason, turns: result.turns, convId, runId }
+  return { reason: result.reason, turns: result.turns, convId, runId, promptTokens }
 }
 
 // HEX system prompt + the chat layer's injected context (recalled memories, conversation summary).

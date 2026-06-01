@@ -5,8 +5,10 @@ import * as usageRepo from '../repos/usage.repo'
 import * as keychain from '../keychain/keychain'
 import * as memoryService from './memory.service'
 import { chat as llmChat } from '../llm/client'
+import { countContext } from './token-count.service'
+import { pickSmallModel } from './model-select'
 import { LlmError } from '../llm/types'
-import type { ChatMessage, ChatResult } from '../llm/types'
+import type { ChatAttachment, ChatMessage, ChatResult } from '../llm/types'
 import type { ChatSendInput } from '../ipc/contracts'
 
 // Chat send. The backend assembles the full 5-layer context from the conversation id (the renderer no
@@ -17,13 +19,26 @@ export async function send(
   input: ChatSendInput,
   onDelta: (text: string) => void,
   signal?: AbortSignal
-): Promise<ChatResult> {
+): Promise<ChatResult & { promptTokens: number }> {
   const ep = endpointRepo.getById(input.endpointId)
   if (!ep) throw new LlmError('bad_request', 'endpoint not found')
   const key = keychain.getApiKey(input.endpointId)
   if (!key) throw new LlmError('bad_key', 'no API key configured for this endpoint')
 
   const messages = await buildContext(input)
+
+  // Exact prompt tokens (count_tokens for anthropic, rough otherwise) — drives the composer readout +
+  // the compression threshold. Measured here, before the send, on the exact body about to go upstream.
+  const native = toAnthropicNative(messages)
+  const promptTokens = await countContext(ep.protocol, {
+    baseUrl: ep.baseUrl,
+    apiKey: key,
+    model: input.model,
+    system: native.system,
+    messages: native.messages,
+    thinkingBudget: input.thinking?.budgetTokens,
+    smallModel: pickSmallModel(ep.protocol, ep.availableModels, input.model)
+  })
 
   const result = await llmChat(
     {
@@ -45,7 +60,7 @@ export async function send(
     outTokens: result.usage.outTokens
   })
 
-  return result
+  return { ...result, promptTokens }
 }
 
 // 5-layer context: a system message (role prompt + recalled memories + summary) followed by the recent
@@ -89,4 +104,33 @@ async function buildContext(input: ChatSendInput): Promise<ChatMessage[]> {
   }
 
   return messages
+}
+
+// Convert the 5-layer ChatMessage[] into the Anthropic-native shape count_tokens expects: system
+// message hoisted to a top-level string; user/assistant turns with image attachments become content
+// blocks (text + image). Mirrors llm/anthropic.ts's toMessages/toSystem.
+function toAnthropicNative(messages: ChatMessage[]): {
+  system?: string
+  messages: { role: string; content: unknown }[]
+} {
+  const sys = messages.filter((m) => m.role === 'system' && m.content).map((m) => m.content)
+  const out: { role: string; content: unknown }[] = []
+  for (const m of messages) {
+    if (m.role === 'system') continue
+    if (m.attachments?.length) {
+      const blocks: unknown[] = []
+      if (m.content) blocks.push({ type: 'text', text: m.content })
+      for (const a of m.attachments) blocks.push(imageBlockForCount(a))
+      out.push({ role: m.role, content: blocks })
+    } else {
+      out.push({ role: m.role, content: m.content })
+    }
+  }
+  return { system: sys.length ? sys.join('\n\n') : undefined, messages: out }
+}
+
+function imageBlockForCount(a: ChatAttachment): unknown {
+  const m = /^data:([^;]+);base64,(.*)$/s.exec(a.url)
+  if (m) return { type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } }
+  return { type: 'image', source: { type: 'url', url: a.url } }
 }

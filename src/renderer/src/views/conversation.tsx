@@ -90,7 +90,14 @@ function Composer({
   const activeConv = chat.activeConv
   const streaming = activeConv ? (chat.streaming[activeConv] ?? false) : false
   const messages = activeConv ? (chat.byConversation[activeConv] ?? []) : []
-  const usedTokens = messages.reduce((s, m) => s + m.text.length, 0) / 4 + value.length / 4
+  // Exact prompt tokens of the last sent turn (count_tokens, measured server-side) plus the unsent input
+  // — far more accurate than chars/4, especially for agent runs where tool schemas dominate. Falls back
+  // to a chars/4 estimate before the first turn lands a measurement.
+  const baseTokens = activeConv ? (chat.contextTokens[activeConv] ?? 0) : 0
+  const usedTokens =
+    baseTokens > 0
+      ? baseTokens + value.length / 4
+      : messages.reduce((s, m) => s + m.text.length, 0) / 4 + value.length / 4
   const tokenAmber = b.contextLength > 0 && usedTokens / b.contextLength > 0.85
   const selectedEp = b.endpoints.find((e) => e.id === b.endpointId)
   const agent = roleHasAgent(expert.id) // agent roles (Hex) additionally need an Anthropic endpoint + a project folder

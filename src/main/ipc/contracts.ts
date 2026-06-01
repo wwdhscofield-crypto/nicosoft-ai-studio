@@ -47,6 +47,7 @@ export interface ChatCompressInput {
   roleId: string
   endpointId: string
   model: string
+  currentTokens?: number // exact prompt tokens (count_tokens) measured for the turn just sent
 }
 
 // Streaming events pushed to the renderer over `chat:delta` / `chat:done` / `chat:error`.
@@ -59,6 +60,7 @@ export interface ChatDone {
   text: string
   usage: { inTokens: number; outTokens: number }
   model: string
+  inputTokens?: number // exact prompt context for this turn (count_tokens), drives the composer readout
 }
 export interface ChatErrorDto {
   streamId: string
@@ -130,6 +132,7 @@ export interface AgentDone {
   streamId: string
   reason: string
   turns: number
+  inputTokens?: number // exact prompt context for this run (count_tokens), drives the composer readout
 }
 export interface AgentErrorDto {
   streamId: string
@@ -193,6 +196,7 @@ export interface MessageDto {
   content: string
   attachments: MessageAttachmentDto[]
   runId: string | null // agent run id (Hex); null for plain chat
+  inputTokens: number // exact prompt context counted before this turn was sent (0 if unknown)
   createdAt: string
 }
 export interface MessageAppendDto {
@@ -202,6 +206,7 @@ export interface MessageAppendDto {
   content: string
   attachments?: MessageAttachmentDto[]
   runId?: string
+  inputTokens?: number // exact prompt context for this turn (assistant messages)
 }
 export interface ConversationTitleInput {
   convId: string

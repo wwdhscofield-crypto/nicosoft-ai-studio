@@ -88,7 +88,7 @@ function modelSupportsToolSearch(model: string): boolean {
 // the model supports tool_reference, declare the tool_search server tool and mark those tools
 // defer_loading so they're discovered on demand instead of bloating context. Otherwise every tool is
 // declared up front — the common case: Hex's core set is small and none deferred, so no tool_search.
-function buildToolsParam(tools: readonly Tool[], model: string): AnyToolSchema[] {
+export function buildToolsParam(tools: readonly Tool[], model: string): AnyToolSchema[] {
   const hasDeferred = tools.some((t) => t.shouldDefer)
   if (!hasDeferred || !modelSupportsToolSearch(model)) {
     return tools.map((t) => toToolSchema(t, false))

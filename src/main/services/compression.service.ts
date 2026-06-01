@@ -35,6 +35,7 @@ export interface CompressInput {
   endpointId: string
   model: string
   contextWindow?: number // explicit window (Hex passes its run window); falls back to the model catalog
+  currentTokens?: number // exact prompt tokens (count_tokens) for this turn; preferred over the estimate
 }
 
 export async function maybeCompress(input: CompressInput): Promise<void> {
@@ -52,10 +53,14 @@ export async function maybeCompress(input: CompressInput): Promise<void> {
     const recent =
       prevSummary?.coveredUpTo != null ? history.filter((m) => m.id > prevSummary.coveredUpTo!) : history
 
+    // Prefer the exact prompt-token count the caller measured (count_tokens — already includes system,
+    // memories, summary, recent turns AND tool schemas). Fall back to a chars/4 estimate + a reserve.
     const used =
-      estimateMessageTokens(recent) +
-      (prevSummary ? estimateTextTokens(prevSummary.content) : 0) +
-      RESERVED_CONTEXT_TOKENS
+      input.currentTokens != null
+        ? input.currentTokens
+        : estimateMessageTokens(recent) +
+          (prevSummary ? estimateTextTokens(prevSummary.content) : 0) +
+          RESERVED_CONTEXT_TOKENS
     if (used < ctxLen * COMPRESS_RATIO) return // under threshold
     if (recent.length <= KEEP_RECENT + 1) return // too little to fold usefully
 
