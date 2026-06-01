@@ -222,8 +222,11 @@ export function Sidebar({
   const roles = useRoles()
   const atlas = EXPERTS.find((e) => e.coordinator)
   const rest = EXPERTS.filter((e) => !e.coordinator && !roles.isDeleted(e.id))
-  const enabledRest = rest.filter((e) => !roles.isDisabled(e.id))
-  const disabledList = rest.filter((e) => roles.isDisabled(e.id))
+  // Until useRoles.load() finishes, treat every role as enabled so we don't paint a disabled row that
+  // would jump to enabled (or vice versa) once state hydrates. The Disabled section stays hidden in
+  // this window — usually one frame.
+  const enabledRest = roles.loaded ? rest.filter((e) => !roles.isDisabled(e.id)) : rest
+  const disabledList = roles.loaded ? rest.filter((e) => roles.isDisabled(e.id)) : []
   const [rolesOpen, setRolesOpen] = useState(true)
   const [histOpen, setHistOpen] = useState(true)
   const [disabledOpen, setDisabledOpen] = useState(false)

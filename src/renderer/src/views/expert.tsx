@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { ReactElement } from 'react'
 import { STUDIO_DATA } from '@/data/studio-data'
 import { useMemory } from '@/stores/memory'
+import { useChat } from '@/stores/chat'
 import type { Expert, MemoryItem } from '@/types'
 import type { MemoryDto } from '@/lib/api'
 import { Icons } from '@/components/icons'
@@ -16,6 +17,24 @@ import { ConfirmDialog } from '@/components/dialogs'
 import { MemToggle, MemoryLayer } from '@/views/memory'
 import { THINKING_OPTIONS } from '@/lib/thinking'
 import { useRoleBinding, FAMILY_LABEL } from '@/lib/use-role-binding'
+
+// Best-effort relative timestamp for the "Recent conversations" list — matches the spirit of the
+// sidebar's HISTORY grouping ("Today" / "Yesterday" / "Earlier") without overengineering. Same input
+// format we get from conversation.updatedAt (ISO string).
+function relativeWhen(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime()
+  if (Number.isNaN(ms) || ms < 0) return ''
+  const min = Math.floor(ms / 60_000)
+  if (min < 1) return 'just now'
+  if (min < 60) return `${min}m ago`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}h ago`
+  const days = Math.floor(hr / 24)
+  if (days === 1) return 'yesterday'
+  if (days < 7) return `${days}d ago`
+  if (days < 30) return `${Math.floor(days / 7)}w ago`
+  return new Date(iso).toLocaleDateString()
+}
 
 interface EquippedItem {
   type: 'mcp' | 'skill'
@@ -190,11 +209,22 @@ export function ExpertDetail({
   onOpenEndpoint: () => void
   onDeleted?: () => void
 }): ReactElement {
-  const { EXPERT_BY_ID, HISTORY } = STUDIO_DATA
+  const { EXPERT_BY_ID } = STUDIO_DATA
   const roles = useRoles();
+  const conversations = useChat((s) => s.conversations)
   const [confirm, setConfirm] = useState(false);
   const e = EXPERT_BY_ID[expertId];
-  const recents = HISTORY.flatMap((g) => g.items.filter((it) => it.expert === expertId).map((it) => ({ ...it, group: g.group })));
+  // Real conversations owned by this role (primary_role_id = expertId). For Atlas this surfaces every
+  // routed conversation; for individual experts it's the direct-chat history. Most-recent-first; cap
+  // to a sensible display count so the panel doesn't become a scroll trap.
+  const recents = useMemo(
+    () =>
+      conversations
+        .filter((c) => c.primaryRoleId === expertId)
+        .slice(0, 12)
+        .map((c) => ({ id: c.id, title: c.title || 'Untitled', when: relativeWhen(c.updatedAt) })),
+    [conversations, expertId]
+  )
   const roleDisabled = roles.isDisabled(expertId);
 
   return (
@@ -241,9 +271,14 @@ export function ExpertDetail({
           {/* equipped */}
           <EquippedSection expertId={expertId} />
 
-          {/* recents */}
+          {/* recents — filtered by primary_role_id, so this lists DIRECT conversations with this
+              expert. Pipeline turns where another role (Atlas, etc.) routed work to this expert show
+              up under that primary role's detail page instead. */}
           <div className="detail-section">
-            <div className="ds-head"><span className="ds-title">Recent conversations</span></div>
+            <div className="ds-head">
+              <span className="ds-title">Recent conversations</span>
+              {!e.coordinator && <span className="ds-hint">direct chats with {e.name}</span>}
+            </div>
             {recents.length === 0 ? (
               <div className="detail-empty">No conversations with {e.name} yet.</div>
             ) : (
@@ -252,7 +287,7 @@ export function ExpertDetail({
                   <div className="recent-row" key={r.id} onClick={() => onOpenConv(r.id)}>
                     <span className="hist-dot" style={{ background: e.color }} />
                     <span className="recent-title">{r.title}</span>
-                    <span className="recent-when">{r.group}</span>
+                    <span className="recent-when">{r.when}</span>
                     <Icons.chevronRight size={14} />
                   </div>
                 ))}

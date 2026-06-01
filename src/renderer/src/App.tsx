@@ -16,6 +16,7 @@ import { ExpertDetail } from '@/views/expert'
 import { ChatView } from '@/views/conversation'
 import { WorkspaceDrawer } from '@/views/workspace'
 import { useChat } from '@/stores/chat'
+import { useRoles } from '@/stores/roles'
 
 const LS_KEY = 'nicosoft-studio-state-v1'
 
@@ -59,9 +60,12 @@ export default function App(): ReactElement {
     saveState({ view, activeExpert, settingsTab, drawerOpen, activeProject })
   }, [view, activeExpert, settingsTab, drawerOpen, activeProject])
 
-  // Load the persisted conversation history once on mount.
+  // Load the persisted conversation history + role enable/disable states once on mount. Until
+  // useRoles.load() completes, every role is treated as enabled — that's the right default (no DB row
+  // = enabled), and the brief flash from "rendered enabled" to "rendered disabled" is benign.
   useEffect(() => {
     void chat.loadConversations()
+    void useRoles.getState().load()
   }, [chat.loadConversations])
 
   // First-run gate: when localStorage hasn't already chosen a view, honor the durable onboarded flag so

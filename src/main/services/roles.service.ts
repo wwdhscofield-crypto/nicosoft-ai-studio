@@ -35,15 +35,25 @@ export function listStates(): RoleStateDto[] {
   return roleRepo.listStates().map(toStateDto)
 }
 
+// Atlas is the router; disabling it leaves the multi-role system without a coordinator. Single source
+// of truth lives here (not the renderer) so any caller — IPC handler, e2e tooling, future settings UI
+// joining role_states directly — can't accidentally disable it. self-learning IS allowed to be
+// turned off on atlas (a user choice about memory, not a router requirement).
+const ATLAS_ROLE_ID = 'atlas'
+
 export function setState(
   roleId: string,
   patch: { enabled?: boolean; selfLearningEnabled?: boolean }
 ): RoleStateDto {
-  roleRepo.setState(roleId, patch)
+  const safePatch = { ...patch }
+  if (roleId === ATLAS_ROLE_ID && safePatch.enabled === false) {
+    delete safePatch.enabled // silently ignore the disable; keep any selfLearningEnabled change
+  }
+  roleRepo.setState(roleId, safePatch)
   const s = roleRepo.getState(roleId)
   return s
     ? toStateDto(s)
-    : { roleId, enabled: patch.enabled ?? true, selfLearningEnabled: patch.selfLearningEnabled ?? true }
+    : { roleId, enabled: safePatch.enabled ?? true, selfLearningEnabled: safePatch.selfLearningEnabled ?? true }
 }
 
 // Delete a role and cascade its data atomically: role-layer memories + the role's conversations
