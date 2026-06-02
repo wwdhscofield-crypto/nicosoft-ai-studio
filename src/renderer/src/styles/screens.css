@@ -418,6 +418,16 @@
 /* test-connection success */
 .test-success { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--success); }
 
+/* MCP dialog — paste-config-JSON import */
+.mcp-json { margin-bottom: 2px; }
+.mcp-json-toggle { background: none; border: none; padding: 0; font-size: 12px; font-weight: 500; color: var(--accent); cursor: pointer; }
+.mcp-json-toggle:hover { text-decoration: underline; }
+.mcp-json-body { margin-top: 8px; display: flex; flex-direction: column; gap: 7px; }
+.mcp-json-foot { display: flex; align-items: center; gap: 8px; }
+.mcp-json-hint { font-size: 11px; color: var(--text-4); }
+.mcp-json-err { font-size: 11px; color: var(--error); display: inline-flex; align-items: center; gap: 4px; }
+.mcp-json-foot .btn { margin-left: auto; }
+
 /* roles table */
 .roles-table { border: 1px solid var(--border-1); border-radius: var(--r-md); overflow: hidden; }
 .roles-thead { display: flex; padding: 10px 15px; border-bottom: 1px solid var(--border-1); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-4); }

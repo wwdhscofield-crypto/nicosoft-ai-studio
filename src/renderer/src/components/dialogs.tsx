@@ -207,6 +207,9 @@ export function McpDialog({
   const [scopeRoles, setScopeRoles] = useState<string[]>(Array.isArray(initial?.scope) ? initial.scope : [])
   const [testState, setTestState] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
   const [testMsg, setTestMsg] = useState('')
+  const [jsonOpen, setJsonOpen] = useState(false)
+  const [jsonText, setJsonText] = useState('')
+  const [jsonErr, setJsonErr] = useState('')
   const editing = !!initial
 
   const buildInput = (): McpServerInput => {
@@ -251,6 +254,62 @@ export function McpDialog({
     }
   }
 
+  // Parse a pasted `{ "mcpServers": { "<name>": {…} } }` config (the Claude Desktop / Cursor / Cline
+  // format) — or a bare single-server object — and fill the form fields. Lets users copy from any MCP
+  // server's docs instead of re-typing command/args by hand. Secrets (env/headers) flow into the same
+  // keychain-bound textarea as manual entry.
+  const applyJson = (): void => {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(jsonText)
+    } catch {
+      setJsonErr('Not valid JSON')
+      return
+    }
+    if (!parsed || typeof parsed !== 'object') {
+      setJsonErr('Expected a JSON object')
+      return
+    }
+    let serverName = ''
+    let cfg = parsed as Record<string, unknown>
+    const wrapped = (parsed as Record<string, unknown>).mcpServers
+    if (wrapped && typeof wrapped === 'object') {
+      const entries = Object.entries(wrapped as Record<string, unknown>)
+      if (!entries.length) {
+        setJsonErr('No server found under "mcpServers"')
+        return
+      }
+      serverName = entries[0][0]
+      cfg = entries[0][1] as Record<string, unknown>
+    }
+    const cmd = typeof cfg.command === 'string' ? cfg.command.trim() : ''
+    const url = typeof cfg.url === 'string' ? cfg.url.trim() : ''
+    if (!cmd && !url) {
+      setJsonErr('Config needs "command" (stdio) or "url" (http)')
+      return
+    }
+    const kvLines = (obj: unknown): string =>
+      obj && typeof obj === 'object'
+        ? Object.entries(obj as Record<string, unknown>)
+            .map(([k, v]) => `${k}=${String(v)}`)
+            .join('\n')
+        : ''
+    if (cmd) {
+      setTransport('stdio')
+      setEndpointOrCmd(cmd)
+      setArgsText(Array.isArray(cfg.args) ? (cfg.args as unknown[]).map(String).join(' ') : '')
+      setSecretsText(kvLines(cfg.env))
+    } else {
+      setTransport('http')
+      setEndpointOrCmd(url)
+      setSecretsText(kvLines(cfg.headers))
+    }
+    if (serverName && !name.trim()) setName(serverName)
+    setJsonErr('')
+    setJsonText('')
+    setJsonOpen(false)
+  }
+
   const toggleRole = (id: string): void =>
     setScopeRoles((rs) => (rs.includes(id) ? rs.filter((r) => r !== id) : [...rs, id]))
 
@@ -264,6 +323,37 @@ export function McpDialog({
           </button>
         </div>
         <div className="dialog-body">
+          <div className="mcp-json">
+            <button type="button" className="mcp-json-toggle" onClick={() => setJsonOpen((o) => !o)}>
+              {jsonOpen ? '−' : '+'} Paste config JSON
+            </button>
+            {jsonOpen ? (
+              <div className="mcp-json-body">
+                <textarea
+                  className="input mono"
+                  rows={3}
+                  value={jsonText}
+                  onChange={(e) => {
+                    setJsonText(e.target.value)
+                    if (jsonErr) setJsonErr('')
+                  }}
+                  placeholder={'{ "mcpServers": { "shadcn": { "command": "npx", "args": ["shadcn@latest", "mcp"] } } }'}
+                />
+                <div className="mcp-json-foot">
+                  {jsonErr ? (
+                    <span className="mcp-json-err">
+                      <Icons.alert size={12} /> {jsonErr}
+                    </span>
+                  ) : (
+                    <span className="mcp-json-hint">Standard mcpServers format — fills the fields below</span>
+                  )}
+                  <button className="btn secondary sm" onClick={applyJson} disabled={!jsonText.trim()}>
+                    Fill fields
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
           <div>
             <label className="field-label">Name</label>
             <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="filesystem" />
