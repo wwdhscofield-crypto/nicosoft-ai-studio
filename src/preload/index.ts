@@ -29,6 +29,7 @@ import type {
   ImageToolDeltaDto,
   ImageToolImageStartDto,
   ImageToolImageDto,
+  ImageToolTurnBreakDto,
   ImageToolDoneDto,
   ImageToolErrorDto,
   RoleBindingDto,
@@ -131,6 +132,7 @@ const api = {
     onDelta: (cb: (d: ImageToolDeltaDto) => void): (() => void) => agentListen('imagetool:delta', cb),
     onImageStart: (cb: (d: ImageToolImageStartDto) => void): (() => void) => agentListen('imagetool:imagestart', cb),
     onImage: (cb: (d: ImageToolImageDto) => void): (() => void) => agentListen('imagetool:image', cb),
+    onTurnBreak: (cb: (d: ImageToolTurnBreakDto) => void): (() => void) => agentListen('imagetool:turnbreak', cb),
     onDone: (cb: (d: ImageToolDoneDto) => void): (() => void) => agentListen('imagetool:done', cb),
     onError: (cb: (d: ImageToolErrorDto) => void): (() => void) => agentListen('imagetool:error', cb)
   },

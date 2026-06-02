@@ -63,6 +63,7 @@ export interface ImageToolCallbacks {
   onDelta: (text: string) => void
   onImageStart: () => void // a generation just started — show a loading placeholder while it renders
   onImage: (attachment: MessageAttachmentDto) => void // the finished image (nsai-media:// ref) replaces the placeholder
+  onTurnBreak: () => void // end the current assistant message so the closing reply renders as the NEXT one (after the image)
 }
 
 // Assemble the chat context (system + memories + summary + recent turns) the same way chat.service does.
@@ -196,6 +197,7 @@ export async function run(input: ImageToolRunInput, cb: ImageToolCallbacks, sign
   // way nsai chat speaks after its image tool finishes. The generation ran async for text-first, so the
   // model already said it was creating the image; now we prompt one short wrap-up on the finished result.
   // The synthetic system-style user turn only carries the outcome to the model; it's never persisted.
+  let closingText = ''
   if (imageRequested) {
     const n = attachments.length
     messages.push({
@@ -205,22 +207,22 @@ export async function run(input: ImageToolRunInput, cb: ImageToolCallbacks, sign
           ? `[System: the ${n} image${n === 1 ? '' : 's'} you requested have finished generating and are now displayed to the user above.] In 1–2 short sentences, present the result and offer one refinement or next step. It is already done — do not say you are still generating.`
           : '[System: the image generation failed.] In one short sentence, apologize and suggest trying again or adjusting the request.'
     })
-    if (finalText) {
-      cb.onDelta('\n\n') // visual break between the "generating…" line and the closing presentation
-      finalText += '\n\n'
-    }
+    // Break to a NEW assistant message so the closing presentation renders AFTER the image: the round-1
+    // "generating…" text + the image(s) are message 1; this wrap-up becomes message 2.
+    cb.onTurnBreak()
     const closing = await chatGemini(
       { protocol: 'gemini', baseUrl: ep.baseUrl, apiKey, model: input.model, messages, thinking: input.thinking, signal },
       (d) => cb.onDelta(d.text)
     )
-    if (closing.text) finalText += closing.text
+    closingText = closing.text ?? ''
     inTokens = closing.usage.inTokens || inTokens
     outTokens += closing.usage.outTokens
   }
 
   usageRepo.record({ model: input.model, provider: 'gemini', inTokens, outTokens })
 
-  // Persist the assistant turn: accumulated text + every generated image as an nsai-media:// attachment.
+  // Persist as up to two turns: message 1 = the text-first "generating…" line + the image(s); message 2
+  // = the post-image wrap-up (kept separate so it renders AFTER the image, matching the live UI).
   convService.append(input.convId, {
     author: 'expert',
     expertId: DESIGNER_ROLE_ID,
@@ -229,6 +231,14 @@ export async function run(input: ImageToolRunInput, cb: ImageToolCallbacks, sign
     attachments,
     inputTokens: inTokens
   })
+  if (closingText.trim()) {
+    convService.append(input.convId, {
+      author: 'expert',
+      expertId: DESIGNER_ROLE_ID,
+      model: input.model,
+      content: closingText
+    })
+  }
 
   // Mirror chat.service end-of-turn side effects: memory cadence + compression check.
   void memoryService.onTurn({ convId: input.convId, roleId: DESIGNER_ROLE_ID, endpointId: input.endpointId, model: input.model }).catch(() => {})

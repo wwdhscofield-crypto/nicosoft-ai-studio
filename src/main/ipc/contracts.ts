@@ -217,6 +217,9 @@ export interface ImageToolImageDto {
   streamId: string
   attachment: MessageAttachmentDto
 }
+export interface ImageToolTurnBreakDto {
+  streamId: string
+}
 export interface ImageToolDoneDto {
   streamId: string
   inputTokens: number

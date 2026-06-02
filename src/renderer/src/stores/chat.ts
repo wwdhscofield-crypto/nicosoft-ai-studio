@@ -375,6 +375,21 @@ export const useChat = create<ChatState>((set, get) => {
       const meta = imageToolMeta.get(d.streamId)
       if (meta) fulfillImage(meta.convId, { url: d.attachment.url, name: d.attachment.name ?? 'image' })
     })
+    it.onTurnBreak((d) => {
+      // End the current assistant message (the "generating…" text + image) so the next delta — the
+      // designer's closing reply — starts a fresh message that renders AFTER the image.
+      const meta = imageToolMeta.get(d.streamId)
+      if (!meta) return
+      set((s) => {
+        const msgs = (s.byConversation[meta.convId] ?? []).map((m) => ({ ...m }))
+        const cur = msgs[msgs.length - 1]
+        if (cur && cur.role === 'assistant' && cur.streaming) {
+          cur.streaming = false
+          if (cur.images) cur.images = cur.images.filter((x) => !x.loading) // drop a failed gen's placeholder
+        }
+        return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
+      })
+    })
     it.onDone((d) => {
       const meta = imageToolMeta.get(d.streamId)
       imageToolMeta.delete(d.streamId)

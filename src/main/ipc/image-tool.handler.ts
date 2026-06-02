@@ -13,6 +13,7 @@ import type {
   ImageToolDeltaDto,
   ImageToolImageStartDto,
   ImageToolImageDto,
+  ImageToolTurnBreakDto,
   ImageToolDoneDto,
   ImageToolErrorDto
 } from './contracts'
@@ -50,6 +51,10 @@ export function registerImageToolHandlers(): void {
           onImage: (attachment) => {
             const ev: ImageToolImageDto = { streamId, attachment }
             send('imagetool:image', ev)
+          },
+          onTurnBreak: () => {
+            const ev: ImageToolTurnBreakDto = { streamId }
+            send('imagetool:turnbreak', ev)
           }
         },
         controller.signal

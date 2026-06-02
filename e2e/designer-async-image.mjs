@@ -38,45 +38,59 @@ await page.fill('textarea.cmp-textarea', 'Draw a simple flat red apple on a plai
 await page.waitForTimeout(150)
 await page.keyboard.press('Enter')
 
-// Poll the last assistant segment: when does REPLY TEXT (excluding the thinking readout + the image
-// thumbs) first appear, and when does the finished (non-loading) image land?
+// Poll across ALL assistant segments: when does reply text first appear (excluding readout/images), and
+// when does a finished image land? The closing reply is now its OWN message, rendered after the image.
 const t0 = Date.now()
-let textAt = 0
+let firstTextAt = 0
 let imgAt = 0
-let textLenAtImg = 0
-let lastTextLen = 0
 for (let i = 0; i < 220; i++) {
   await page.waitForTimeout(200)
   const st = await page.evaluate(() => {
-    const segs = [...document.querySelectorAll('.segment')]
-    const last = segs[segs.length - 1]
-    if (!last) return { textLen: 0, hasImg: false, streaming: false }
-    const body = last.querySelector('.seg-body')
-    let textLen = 0
-    if (body) {
-      const clone = body.cloneNode(true)
-      clone.querySelectorAll('.thinking-readout, .msg-images').forEach((e) => e.remove())
-      textLen = (clone.textContent || '').trim().length
+    const text = (seg) => {
+      const b = seg.querySelector('.seg-body')
+      if (!b) return ''
+      const c = b.cloneNode(true)
+      c.querySelectorAll('.thinking-readout, .msg-images').forEach((e) => e.remove())
+      return (c.textContent || '').trim()
     }
-    const hasImg = !!last.querySelector('.msg-img-thumb:not(.msg-img-loading)')
-    return { textLen, hasImg, streaming: !!document.querySelector('.cmp-stop') }
+    const segs = [...document.querySelectorAll('.segment')]
+    return {
+      anyText: segs.some((s) => text(s).length > 3),
+      hasImg: segs.some((s) => s.querySelector('.msg-img-thumb:not(.msg-img-loading)')),
+      streaming: !!document.querySelector('.cmp-stop')
+    }
   })
-  if (!textAt && st.textLen > 3) textAt = Date.now() - t0
-  if (!imgAt && st.hasImg) {
-    imgAt = Date.now() - t0
-    textLenAtImg = st.textLen
-  }
-  lastTextLen = st.textLen
-  if (!st.streaming && i > 3 && imgAt) break // turn finished after the image landed
+  if (!firstTextAt && st.anyText) firstTextAt = Date.now() - t0
+  if (!imgAt && st.hasImg) imgAt = Date.now() - t0
+  if (!st.streaming && i > 3 && imgAt) break
 }
-console.log(`text@${textAt}ms  image@${imgAt}ms  textLen@image=${textLenAtImg} final=${lastTextLen}`)
+// Final layout: the closing reply must be a text segment AFTER the segment that holds the image.
+const layout = await page.evaluate(() => {
+  const text = (seg) => {
+    const b = seg.querySelector('.seg-body')
+    if (!b) return ''
+    const c = b.cloneNode(true)
+    c.querySelectorAll('.thinking-readout, .msg-images').forEach((e) => e.remove())
+    return (c.textContent || '').trim()
+  }
+  const segs = [...document.querySelectorAll('.segment')]
+  let imgSegIdx = -1
+  for (let j = segs.length - 1; j >= 0; j--)
+    if (segs[j].querySelector('.msg-img-thumb:not(.msg-img-loading)')) {
+      imgSegIdx = j
+      break
+    }
+  const closingSeg = segs.slice(imgSegIdx + 1).find((s) => text(s).length > 3)
+  return { totalSegs: segs.length, imgSegIdx, closingAfterImg: !!closingSeg, closingText: closingSeg ? text(closingSeg).slice(0, 70) : null }
+})
+console.log(`firstText@${firstTextAt}ms image@${imgAt}ms`, JSON.stringify(layout))
 await page.screenshot({ path: '/tmp/designer-async.png', fullPage: true })
-assert.ok(textAt > 0, 'assistant produced reply text')
+assert.ok(firstTextAt > 0, 'assistant produced reply text')
 assert.ok(imgAt > 0, 'async image generation completed and rendered')
-assert.ok(textAt < imgAt, `TEXT-FIRST violated: text@${textAt}ms not before image@${imgAt}ms`)
-console.log(`✓ text-first: reply text led the image by ${imgAt - textAt}ms`)
-assert.ok(lastTextLen > textLenAtImg, `closing follow-up expected: reply text should grow after the image (@image ${textLenAtImg}, final ${lastTextLen})`)
-console.log(`✓ closing follow-up: designer added +${lastTextLen - textLenAtImg} chars after the image landed`)
+assert.ok(firstTextAt < imgAt, `text-first: text@${firstTextAt}ms should precede image@${imgAt}ms`)
+console.log(`✓ text-first: reply text led the image by ${imgAt - firstTextAt}ms`)
+assert.ok(layout.closingAfterImg, `closing reply must render AFTER the image (separate message); layout=${JSON.stringify(layout)}`)
+console.log(`✓ closing-after-image: "${layout.closingText}"`)
 
 console.log(errors.length ? '✗ page errors: ' + JSON.stringify(errors) : '✓ no page errors')
 await app.close()
