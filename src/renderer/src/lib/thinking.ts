@@ -114,11 +114,12 @@ export function getThinkingCapability(family: Family, slug: string): ThinkingCap
   }
   if (family === 'gemini') {
     // Wire-format split (applied in buildBody, llm/gemini.ts): Gemini 2.5 takes a token thinkingBudget;
-    // Gemini 3 and newer take a thinkingLevel (low/medium/high). Older / non-thinking models (2.0, 1.x,
-    // imagen, nano-banana) expose no thinking knob.
+    // Gemini 3+ — including the rolling -latest aliases (gemini-pro-latest / gemini-flash-latest /
+    // gemini-flash-lite-latest, all tracking the newest Gemini 3.x release) — take a thinkingLevel
+    // (low/medium/high). Older / non-thinking models (2.0, 1.x, imagen, nano-banana) expose nothing.
     if (s.includes('gemini-2.5')) return { kind: 'budget', mapping: s.includes('flash') ? GEMINI_FLASH_BUDGET : GEMINI_PRO_BUDGET }
     const major = /gemini-(\d+)/.exec(s)
-    if (major && parseInt(major[1], 10) >= 3) return { kind: 'effort', depths: GEMINI3_DEPTHS }
+    if ((major && parseInt(major[1], 10) >= 3) || s.endsWith('-latest')) return { kind: 'effort', depths: GEMINI3_DEPTHS }
     return { kind: 'none' }
   }
   return { kind: 'none' }

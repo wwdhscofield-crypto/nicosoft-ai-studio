@@ -29,7 +29,7 @@ await page.evaluate(
     if (!gemini) throw new Error('need a gemini-protocol endpoint')
     await window.api.roles.setBinding('designer', {
       endpointId: gemini.id,
-      model: 'gemini-3.1-pro-preview',
+      model: 'gemini-pro-latest',
       imageModel: 'nano-banana-pro-preview'
     })
   },

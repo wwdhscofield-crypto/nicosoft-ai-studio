@@ -21,9 +21,9 @@ const EXPERTS: Expert[] = [
   { id: 'coordinator', name: 'Danny', color: 'var(--exp-coordinator)', specialty: 'Coordinator — routes & merges', personality: 'Calm air-traffic-controller', model: 'claude-sonnet-4.6', family: 'anthropic', coordinator: true },
   { id: 'generalist', name: 'Amélie', color: 'var(--exp-generalist)', specialty: 'Generalist — chat & brainstorming', personality: 'Warm, curious front door', model: 'gpt-5.5', family: 'openai' },
   { id: 'engineer', name: 'Flynn', color: 'var(--exp-engineer)', specialty: 'Software engineer — code', personality: 'Precise, direct, no pleasantries', model: 'claude-opus-4.8', family: 'anthropic' },
-  { id: 'designer', name: 'Georgia', color: 'var(--exp-designer)', specialty: 'Designer — images & posters', personality: 'Creative, opinionated', model: 'gemini-3.1-pro-preview', family: 'gemini' },
-  { id: 'translator', name: 'Louise', color: 'var(--exp-translator)', specialty: 'Translator — any language pair', personality: 'Precise, culturally aware', model: 'gemini-3-flash-preview', family: 'gemini' },
-  { id: 'editor', name: 'Miranda', color: 'var(--exp-editor)', specialty: 'Editor — summarize & condense', personality: 'Structured, no padding', model: 'gemini-3.1-pro-preview', family: 'gemini' },
+  { id: 'designer', name: 'Georgia', color: 'var(--exp-designer)', specialty: 'Designer — images & posters', personality: 'Creative, opinionated', model: 'gemini-pro-latest', family: 'gemini' },
+  { id: 'translator', name: 'Louise', color: 'var(--exp-translator)', specialty: 'Translator — any language pair', personality: 'Precise, culturally aware', model: 'gemini-flash-latest', family: 'gemini' },
+  { id: 'editor', name: 'Miranda', color: 'var(--exp-editor)', specialty: 'Editor — summarize & condense', personality: 'Structured, no padding', model: 'gemini-pro-latest', family: 'gemini' },
   { id: 'analyst', name: 'Turing', color: 'var(--exp-analyst)', specialty: 'Data analyst — stats & charts', personality: 'Rigorous, honest about uncertainty', model: 'gpt-5.5', family: 'openai' },
   { id: 'scheduler', name: 'Joan', color: 'var(--exp-scheduler)', specialty: 'Email & scheduling', personality: 'Efficient, situationally appropriate', model: 'gpt-5-mini', family: 'openai' }
 ]
@@ -208,9 +208,9 @@ const ROLE_BINDINGS: RoleBinding[] = [
   { id: 'coordinator', family: 'anthropic', model: 'nicosoft/claude-haiku-4-5-20251001' },
   { id: 'generalist', family: 'openai', model: 'nicosoft/gpt-5.4-mini' },
   { id: 'engineer', family: 'anthropic', model: 'nicosoft/claude-sonnet-4-6' },
-  { id: 'designer', family: 'gemini', model: 'gemini-3.1-pro-preview' },
-  { id: 'translator', family: 'gemini', model: 'gemini-3-flash-preview' },
-  { id: 'editor', family: 'gemini', model: 'gemini-3.1-pro-preview' },
+  { id: 'designer', family: 'gemini', model: 'gemini-pro-latest' },
+  { id: 'translator', family: 'gemini', model: 'gemini-flash-latest' },
+  { id: 'editor', family: 'gemini', model: 'gemini-pro-latest' },
   { id: 'analyst', family: 'openai', model: 'nicosoft/gpt-5.4' },
   { id: 'scheduler', family: 'openai', model: 'nicosoft/gpt-5.4-mini' }
 ]

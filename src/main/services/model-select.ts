@@ -20,7 +20,9 @@ export function pickSmallModel(protocol: Protocol, models: ModelInfo[], mainMode
     case 'custom':
       return find(/mini|nano/i) ?? mainModel
     case 'gemini':
-      return find(/flash/i) ?? mainModel
+      // Prefer flash-lite (cheapest, ideal for titles / memory tasks), then a text flash. Exclude
+      // image-gen flash slugs (e.g. *-flash-image-*) — they contain "flash" but aren't text models.
+      return find(/flash-lite/i) ?? find(/flash(?!.*image)/i) ?? mainModel
     default:
       return mainModel
   }
