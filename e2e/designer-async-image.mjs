@@ -2,7 +2,10 @@
 // reply text appears BEFORE the generated image (previously the multi-second generation blocked the tool
 // loop and text only showed after the image). Samples the DOM to time when reply text first appears vs
 // when the finished image lands, and asserts text leads. MANUAL — real LLM + image backend.
-// DESIGNER_MODEL defaults to gemini-2.5-flash (stable function-calling + image gen via nano-banana).
+// The binding written here mirrors the studio DEFAULT designer config (gemini-pro-latest +
+// nano-banana-pro-preview, the DEFAULT_IMAGE_MODEL; no thinking depth) so running this e2e just re-sets
+// the values that are already the default — zero config pollution. Override the chat model with
+// DESIGNER_MODEL=gemini-2.5-flash for the most stable function-calling when debugging.
 import { _electron } from 'playwright'
 import { strict as assert } from 'node:assert'
 import { fileURLToPath } from 'node:url'
@@ -10,7 +13,7 @@ import { dirname, join } from 'node:path'
 
 const PROJECT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const NS_KEY = process.env.NS_KEY || ''
-const CHAT_MODEL = process.env.DESIGNER_MODEL || 'gemini-2.5-flash'
+const CHAT_MODEL = process.env.DESIGNER_MODEL || 'gemini-pro-latest' // studio default designer model
 
 const errors = []
 const app = await _electron.launch({ args: ['out/main/index.js'], cwd: PROJECT })
