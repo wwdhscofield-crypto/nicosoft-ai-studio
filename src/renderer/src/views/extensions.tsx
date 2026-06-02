@@ -10,10 +10,10 @@ import type { ReactElement } from 'react'
 import { Icons } from '@/components/icons'
 import { Avatar, HealthDot } from '@/components/primitives'
 import { ImageModelPicker } from '@/components/composer-controls'
-import { McpDialog } from '@/components/dialogs'
+import { McpDialog, SkillDialog } from '@/components/dialogs'
 import { useRoleBinding } from '@/lib/use-role-binding'
 import { STUDIO_DATA } from '@/data/studio-data'
-import type { McpServerDto } from '@/lib/api'
+import type { McpServerDto, SkillDto } from '@/lib/api'
 import type { PluginBundle } from '@/types'
 
 /* — small flat switch — */
@@ -133,32 +133,65 @@ function MCPTab({ onCount }: { onCount: (n: number) => void }): ReactElement {
   );
 }
 
-/* ——— Skills ——— */
-function SkillsTab(): ReactElement {
-  const { EXTENSIONS } = STUDIO_DATA;
-  const [enabled, setEnabled] = useState(EXTENSIONS.skills.map((s) => s.enabled));
-  const toggle = (i: number): void => setEnabled((prev) => prev.map((v, j) => (j === i ? !v : v)));
+/* ——— Skills (real data via window.api.skills) ——— */
+function SkillsTab({ onCount }: { onCount: (n: number) => void }): ReactElement {
+  const [skills, setSkills] = useState<SkillDto[]>([]);
+  const [dialog, setDialog] = useState<{ editing: SkillDto | null } | null>(null);
+  const [menu, setMenu] = useState<string | null>(null);
+
+  const reload = (): void => void window.api.skills.list().then((s) => { setSkills(s); onCount(s.length); });
+  useEffect(() => { reload(); }, []);
+
+  const onToggle = (s: SkillDto): void => {
+    void window.api.skills.update(s.id, { source: s.source, enabled: !s.enabled }).then(reload);
+  };
+  const onRemove = (id: string): void => {
+    setMenu(null);
+    void window.api.skills.remove(id).then(reload);
+  };
+
   return (
     <div className="ext-tab">
-      <ExtTabHead help="Packaged workflows the model triggers on its own when relevant." action="Add skill" />
+      <ExtTabHead help="Packaged instructions an expert's agent loads on demand when a request matches." action="Add skill" onAdd={() => setDialog({ editing: null })} />
       <div className="ext-list">
-        {EXTENSIONS.skills.map((s, i) => (
-          <div className={"ext-row" + (enabled[i] ? "" : " off")} key={s.name}>
-            <span className="ext-lead"><Icons.zap size={15} /></span>
-            <div className="ext-main">
-              <div className="ext-line1">
-                <span className="ext-name mono">{s.name}</span>
-                <span className="ext-source">{s.source}</span>
+        {skills.length === 0 ? (
+          <div className="ext-empty">No skills yet — import a SKILL.md folder or write one in studio.</div>
+        ) : (
+          skills.map((s) => (
+            <div className={"ext-row" + (s.enabled ? "" : " off")} key={s.id}>
+              <span className="ext-lead"><Icons.zap size={15} /></span>
+              <div className="ext-main">
+                <div className="ext-line1">
+                  <span className="ext-name">{s.name}</span>
+                  <span className="ext-source">{s.source === "imported" ? "imported" : "studio"}</span>
+                </div>
+                <div className="ext-line2">{s.description}{s.whenToUse ? ` · ${s.whenToUse}` : ""}</div>
               </div>
-              <div className="ext-line2">{s.desc}</div>
+              <div className="ext-right">
+                <ScopeChip scope={s.scope} />
+                <Toggle on={s.enabled} onClick={() => onToggle(s)} />
+              </div>
+              <div className="ext-more-wrap">
+                <button className="icon-btn ext-more" onClick={() => setMenu(menu === s.id ? null : s.id)}>
+                  <Icons.more size={16} />
+                </button>
+                {menu === s.id ? (
+                  <>
+                    <div className="menu-backdrop" onClick={() => setMenu(null)} />
+                    <div className="row-menu right">
+                      <div className="rm-item" onClick={() => { setDialog({ editing: s }); setMenu(null); }}>Edit</div>
+                      <div className="rm-item danger" onClick={() => onRemove(s.id)}>Remove</div>
+                    </div>
+                  </>
+                ) : null}
+              </div>
             </div>
-            <div className="ext-right">
-              <ScopeChip scope={s.scope} />
-              <Toggle on={enabled[i]} onClick={() => toggle(i)} />
-            </div>
-          </div>
-        ))}
+          ))
+        )}
       </div>
+      {dialog ? (
+        <SkillDialog initial={dialog.editing} onClose={() => setDialog(null)} onSaved={() => { setDialog(null); reload(); }} />
+      ) : null}
     </div>
   );
 }
@@ -250,7 +283,8 @@ export function ExtensionsView(): ReactElement {
   const { EXTENSIONS } = STUDIO_DATA;
   const [tab, setTab] = useState("mcp");
   const [mcpCount, setMcpCount] = useState(0); // real server count, fed by MCPTab.onCount
-  const counts: Record<string, number> = { mcp: mcpCount, skills: EXTENSIONS.skills.length, plugins: EXTENSIONS.plugins.length, tools: 1 };
+  const [skillCount, setSkillCount] = useState(0); // real skill count, fed by SkillsTab.onCount
+  const counts: Record<string, number> = { mcp: mcpCount, skills: skillCount, plugins: EXTENSIONS.plugins.length, tools: 1 };
   return (
     <div className="main-col">
       <div className="conv-header">
@@ -273,10 +307,10 @@ export function ExtensionsView(): ReactElement {
       <div className="ext-body">
         <div className="ext-inner">
           {tab === "mcp" && <MCPTab onCount={setMcpCount} />}
-          {tab === "skills" && <SkillsTab />}
+          {tab === "skills" && <SkillsTab onCount={setSkillCount} />}
           {tab === "plugins" && <PluginsTab />}
           {tab === "tools" && <ToolsTab />}
-          {tab === "skills" || tab === "plugins" ? (
+          {tab === "plugins" ? (
             <div className="ext-foot">Mock framework · connections are illustrative</div>
           ) : null}
         </div>

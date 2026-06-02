@@ -16,3 +16,7 @@ export type McpServerInput = Parameters<typeof window.api.mcp.add>[0]
 export type McpTestResult = Awaited<ReturnType<typeof window.api.mcp.test>>
 export type McpTransport = McpServerDto['transport']
 export type McpScope = McpServerDto['scope']
+export type SkillDto = Awaited<ReturnType<typeof window.api.skills.list>>[number]
+export type SkillInput = Parameters<typeof window.api.skills.add>[0]
+export type SkillSource = SkillDto['source']
+export type SkillScope = SkillDto['scope']

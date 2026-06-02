@@ -7,10 +7,10 @@ import { Icons } from '@/components/icons'
 import { Avatar } from '@/components/primitives'
 import { STUDIO_DATA } from '@/data/studio-data'
 import { useRoles } from '@/stores/roles'
-import { useChat } from '@/stores/chat'
+import { useChat, roleHasAgent } from '@/stores/chat'
 import { useCustomRoles } from '@/stores/custom-roles'
 import type { Expert } from '@/types'
-import type { EndpointDto, EndpointInput, ModelInfo, McpServerDto, McpServerInput, McpTransport } from '@/lib/api'
+import type { EndpointDto, EndpointInput, ModelInfo, McpServerDto, McpServerInput, McpTransport, SkillDto, SkillInput, SkillSource } from '@/lib/api'
 
 /* — Add / Edit endpoint dialog (controlled) — */
 const PROTO_BASE: Record<string, string> = {
@@ -188,6 +188,12 @@ export function EndpointDialog({
 }
 
 /* — Add / Edit MCP server dialog (controlled) — */
+// Extensions (MCP + Skills) only run inside an agent loop, which today only Engineer has. A capability
+// scoped to a role without an agent is saved but never reaches a model — surface that honestly instead
+// of letting the user assume it's live. Future per-role agents widen roleHasAgent and this resolves itself.
+const AGENT_SCOPE_NOTE =
+  'Only experts with an agent run extensions today (currently Engineer). Others are saved but stay inactive until they get an agent.'
+
 export function McpDialog({
   initial,
   onClose,
@@ -417,17 +423,23 @@ export function McpDialog({
             </div>
             {!scopeAll ? (
               <div className="mcp-scope-roles">
-                {EXPERTS.map((e) => (
-                  <button
-                    key={e.id}
-                    className={'scope-pick' + (scopeRoles.includes(e.id) ? ' on' : '')}
-                    onClick={() => toggleRole(e.id)}
-                  >
-                    <Avatar expert={e} size={16} /> {e.name}
-                  </button>
-                ))}
+                {EXPERTS.map((e) => {
+                  const noAgent = !roleHasAgent(e.id)
+                  return (
+                    <button
+                      key={e.id}
+                      className={'scope-pick' + (scopeRoles.includes(e.id) ? ' on' : '')}
+                      onClick={() => toggleRole(e.id)}
+                      title={noAgent ? AGENT_SCOPE_NOTE : undefined}
+                    >
+                      <Avatar expert={e} size={16} /> {e.name}
+                      {noAgent ? <span className="scope-noagent">no agent</span> : null}
+                    </button>
+                  )
+                })}
               </div>
             ) : null}
+            <div className="scope-note">{AGENT_SCOPE_NOTE}</div>
           </div>
           {testState === 'ok' && (
             <div className="test-success">
@@ -444,6 +456,172 @@ export function McpDialog({
           <button className="btn secondary sm" onClick={() => void test()} disabled={testState === 'testing'}>
             {testState === 'testing' ? 'Testing…' : 'Test connection'}
           </button>
+          <div className="df-spacer" />
+          <button className="btn ghost sm" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary sm" onClick={() => void save()}>
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* — Add / Edit skill dialog — */
+export function SkillDialog({
+  initial,
+  onClose,
+  onSaved
+}: {
+  initial?: SkillDto | null
+  onClose: () => void
+  onSaved: () => void
+}): ReactElement {
+  const { EXPERTS } = STUDIO_DATA
+  const editing = !!initial
+  const [source, setSource] = useState<SkillSource>(initial?.source ?? 'imported')
+  const [dirPath, setDirPath] = useState(initial?.dirPath ?? '')
+  const [name, setName] = useState(initial?.name ?? '')
+  const [description, setDescription] = useState(initial?.description ?? '')
+  const [whenToUse, setWhenToUse] = useState(initial?.whenToUse ?? '')
+  const [body, setBody] = useState(initial?.body ?? '')
+  const [scopeAll, setScopeAll] = useState(initial ? initial.scope === 'all' : true)
+  const [scopeRoles, setScopeRoles] = useState<string[]>(Array.isArray(initial?.scope) ? initial.scope : [])
+  const [err, setErr] = useState('')
+
+  const pickDir = async (): Promise<void> => {
+    const p = await window.api.skills.pickDir()
+    if (p) {
+      setDirPath(p)
+      setErr('')
+    }
+  }
+  const toggleRole = (id: string): void =>
+    setScopeRoles((rs) => (rs.includes(id) ? rs.filter((r) => r !== id) : [...rs, id]))
+
+  const buildInput = (): SkillInput => ({
+    source,
+    ...(source === 'imported'
+      ? { dirPath: dirPath.trim() }
+      : { name: name.trim(), description: description.trim(), whenToUse: whenToUse.trim(), body }),
+    scope: scopeAll ? 'all' : scopeRoles,
+    enabled: initial?.enabled ?? true
+  })
+
+  const save = async (): Promise<void> => {
+    setErr('')
+    try {
+      if (initial) await window.api.skills.update(initial.id, buildInput())
+      else await window.api.skills.add(buildInput())
+      onSaved()
+    } catch (e) {
+      // Surface the service's reason (imported: no SKILL.md / empty body; builtin: missing name/body),
+      // stripping the layered "Error: … invoking remote method … Error:" IPC wrapper.
+      const msg = e instanceof Error ? e.message : String(e)
+      setErr(msg.split(/Error:\s*/).filter(Boolean).pop() ?? msg)
+    }
+  }
+
+  return (
+    <div className="overlay" onMouseDown={onClose}>
+      <div className="dialog" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="dialog-head">
+          <span className="dh-title">{editing ? 'Edit skill' : 'Add skill'}</span>
+          <button className="icon-btn" onClick={onClose}>
+            <Icons.x size={16} />
+          </button>
+        </div>
+        <div className="dialog-body">
+          <div>
+            <label className="field-label">Source</label>
+            <div className="segmented">
+              <button className={source === 'imported' ? 'active' : ''} disabled={editing} onClick={() => setSource('imported')}>
+                Import folder
+              </button>
+              <button className={source === 'builtin' ? 'active' : ''} disabled={editing} onClick={() => setSource('builtin')}>
+                Write in studio
+              </button>
+            </div>
+          </div>
+          {source === 'imported' ? (
+            <div>
+              <label className="field-label">
+                Skill folder <span style={{ color: 'var(--text-4)', fontWeight: 400 }}>· must contain SKILL.md</span>
+              </label>
+              <div className="skill-pickrow">
+                <input className="input mono" value={dirPath} onChange={(e) => setDirPath(e.target.value)} placeholder="/path/to/skill" />
+                <button className="btn secondary sm" onClick={() => void pickDir()}>
+                  Browse…
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div>
+                <label className="field-label">Name</label>
+                <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="code-review" />
+              </div>
+              <div>
+                <label className="field-label">Description</label>
+                <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Structured PR review" />
+              </div>
+              <div>
+                <label className="field-label">
+                  When to use <span style={{ color: 'var(--text-4)', fontWeight: 400 }}>· helps the model pick it</span>
+                </label>
+                <input className="input" value={whenToUse} onChange={(e) => setWhenToUse(e.target.value)} placeholder="When the user asks to review a diff" />
+              </div>
+              <div>
+                <label className="field-label">Instructions</label>
+                <textarea
+                  className="input"
+                  rows={5}
+                  value={body}
+                  onChange={(e) => setBody(e.target.value)}
+                  placeholder="Step-by-step instructions the model follows when this skill is invoked…"
+                />
+              </div>
+            </>
+          )}
+          <div>
+            <label className="field-label">Scope</label>
+            <div className="segmented">
+              <button className={scopeAll ? 'active' : ''} onClick={() => setScopeAll(true)}>
+                All experts
+              </button>
+              <button className={!scopeAll ? 'active' : ''} onClick={() => setScopeAll(false)}>
+                Specific
+              </button>
+            </div>
+            {!scopeAll ? (
+              <div className="mcp-scope-roles">
+                {EXPERTS.map((e) => {
+                  const noAgent = !roleHasAgent(e.id)
+                  return (
+                    <button
+                      key={e.id}
+                      className={'scope-pick' + (scopeRoles.includes(e.id) ? ' on' : '')}
+                      onClick={() => toggleRole(e.id)}
+                      title={noAgent ? AGENT_SCOPE_NOTE : undefined}
+                    >
+                      <Avatar expert={e} size={16} /> {e.name}
+                      {noAgent ? <span className="scope-noagent">no agent</span> : null}
+                    </button>
+                  )
+                })}
+              </div>
+            ) : null}
+            <div className="scope-note">{AGENT_SCOPE_NOTE}</div>
+          </div>
+          {err ? (
+            <div className="dialog-err">
+              <Icons.alert size={14} /> {err}
+            </div>
+          ) : null}
+        </div>
+        <div className="dialog-foot">
           <div className="df-spacer" />
           <button className="btn ghost sm" onClick={onClose}>
             Cancel

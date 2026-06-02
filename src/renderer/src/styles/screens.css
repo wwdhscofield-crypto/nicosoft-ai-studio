@@ -774,6 +774,14 @@
 }
 .scope-pick:hover { background: var(--bg-3); }
 .scope-pick.on { color: var(--text-1); border-color: var(--accent); }
+/* "no agent" marker on a scoped role chip + the honest note that extensions only run for agent roles */
+.scope-noagent { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-4); border: 1px solid var(--border-2); border-radius: 3px; padding: 0 4px; margin-left: 2px; }
+.scope-note { margin-top: 8px; font-size: 11px; line-height: 1.45; color: var(--text-4); }
+/* SkillDialog: imported-folder picker row + inline error */
+.skill-pickrow { display: flex; gap: 8px; align-items: center; }
+.skill-pickrow .input { flex: 1; }
+.skill-pickrow .btn { flex: none; }
+.dialog-err { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--error); }
 
 /* scope chip */
 .scope-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
