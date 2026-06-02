@@ -5,7 +5,7 @@
 // candidates[0].content.parts and cumulative usage in usageMetadata.
 
 import type { ChatAttachment, ChatFn, ChatMessage, ChatRequest, ChatResult, OnDelta, ToolCall } from './types'
-import { openStream, parseJSON, toLlmError } from './_shared'
+import { iterSSE, openStream, parseJSON, toLlmError } from './_shared'
 import { ulid } from '../db/id'
 
 const PROVIDER = 'gemini'
@@ -38,7 +38,7 @@ interface FunctionDeclaration {
 interface GeminiBody {
   contents: Content[]
   systemInstruction?: { parts: TextPart[] }
-  generationConfig?: { thinkingConfig: { thinkingBudget: number } }
+  generationConfig?: { thinkingConfig: { thinkingBudget?: number; thinkingLevel?: string } }
   tools?: { functionDeclarations: FunctionDeclaration[] }[]
 }
 
@@ -96,9 +96,15 @@ function buildBody(req: ChatRequest): GeminiBody {
   const body: GeminiBody = { contents: toContents(req.messages) }
   const sys = toSystemInstruction(req.messages)
   if (sys) body.systemInstruction = sys
-  const budget = req.thinking?.budgetTokens
-  if (typeof budget === 'number' && budget > 0) {
-    body.generationConfig = { thinkingConfig: { thinkingBudget: budget } }
+  // Gemini 3 (gemini-3-* and the -latest aliases) takes thinkingLevel (low/medium/high); Gemini 2.5
+  // takes a token thinkingBudget. resolveThinking() hands us effort for the former, budgetTokens for the
+  // latter — pick the matching wire field. (Previously only budgetTokens was sent, so Gemini 3 always ran
+  // its default high thinking.)
+  const t = req.thinking
+  if (t?.effort) {
+    body.generationConfig = { thinkingConfig: { thinkingLevel: t.effort } }
+  } else if (typeof t?.budgetTokens === 'number' && t.budgetTokens > 0) {
+    body.generationConfig = { thinkingConfig: { thinkingBudget: t.budgetTokens } }
   }
   if (req.tools?.length) {
     body.tools = [
@@ -129,57 +135,14 @@ function chunkText(chunk: GeminiChunk): string {
   return s
 }
 
-// Gemini streams a JSON array `[{...},{...}]`, not SSE. Incrementally emit each top-level object as
-// its braces balance, respecting string literals + escapes so braces inside strings don't miscount.
-// State (depth/inStr/esc) persists across reads; the buffer is trimmed each time an object completes.
-async function* iterJsonArray(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-): AsyncGenerator<GeminiChunk, void, void> {
-  const decoder = new TextDecoder()
-  let buf = ''
-  let depth = 0
-  let start = -1
-  let inStr = false
-  let esc = false
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (value) buf += decoder.decode(value, { stream: true })
-    if (done) buf += decoder.decode()
-    let i = 0
-    while (i < buf.length) {
-      const ch = buf[i]
-      if (inStr) {
-        if (esc) esc = false
-        else if (ch === '\\') esc = true
-        else if (ch === '"') inStr = false
-      } else if (ch === '"') {
-        inStr = true
-      } else if (ch === '{') {
-        if (depth === 0) start = i
-        depth++
-      } else if (ch === '}' && depth > 0) {
-        depth--
-        if (depth === 0 && start >= 0) {
-          const parsed = parseJSON(buf.slice(start, i + 1)) as GeminiChunk | null
-          if (parsed) yield parsed
-          buf = buf.slice(i + 1) // drop the consumed object; keep the unparsed tail
-          start = -1
-          i = 0
-          continue
-        }
-      }
-      i++
-    }
-    if (done) return
-  }
-}
-
 export const chatGemini: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Promise<ChatResult> => {
   const base = req.baseUrl.replace(/\/$/, '').replace(/\/v1beta$/, '').replace(/\/v1$/, '')
   // Key in the x-goog-api-key header, not the URL — query-string secrets leak into logs/proxies.
-  // No ?alt=sse: the default JSON-array stream is the format every Gemini-compatible endpoint emits;
-  // alt=sse is a Google-only enhancement that gateways may ignore (then mislabel as event-stream).
-  const url = `${base}/v1beta/models/${encodeURIComponent(req.model)}:streamGenerateContent`
+  // alt=sse: request the standard SSE stream (parsed by the shared iterSSE). Gemini 3 only emits
+  // functionCall parts reliably over SSE — the default JSON-array stream drops them (the model replies
+  // with prose like "I'm generating…" instead of calling the tool). Google supports alt=sse natively;
+  // nsai's Gemini adapter forwards it upstream when the client asks.
+  const url = `${base}/v1beta/models/${encodeURIComponent(req.model)}:streamGenerateContent?alt=sse`
   const reader = await openStream(PROVIDER, url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': req.apiKey },
@@ -193,7 +156,9 @@ export const chatGemini: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Pr
   const toolCalls: ToolCall[] = []
 
   try {
-    for await (const chunk of iterJsonArray(reader)) {
+    for await (const payload of iterSSE(reader)) {
+      const chunk = parseJSON(payload) as GeminiChunk | null
+      if (!chunk) continue
       const delta = chunkText(chunk)
       if (delta.length > 0) {
         text += delta
