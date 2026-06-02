@@ -43,6 +43,7 @@ await page.keyboard.press('Enter')
 const t0 = Date.now()
 let firstTextAt = 0
 let imgAt = 0
+let readoutAfterImg = false // thinking readout stays up after the image, before any closing text (no gap)
 for (let i = 0; i < 220; i++) {
   await page.waitForTimeout(200)
   const st = await page.evaluate(() => {
@@ -54,14 +55,24 @@ for (let i = 0; i < 220; i++) {
       return (c.textContent || '').trim()
     }
     const segs = [...document.querySelectorAll('.segment')]
+    let imgIdx = -1
+    for (let j = segs.length - 1; j >= 0; j--)
+      if (segs[j].querySelector('.msg-img-thumb:not(.msg-img-loading)')) {
+        imgIdx = j
+        break
+      }
+    const closingTextLen = imgIdx >= 0 ? segs.slice(imgIdx + 1).reduce((n, s) => n + text(s).length, 0) : 0
     return {
       anyText: segs.some((s) => text(s).length > 3),
-      hasImg: segs.some((s) => s.querySelector('.msg-img-thumb:not(.msg-img-loading)')),
+      hasImg: imgIdx >= 0,
+      hasReadout: !!document.querySelector('.thinking-readout'),
+      closingTextLen,
       streaming: !!document.querySelector('.cmp-stop')
     }
   })
   if (!firstTextAt && st.anyText) firstTextAt = Date.now() - t0
   if (!imgAt && st.hasImg) imgAt = Date.now() - t0
+  if (imgAt && st.closingTextLen === 0 && st.hasReadout) readoutAfterImg = true
   if (!st.streaming && i > 3 && imgAt) break
 }
 // Final layout: the closing reply must be a text segment AFTER the segment that holds the image.
@@ -91,6 +102,8 @@ assert.ok(firstTextAt < imgAt, `text-first: text@${firstTextAt}ms should precede
 console.log(`✓ text-first: reply text led the image by ${imgAt - firstTextAt}ms`)
 assert.ok(layout.closingAfterImg, `closing reply must render AFTER the image (separate message); layout=${JSON.stringify(layout)}`)
 console.log(`✓ closing-after-image: "${layout.closingText}"`)
+assert.ok(readoutAfterImg, 'thinking readout should stay visible after the image while the closing reply generates (no status gap)')
+console.log('✓ status continuity: readout stayed up after the image, before the closing text')
 
 console.log(errors.length ? '✗ page errors: ' + JSON.stringify(errors) : '✓ no page errors')
 await app.close()

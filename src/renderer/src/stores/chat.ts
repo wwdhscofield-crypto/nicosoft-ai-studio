@@ -376,8 +376,10 @@ export const useChat = create<ChatState>((set, get) => {
       if (meta) fulfillImage(meta.convId, { url: d.attachment.url, name: d.attachment.name ?? 'image' })
     })
     it.onTurnBreak((d) => {
-      // End the current assistant message (the "generating…" text + image) so the next delta — the
-      // designer's closing reply — starts a fresh message that renders AFTER the image.
+      // End the current assistant message (the "generating…" text + image) and immediately open the
+      // next, empty streaming message. The fresh message keeps the thinking readout visible right after
+      // the image while the closing reply is generated — no status gap (ccb-style) — and the closing
+      // deltas fill it in, so the wrap-up still renders AFTER the image.
       const meta = imageToolMeta.get(d.streamId)
       if (!meta) return
       set((s) => {
@@ -387,6 +389,7 @@ export const useChat = create<ChatState>((set, get) => {
           cur.streaming = false
           if (cur.images) cur.images = cur.images.filter((x) => !x.loading) // drop a failed gen's placeholder
         }
+        msgs.push({ id: uid(), role: 'assistant', text: '', streaming: true })
         return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
       })
     })
@@ -402,6 +405,12 @@ export const useChat = create<ChatState>((set, get) => {
           // Drop any unfulfilled loading placeholder — a generation that errored never sent onImage,
           // so its spinner would otherwise hang forever (the round-N reply explains the failure).
           if (cur.images) cur.images = cur.images.filter((x) => !x.loading)
+        }
+        // Drop a trailing empty message — the closing turn opened on turnbreak that produced no text
+        // (closing call failed / returned nothing) would otherwise render as a blank bubble.
+        const tail = msgs[msgs.length - 1]
+        if (tail && tail.role === 'assistant' && !tail.text.trim() && !tail.images?.length && !tail.tools?.length) {
+          msgs.pop()
         }
         return {
           byConversation: { ...s.byConversation, [meta.convId]: msgs },
