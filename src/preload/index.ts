@@ -49,7 +49,9 @@ import type {
   MemoryOnTurnInput,
   McpServerDto,
   McpServerInput,
-  McpTestResult
+  McpTestResult,
+  SkillDto,
+  SkillInput
 } from '../main/ipc/contracts'
 
 // Typed bridge exposed to the renderer as `window.api`. Window controls (Batch 0) + Batch 1
@@ -197,6 +199,14 @@ const api = {
       ipcRenderer.invoke('mcp:update', id, patch),
     remove: (id: string): Promise<void> => ipcRenderer.invoke('mcp:remove', id),
     test: (id: string): Promise<McpTestResult> => ipcRenderer.invoke('mcp:test', id)
+  },
+  skills: {
+    list: (): Promise<SkillDto[]> => ipcRenderer.invoke('skills:list'),
+    add: (input: SkillInput): Promise<SkillDto> => ipcRenderer.invoke('skills:add', input),
+    update: (id: string, patch: SkillInput): Promise<SkillDto | null> =>
+      ipcRenderer.invoke('skills:update', id, patch),
+    remove: (id: string): Promise<void> => ipcRenderer.invoke('skills:remove', id),
+    pickDir: (): Promise<string | null> => ipcRenderer.invoke('skills:pickDir')
   }
 }
 

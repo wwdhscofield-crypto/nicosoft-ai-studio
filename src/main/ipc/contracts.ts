@@ -402,3 +402,29 @@ export interface McpTestResult {
   toolCount?: number
   error?: string
 }
+
+export type SkillSource = 'imported' | 'builtin'
+export type SkillScope = 'all' | string[] // 'all', or an explicit list of role ids
+
+export interface SkillDto {
+  id: string
+  name: string
+  description: string
+  whenToUse: string
+  source: SkillSource
+  body: string | null // builtin: editable instruction body; imported: null (the body lives in the folder)
+  dirPath: string | null // imported: the skill folder; builtin: null
+  scope: SkillScope
+  enabled: boolean
+}
+
+export interface SkillInput {
+  source: SkillSource
+  name?: string // builtin: required; imported: optional override of the SKILL.md name
+  description?: string
+  whenToUse?: string
+  body?: string // builtin only
+  dirPath?: string // imported only
+  scope?: SkillScope
+  enabled?: boolean
+}

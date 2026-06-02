@@ -32,6 +32,7 @@ import * as compressionService from './compression.service'
 import { pickSmallModel } from './model-select'
 import { countAnthropic } from './token-count.service'
 import { manager as mcpManager } from './mcp.service'
+import { manager as skillManager } from './skill.service'
 
 const ENGINEER_ROLE_ID = 'engineer' // this version's agent is Engineer-only
 
@@ -60,7 +61,10 @@ export async function run(
   // MCP tools scoped to this role get appended to the core set — generic across any agent role (the
   // injection is by roleId + scope, never hardwired). Engineer is the only agent role today.
   const roleId = input.roleId ?? ENGINEER_ROLE_ID
-  const tools = [...CORE_TOOLS, ...mcpManager.toolsForRole(roleId)]
+  // Skills scoped to this role: one Skill tool the model calls to load instructions on demand,
+  // advertised via the "Available skills" system listing (buildEngineerSystem). Null → no in-scope skills.
+  const skillTool = skillManager.skillTool(roleId)
+  const tools = [...CORE_TOOLS, ...mcpManager.toolsForRole(roleId), ...(skillTool ? [skillTool] : [])]
 
   // ① Persist the user turn (tagged with run_id) so context assembly + extraction read it from the DB.
   const userImages = (input.images ?? []).map((i) => ({ url: i.dataUrl }))
@@ -85,7 +89,7 @@ export async function run(
 
   // ③ Agent system = ENGINEER prompt + injected memories + summary; seed = history → AgentMessage (Anthropic
   //    needs a user-first list, so drop any leading assistant turns left by a fold boundary).
-  const system = buildEngineerSystem(memories, summary?.content ?? null)
+  const system = buildEngineerSystem(memories, summary?.content ?? null, skillManager.listingForRole(roleId))
   const mapped = conversationToAgentMessages(recent)
   const firstUser = mapped.findIndex((m) => m.role === 'user')
   const seed = firstUser > 0 ? mapped.slice(firstUser) : mapped
@@ -196,7 +200,7 @@ export async function run(
 }
 
 // ENGINEER system prompt + the chat layer's injected context (recalled memories, conversation summary).
-function buildEngineerSystem(memories: MemoryRow[], summary: string | null): string {
+function buildEngineerSystem(memories: MemoryRow[], summary: string | null, skillListing: string): string {
   const parts = [ENGINEER_SYSTEM_PROMPT]
   if (memories.length) {
     parts.push(
@@ -205,6 +209,7 @@ function buildEngineerSystem(memories: MemoryRow[], summary: string | null): str
     )
   }
   if (summary) parts.push('Summary of earlier in this conversation:\n' + summary)
+  if (skillListing) parts.push(skillListing)
   return parts.join('\n\n')
 }
 

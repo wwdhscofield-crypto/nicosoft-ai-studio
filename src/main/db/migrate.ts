@@ -10,6 +10,11 @@ export function runMigrations(db: DatabaseSync): void {
   ensureColumn(db, 'role_bindings', 'image_model', 'TEXT')
   ensureColumn(db, 'messages', 'run_id', 'TEXT')
   ensureColumn(db, 'mcp_servers', 'args', "TEXT NOT NULL DEFAULT '[]'")
+  ensureColumn(db, 'skills', 'when_to_use', 'TEXT')
+  ensureColumn(db, 'skills', 'body', 'TEXT')
+  ensureColumn(db, 'skills', 'dir_path', 'TEXT')
+  ensureColumn(db, 'skills', 'allowed_tools', "TEXT NOT NULL DEFAULT '[]'")
+  ensureColumn(db, 'skills', 'created_at', 'TEXT')
 }
 
 // Add a column only if the table doesn't already have it (SQLite lacks ADD COLUMN IF NOT EXISTS).

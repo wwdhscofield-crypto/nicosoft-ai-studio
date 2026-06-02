@@ -167,12 +167,17 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
 );
 
 CREATE TABLE IF NOT EXISTS skills (
-  id          TEXT PRIMARY KEY,
-  name        TEXT NOT NULL,
-  description TEXT,
-  source      TEXT,
-  enabled     INTEGER NOT NULL DEFAULT 1,
-  scope       TEXT NOT NULL DEFAULT '"all"'       -- JSON
+  id            TEXT PRIMARY KEY,
+  name          TEXT NOT NULL,
+  description   TEXT,
+  when_to_use   TEXT,
+  source        TEXT NOT NULL DEFAULT 'builtin',   -- imported | builtin
+  body          TEXT,                              -- builtin: inline instructions; imported: SKILL.md snapshot
+  dir_path      TEXT,                              -- imported: skill folder; builtin: null
+  allowed_tools TEXT NOT NULL DEFAULT '[]',        -- JSON string[]
+  scope         TEXT NOT NULL DEFAULT '"all"',     -- JSON: "all" | string[]
+  enabled       INTEGER NOT NULL DEFAULT 1,
+  created_at    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS plugins (

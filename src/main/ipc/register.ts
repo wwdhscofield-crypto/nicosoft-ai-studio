@@ -10,6 +10,7 @@ import { registerMemoryHandlers } from './memory.handler'
 import { registerImageToolHandlers } from './image-tool.handler'
 import { registerMediaHandlers } from './media.handler'
 import { registerMcpHandlers } from './mcp.handler'
+import { registerSkillHandlers } from './skill.handler'
 
 // Single entry point — main/index.ts calls this once on app ready.
 export function registerIpc(): void {
@@ -25,4 +26,5 @@ export function registerIpc(): void {
   registerMemoryHandlers()
   registerMediaHandlers()
   registerMcpHandlers()
+  registerSkillHandlers()
 }
