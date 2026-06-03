@@ -16,6 +16,7 @@ import { useChat, roleHasAgent, roleHasImageTool, type ChatMessage } from '@/sto
 import { ToolBubble, ServerBubble, Sources } from '@/components/tool-bubble'
 import { Markdown } from '@/components/markdown'
 import { ApprovalDialog } from '@/components/approval-dialog'
+import { ApprovalCards } from '@/components/approval-cards'
 import { useRoleBinding } from '@/lib/use-role-binding'
 import { fileToImage, imagesFromClipboard, type ImageAttachment } from '@/lib/image'
 import { getThinkingCapability, resolveThinking, type ThinkingDepth } from '@/lib/thinking'
@@ -432,6 +433,13 @@ export function ChatView({ expert, onOpenSettings }: { expert: Expert; onOpenSet
                 <strong>{error}</strong>
               </span>
             </div>
+          ) : null}
+          {activeConv && chat.approvals[activeConv]?.length ? (
+            <ApprovalCards
+              cards={chat.approvals[activeConv]}
+              onApprove={(pid) => chat.approveApproval(activeConv, pid)}
+              onReject={(pid) => chat.rejectApproval(activeConv, pid)}
+            />
           ) : null}
         </div>
       </div>

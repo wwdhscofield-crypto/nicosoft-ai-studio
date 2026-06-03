@@ -258,6 +258,26 @@ export interface CoordinatorPermissionCancel {
   streamId: string
   permissionId: string
 }
+// Unattended-approval audit (doc 19 §8). yellow = auto-approved (a chat note); red = hard-denied + recorded
+// (pendingId → a card the user can approve later). green is silent (too frequent to log).
+export interface CoordinatorApprovalEvent {
+  streamId: string
+  roleId: string
+  zone: 'yellow' | 'red'
+  toolName: string
+  reason: string
+  pendingId?: string
+}
+// A red-zone action awaiting the user's decision (deferred approval). toolInput is shown read-only on the card.
+export interface PendingApprovalDto {
+  id: string
+  roleId: string
+  toolName: string
+  toolInput: unknown
+  cwd: string
+  reason: string
+  createdAt: string
+}
 
 // === Image tool (designer chat + ns_generate_image) ===
 export interface ImageToolRunInputDto {

@@ -22,6 +22,7 @@ import type {
   CoordinatorAssistant,
   CoordinatorToolResults,
   CoordinatorPermissionRequest,
+  CoordinatorApprovalEvent,
   AgentBlockDto,
   AgentResultDto,
   AgentPermissionResponse
@@ -141,7 +142,12 @@ export function registerCoordinatorHandlers(): void {
               signal?.addEventListener('abort', onAbort, { once: true })
               const ev: CoordinatorPermissionRequest = { streamId, permissionId, roleId, toolName: req.toolName, input: req.input, reason: req.reason }
               send('coordinator:permission', ev)
-            })
+            }),
+          // Unattended-approval audit (doc 19 §8) → chat: a yellow auto-approved note / a red pending card.
+          onApproval: (e) => {
+            const ev: CoordinatorApprovalEvent = { streamId, ...e }
+            send('coordinator:approval', ev)
+          }
         },
         controller.signal
       )

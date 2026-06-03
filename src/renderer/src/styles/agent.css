@@ -163,8 +163,8 @@
   overflow: auto;
   margin-bottom: 16px;
 }
-.ap-actions { display: flex; justify-content: flex-end; gap: 10px; }
-.ap-deny, .ap-allow {
+.ap-actions, .ac-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.ap-deny, .ap-allow, .ac-reject, .ac-approve {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -173,10 +173,10 @@
   font-size: 13px;
   font-weight: 500;
 }
-.ap-deny { color: var(--text-2); }
-.ap-deny:hover { background: var(--bg-3); }
-.ap-allow { background: var(--accent); color: var(--accent-text); }
-.ap-allow:hover { filter: brightness(1.08); }
+.ap-deny, .ac-reject { color: var(--text-2); }
+.ap-deny:hover, .ac-reject:hover { background: var(--bg-3); }
+.ap-allow, .ac-approve { background: var(--accent); color: var(--accent-text); }
+.ap-allow:hover, .ac-approve:hover { filter: brightness(1.08); }
 .ap-deny kbd, .ap-allow kbd {
   font-family: var(--mono);
   font-size: 10.5px;
@@ -466,3 +466,15 @@ button.path-chip:disabled {
   border-radius: var(--r-sm);
   padding: 3px 10px;
 }
+
+/* Coordinator unattended-approval cards in chat (doc 19 §8) — yellow auto-approved note / red pending action. */
+.ac-list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+.ac-card { background: var(--bg-2); border: 1px solid var(--border-1); border-radius: var(--r-md); padding: 10px 13px; font-size: 13px; }
+.ac-yellow { display: flex; gap: 9px; align-items: baseline; }
+.ac-red { display: flex; flex-direction: column; gap: 9px; border-color: var(--accent); }
+.ac-row { display: flex; gap: 9px; align-items: baseline; }
+.ac-tag { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-3); white-space: nowrap; flex-shrink: 0; }
+.ac-tag-red { color: var(--accent); }
+.ac-body { color: var(--text-2); }
+.ac-body code { font-family: var(--mono); color: var(--accent); }
+.ac-status { font-size: 12px; color: var(--text-3); }

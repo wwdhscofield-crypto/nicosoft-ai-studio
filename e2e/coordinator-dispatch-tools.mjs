@@ -3,8 +3,8 @@
 // Uses the @mention 0-LLM fast path (`@engineer …`) to force a deterministic single dispatch to engineer,
 // hands it a cwd via cwdByExpert, and asks it to Write a file. The proof the dispatch is tool-enabled:
 // the transcript carries a Write tool step AND the file actually lands on disk — neither happens on the
-// tool-less path. The Write also pops a permission prompt (phase 2 still asks the user — doc 19 §14); the
-// test approves it, exercising the coordinator:permission bridge end-to-end.
+// tool-less path. As of phase 4 the coordinator self-approves green-zone tools (a cwd-confined Write) via
+// the safety classifier (doc §8), so the dispatched Write runs WITHOUT a user prompt (sawPrompt stays false).
 // MANUAL — calls a real LLM. SKIPs cleanly if the engineer endpoint has no key.
 //   node e2e/coordinator-dispatch-tools.mjs
 import { _electron } from 'playwright'
@@ -105,7 +105,7 @@ assert.ok(probe.experts.includes('engineer'), 'the dispatched step persisted as 
 assert.ok(probe.tools.includes('Write'), 'dispatched engineer ran a TOOL loop (Write in transcript) — not single-turn llmChat')
 assert.ok(fileMade, 'Write created web/ui/index.html AND auto-created the missing web/ui/ parent dirs')
 assert.ok(!probe.tools.includes('Bash'), `Write made the parent dirs itself — no mkdir/Bash step needed (tools: ${JSON.stringify(probe.tools)})`)
-assert.ok(sawPrompt, 'a permission prompt popped to the user for the dispatched tool (doc 19 §14)')
+assert.ok(!sawPrompt, 'phase 4: the green-zone Write is auto-approved by the coordinator — no user prompt (doc §8)')
 await app.close()
 console.log('✓ coordinator dispatch upgrade e2e OK — engineer dispatched with a full tool loop + user approval')
 process.exit(0)

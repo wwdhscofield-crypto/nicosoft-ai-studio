@@ -32,6 +32,8 @@ import type {
   CoordinatorToolResults,
   CoordinatorPermissionRequest,
   CoordinatorPermissionCancel,
+  CoordinatorApprovalEvent,
+  PendingApprovalDto,
   ImageToolRunInputDto,
   ImageToolDeltaDto,
   ImageToolImageStartDto,
@@ -145,7 +147,16 @@ const api = {
     onResults: (cb: (d: CoordinatorToolResults) => void): (() => void) => agentListen('coordinator:results', cb),
     onPermission: (cb: (d: CoordinatorPermissionRequest) => void): (() => void) => agentListen('coordinator:permission', cb),
     onPermissionCancel: (cb: (d: CoordinatorPermissionCancel) => void): (() => void) => agentListen('coordinator:permission:cancel', cb),
-    respondPermission: (resp: AgentPermissionResponse): Promise<void> => ipcRenderer.invoke('coordinator:permission:respond', resp)
+    respondPermission: (resp: AgentPermissionResponse): Promise<void> => ipcRenderer.invoke('coordinator:permission:respond', resp),
+    onApproval: (cb: (d: CoordinatorApprovalEvent) => void): (() => void) => agentListen('coordinator:approval', cb)
+  },
+
+  // Deferred approval of red-zone actions (doc 19 §8): list a conversation's pending actions, then approve
+  // (→ replayed in its cwd) or reject them.
+  approval: {
+    list: (convId: string): Promise<PendingApprovalDto[]> => ipcRenderer.invoke('approval:list', convId),
+    approve: (id: string): Promise<{ ok: boolean; output: string }> => ipcRenderer.invoke('approval:approve', id),
+    reject: (id: string): Promise<boolean> => ipcRenderer.invoke('approval:reject', id)
   },
 
   imagetool: {

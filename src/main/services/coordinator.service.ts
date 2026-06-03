@@ -27,6 +27,8 @@ import * as rolesService from './roles.service'
 import * as compressionService from './compression.service'
 import { chat as llmChat } from '../llm/client'
 import * as agentService from './agent.service'
+import { classifyApproval } from '../agent/approval'
+import * as pendingRepo from '../repos/pending-approval.repo'
 import type { AgentEvent } from '../agent/loop'
 import type { PermissionRequest, PermissionDecision } from '../agent/context'
 import type { MemoryRow } from '../repos/memory.repo'
@@ -78,6 +80,10 @@ export interface CoordinatorCallbacks {
   onToolEvent?: (roleId: string, ev: AgentEvent) => void
   // Tagged with roleId so a parallel/council turn's approval dialog can name the expert that's asking.
   requestPermission?: (roleId: string, req: PermissionRequest, signal?: AbortSignal) => Promise<PermissionDecision>
+  // Unattended-approval audit (doc 19 §8): yellow = auto-approved, surface a chat note; red = hard-denied +
+  // recorded, surface a pending card (pendingId) the user can approve later. green is silent (frequent
+  // reads/writes — logging each would drown the chat).
+  onApproval?: (e: { roleId: string; zone: 'yellow' | 'red'; toolName: string; reason: string; pendingId?: string }) => void
 }
 
 const ROUTER_HISTORY_LIMIT = 4 // last N messages handed to the router for context
@@ -523,10 +529,9 @@ async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputT
         }
       },
       onEvent: (ev) => cb.onToolEvent?.(roleId, ev),
-      // phase 2: dispatched-tool approvals still pop to the USER (doc 19 §14; coordinator-proxy approval is
-      // phase 4). If the handler wires no bridge (e.g. headless), default-deny so a write can't hang on an
-      // answer that never comes.
-      requestPermission: cb.requestPermission ? (req, sig) => cb.requestPermission!(roleId, req, sig) : () => Promise.resolve({ allow: false })
+      // phase 4: coordinator self-approves via the safety classifier instead of popping the user (doc §8) —
+      // green/yellow auto-run, red hard-denied + recorded for deferred approval.
+      requestPermission: (req) => Promise.resolve(coordinatorApproval(convId, roleId, cwd ?? '', req, cb))
     }
     const res = await agentService.runDispatchedAgent(
       {
@@ -641,6 +646,23 @@ async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputT
   return { text, inputTokens, endpointId: binding.endpointId, model: binding.model }
 }
 
+// Coordinator's unattended approval (doc 19 §8). Safety policy = the rule classifier (red is a hard floor:
+// delete / privilege / network egress / out-of-cwd / dangerous commands). green + yellow auto-approve so
+// the team isn't blocked on every read/write; red HARD-DENIES + records a PendingApproval the user can
+// approve later (deferred approval) — the agent is told and moves on, never hangs. The LLM judgment doc
+// §8/§131 calls for lands at replay time (coordinator re-checks the action still applies before re-running),
+// not on every tool call — keeping unattended runs fast. 4b: yellow logs a chat note; red posts an alert.
+function coordinatorApproval(convId: string, roleId: string, cwd: string, req: PermissionRequest, cb: CoordinatorCallbacks): PermissionDecision {
+  const v = classifyApproval(req.toolName, req.input, cwd)
+  if (v.zone === 'red') {
+    const p = pendingRepo.create({ convId, roleId, toolName: req.toolName, toolInput: req.input, cwd, reason: v.reason })
+    cb.onApproval?.({ roleId, zone: 'red', toolName: req.toolName, reason: v.reason, pendingId: p.id })
+    return { allow: false }
+  }
+  if (v.zone === 'yellow') cb.onApproval?.({ roleId, zone: 'yellow', toolName: req.toolName, reason: v.reason })
+  return { allow: true }
+}
+
 // Run a collaboration (collaborate mode — doc 19 §5): resolve each agent expert's binding, hand them all
 // the same task as a CollabSession, and bridge their concurrent activity (text deltas + tool cards +
 // approvals) to the per-role coordinator callbacks. Persists each expert's final reply (tagged with the
@@ -687,12 +709,11 @@ async function runCollaboration(
       else if (ev.type === 'tool_use_start') cb.onToolStart?.(roleId, ev.id, ev.name)
     },
     onExpertEvent: (roleId, ev) => cb.onToolEvent?.(roleId, ev),
-    // phase 3: collaboration experts auto-approve their cwd-confined mutating tools (doc 19 §8 green zone —
-    // the loop already sandboxes every path to cwd). N concurrent experts can't share the single approval
-    // slot the dispatch path uses (they'd overwrite each other → a waiting expert deadlocks). phase 4 adds
-    // the 3-tier green/yellow/red approval (yellow logged in chat, red deferred) so dangerous / out-of-cwd
-    // operations aren't blanket-allowed.
-    requestPermission: () => Promise.resolve({ allow: true })
+    // phase 4: coordinator self-approves each expert's tool via the safety classifier (doc §8) — green/yellow
+    // auto-run (yellow worth surfacing), red hard-denied + recorded for the user to approve later. cwd is the
+    // requesting expert's own (red-zone replay needs it).
+    requestPermission: (roleId, req) =>
+      Promise.resolve(coordinatorApproval(input.convId, roleId, experts.find((e) => e.roleId === roleId)?.cwd ?? '', req, cb))
   }
   const results = await agentService.runCollabSession(input.convId, experts, hooks, signal, () => Date.now())
 

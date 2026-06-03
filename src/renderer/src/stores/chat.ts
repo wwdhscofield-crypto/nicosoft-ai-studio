@@ -67,6 +67,19 @@ export interface PermissionPrompt {
   roleId?: string
 }
 
+// A coordinator unattended-approval card shown in chat (doc 19 §8). yellow = auto-approved (a note);
+// red = hard-denied + recorded as pending (pendingId) — the user approves (→ replay) or rejects it.
+export interface ApprovalCard {
+  key: string
+  roleId: string
+  zone: 'yellow' | 'red'
+  toolName: string
+  reason: string
+  pendingId?: string
+  status: 'open' | 'executing' | 'approved' | 'rejected' | 'failed'
+  result?: string
+}
+
 interface SendOpts {
   expertId: string
   endpointId: string
@@ -87,6 +100,7 @@ interface ChatState {
   streaming: Record<string, boolean>
   error: Record<string, string | null>
   permission: Record<string, PermissionPrompt | null> // per-conversation (future: parallel agent runs)
+  approvals: Record<string, ApprovalCard[]> // per-conversation coordinator approval cards (yellow notes + red pending)
   contextTokens: Record<string, number> // per-conversation exact prompt tokens of the last sent turn
   loadConversations: () => Promise<void>
   openConversation: (convId: string) => Promise<void>
@@ -94,6 +108,8 @@ interface ChatState {
   send: (opts: SendOpts) => Promise<void>
   stop: () => void
   respondPermission: (convId: string, allow: boolean) => void
+  approveApproval: (convId: string, pendingId: string) => Promise<void>
+  rejectApproval: (convId: string, pendingId: string) => void
   removeConversation: (convId: string) => Promise<void>
   rename: (convId: string, title: string) => Promise<void>
 }
@@ -493,6 +509,19 @@ export const useChat = create<ChatState>((set, get) => {
       if (!meta) return
       set((s) => (s.permission[meta.convId]?.permissionId === d.permissionId ? { permission: { ...s.permission, [meta.convId]: null } } : {}))
     })
+    at.onApproval((d) => {
+      const meta = coordinatorMeta.get(d.streamId)
+      if (!meta) return
+      set((s) => ({
+        approvals: {
+          ...s.approvals,
+          [meta.convId]: [
+            ...(s.approvals[meta.convId] ?? []),
+            { key: uid(), roleId: d.roleId, zone: d.zone, toolName: d.toolName, reason: d.reason, pendingId: d.pendingId, status: 'open' as const }
+          ]
+        }
+      }))
+    })
 
     // ---- image tool (designer chat + ns_generate_image) path ----
     // Text deltas accumulate like a normal chat reply; image events attach a generated image
@@ -582,6 +611,7 @@ export const useChat = create<ChatState>((set, get) => {
     streaming: {},
     error: {},
     permission: {},
+    approvals: {},
     contextTokens: {},
 
     loadConversations: async () => {
@@ -814,6 +844,24 @@ export const useChat = create<ChatState>((set, get) => {
       if (p.source === 'coordinator') void window.api.coordinator.respondPermission(resp)
       else void window.api.agent.respondPermission(resp)
       set((s) => ({ permission: { ...s.permission, [convId]: null } }))
+    },
+
+    approveApproval: async (convId, pendingId) => {
+      const patch =
+        (status: ApprovalCard['status'], result?: string) =>
+        (s: ChatState): Partial<ChatState> => ({
+          approvals: { ...s.approvals, [convId]: (s.approvals[convId] ?? []).map((c) => (c.pendingId === pendingId ? { ...c, status, result } : c)) }
+        })
+      set(patch('executing'))
+      const res = await window.api.approval.approve(pendingId)
+      set(patch(res.ok ? 'approved' : 'failed', res.output))
+    },
+
+    rejectApproval: (convId, pendingId) => {
+      void window.api.approval.reject(pendingId)
+      set((s) => ({
+        approvals: { ...s.approvals, [convId]: (s.approvals[convId] ?? []).map((c) => (c.pendingId === pendingId ? { ...c, status: 'rejected' as const } : c)) }
+      }))
     },
 
     removeConversation: async (convId) => {

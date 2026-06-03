@@ -220,4 +220,19 @@ CREATE TABLE IF NOT EXISTS extraction_state (
   idle_due        TEXT,
   FOREIGN KEY (conversation_id) REFERENCES conversations (id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS pending_approvals (
+  id          TEXT PRIMARY KEY,                   -- red-zone action deferred for user approval (doc 19 §8)
+  conv_id     TEXT NOT NULL,                      -- bound to the conversation (project_id/task_id in phase 5)
+  role_id     TEXT NOT NULL,                      -- the agent that requested the red-zone action
+  tool_name   TEXT NOT NULL,
+  tool_input  TEXT NOT NULL,                      -- JSON
+  cwd         TEXT NOT NULL,                      -- where to replay it on approval
+  reason      TEXT NOT NULL,                      -- why it classified red
+  status      TEXT NOT NULL DEFAULT 'pending',    -- pending | approved | rejected | executed | failed
+  created_at  TEXT NOT NULL,
+  resolved_at TEXT,
+  FOREIGN KEY (conv_id) REFERENCES conversations (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_pending_conv ON pending_approvals (conv_id, status);
 `
