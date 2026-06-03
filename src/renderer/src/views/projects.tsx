@@ -130,7 +130,7 @@ const WB = {
       id: 'shuri',
       name: 'Shuri',
       role: 'Frontend',
-      color: 'var(--exp-designer)',
+      color: 'var(--exp-shuri)',
       status: 'working',
       steps: [
         { kind: 'READ', title: 'index.html', time: '14:04' },

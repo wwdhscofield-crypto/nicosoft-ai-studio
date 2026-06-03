@@ -43,6 +43,7 @@
   --exp-editor:    oklch(0.745 0.105 158);
   --exp-analyst:   oklch(0.81 0.10 92);
   --exp-scheduler: oklch(0.755 0.115 50);
+  --exp-shuri:     oklch(0.72 0.13 292);
 
   /* — Type — */
   --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;

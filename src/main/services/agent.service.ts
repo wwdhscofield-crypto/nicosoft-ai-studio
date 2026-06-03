@@ -16,7 +16,7 @@ import { runAgent, buildToolsParam, type AgentEvent, type AgentResult } from '..
 import { isContentBlock } from '../agent/types'
 import type { AgentMessage, AnyBlock, ServerToolSchema } from '../agent/types'
 import { CORE_TOOLS } from '../agent/registry'
-import { ENGINEER_SYSTEM_PROMPT } from '../agent/system-prompt'
+import { ENGINEER_SYSTEM_PROMPT, SHURI_SYSTEM_PROMPT } from '../agent/system-prompt'
 import { buildRolePrompt } from '../agent/roles/prompts'
 import { enterPlanModeTool } from '../agent/tools/enter-plan-mode'
 import { exitPlanModeTool } from '../agent/tools/exit-plan-mode'
@@ -39,6 +39,10 @@ import { manager as mcpManager } from './mcp.service'
 import { manager as skillManager } from './skill.service'
 
 const ENGINEER_ROLE_ID = 'engineer'
+// Full-stack dev roles: Flynn (backend) + Shuri (frontend). Both get the complete tool set, a
+// coding-agent system prompt, and a required cwd (doc 19 阶段 1).
+const DEV_ROLES = new Set([ENGINEER_ROLE_ID, 'shuri'])
+const DEV_PROMPT: Record<string, string> = { engineer: ENGINEER_SYSTEM_PROMPT, shuri: SHURI_SYSTEM_PROMPT }
 
 // CORE tool subset per agent role (doc 16 §5). Engineer = full set; OpenAI roles get a read-only +
 // fetch baseline. Writes / exec / orchestration (Write/Edit/MultiEdit/Bash/Task/TodoWrite) stay
@@ -57,7 +61,7 @@ const PLAN_TOOLS = [enterPlanModeTool, exitPlanModeTool] as unknown as Tool[]
 
 function toolsForAgentRole(roleId: string): Tool[] {
   const core =
-    roleId === ENGINEER_ROLE_ID
+    DEV_ROLES.has(roleId)
       ? [...CORE_TOOLS]
       : CORE_TOOLS.filter((t) => (ROLE_CORE_TOOLS[roleId] ?? []).includes(t.name))
   const skill = skillManager.skillTool(roleId)
@@ -95,9 +99,9 @@ export async function run(
   // Tools scoped to this agent role: a CORE subset (doc 16 §5) + MCP + Skill, by roleId + scope.
   const roleId = input.roleId ?? ENGINEER_ROLE_ID
   let tools = toolsForAgentRole(roleId)
-  // Read needs a folder boundary; without a cwd, drop it for non-Engineer roles so the model can't read
-  // the process working dir. Engineer always has a cwd (required in the composer).
-  if (!input.cwd && roleId !== ENGINEER_ROLE_ID) tools = tools.filter((t) => t.name !== 'Read')
+  // Read needs a folder boundary; without a cwd, drop it for non-dev roles so the model can't read the
+  // process working dir. Dev roles (Flynn/Shuri) always have a cwd (required in the composer).
+  if (!input.cwd && !DEV_ROLES.has(roleId)) tools = tools.filter((t) => t.name !== 'Read')
   // OpenAI server-side web_search (doc 16 §4) for every OpenAI agent role — the API runs it; results
   // come back as a web_search_call carried as a server block. (Engineer/Anthropic uses the local
   // WebSearch tool instead.) Future: a configured local search backend takes priority over server-side.
@@ -247,7 +251,7 @@ const PLAN_GUIDANCE =
   'when planning is worth it; in plan mode only read-only tools run.'
 
 function buildAgentSystem(roleId: string, memories: MemoryRow[], summary: string | null, skillListing: string): string {
-  const base = roleId === ENGINEER_ROLE_ID ? ENGINEER_SYSTEM_PROMPT : (buildRolePrompt(roleId) ?? ENGINEER_SYSTEM_PROMPT)
+  const base = DEV_ROLES.has(roleId) ? DEV_PROMPT[roleId] : (buildRolePrompt(roleId) ?? ENGINEER_SYSTEM_PROMPT)
   const parts = [base, PLAN_GUIDANCE]
   if (memories.length) {
     parts.push(

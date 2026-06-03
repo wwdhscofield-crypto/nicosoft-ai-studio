@@ -229,7 +229,7 @@ function Composer({
   // Engineer (coding agent) needs a project folder; other agent roles run without one (folder = an
   // optional restricted-read boundary). Agent roles need an Anthropic or OpenAI endpoint (the loop's
   // two protocols; Gemini agent loop isn't wired yet).
-  const needsCwd = agent && expert.id === 'engineer'
+  const needsCwd = agent && (expert.id === 'engineer' || expert.id === 'shuri')
   const needAgentProto =
     agent &&
     !!selectedEp &&

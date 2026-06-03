@@ -17,7 +17,7 @@ type ConversationDto = Awaited<ReturnType<typeof window.api.conversations.list>>
 // because the coordinator.service runs each step through llmChat. Coordinator itself routes through window.api.coordinator.
 // Roles whose replies run through the agent loop (tools). Engineer (Anthropic) + the OpenAI roles
 // (generalist/analyst/scheduler) via the OpenAI Responses adapter (doc 16). Gemini roles join later.
-const AGENT_ROLES = new Set(['engineer', 'generalist', 'analyst', 'scheduler'])
+const AGENT_ROLES = new Set(['engineer', 'shuri', 'generalist', 'analyst', 'scheduler'])
 // Roles whose replies come from the chat + ns_generate_image loop (image_tool.service): the chat model
 // drives the conversation and calls the tool to generate images. This version: designer only.
 const IMAGE_TOOL_ROLES = new Set(['designer'])

@@ -18,9 +18,10 @@ import type {
 } from '@/types'
 
 const EXPERTS: Expert[] = [
-  { id: 'coordinator', name: 'Danny', color: 'var(--exp-coordinator)', specialty: 'Coordinator — routes & merges', personality: 'Calm air-traffic-controller', model: 'claude-sonnet-4.6', family: 'anthropic', coordinator: true },
+  { id: 'coordinator', name: 'Danny', color: 'var(--exp-coordinator)', specialty: 'Coordinator — routes & merges', personality: 'Calm air-traffic-controller', model: 'claude-opus-4.8', family: 'anthropic', coordinator: true },
   { id: 'generalist', name: 'Amélie', color: 'var(--exp-generalist)', specialty: 'Generalist — chat & brainstorming', personality: 'Warm, curious front door', model: 'gpt-5.5', family: 'openai' },
-  { id: 'engineer', name: 'Flynn', color: 'var(--exp-engineer)', specialty: 'Software engineer — code', personality: 'Precise, direct, no pleasantries', model: 'claude-opus-4.8', family: 'anthropic' },
+  { id: 'engineer', name: 'Flynn', color: 'var(--exp-engineer)', specialty: 'Backend engineer — APIs, server, data', personality: 'Precise, direct, no pleasantries', model: 'claude-opus-4.8', family: 'anthropic' },
+  { id: 'shuri', name: 'Shuri', color: 'var(--exp-shuri)', specialty: 'Frontend engineer — UI, React, CSS', personality: 'Inventive, detail-driven, craft-proud', model: 'claude-opus-4.8', family: 'anthropic' },
   { id: 'designer', name: 'Georgia', color: 'var(--exp-designer)', specialty: 'Designer — images & posters', personality: 'Creative, opinionated', model: 'gemini-pro-latest', family: 'gemini' },
   { id: 'translator', name: 'Louise', color: 'var(--exp-translator)', specialty: 'Translator — any language pair', personality: 'Precise, culturally aware', model: 'gemini-flash-latest', family: 'gemini' },
   { id: 'editor', name: 'Miranda', color: 'var(--exp-editor)', specialty: 'Editor — summarize & condense', personality: 'Structured, no padding', model: 'gemini-pro-latest', family: 'gemini' },
