@@ -21,7 +21,6 @@ import { useRoleBinding } from '@/lib/use-role-binding'
 import { fileToImage, imagesFromClipboard, type ImageAttachment } from '@/lib/image'
 import { getThinkingCapability, resolveThinking, type ThinkingDepth } from '@/lib/thinking'
 import { useAllExperts } from '@/lib/all-experts'
-import { randomVerb } from '@/lib/spinner-verbs'
 import type { Expert } from '@/types'
 
 // Compact token readout: K below 1M, M at/above it (1M, 1.05M, 1.5M — trailing zeros trimmed).
@@ -43,36 +42,24 @@ function fmtElapsed(ms: number): string {
 }
 
 // The live "thinking" readout shown while a reply streams: a steady role-colored dot (CSS breathes its
-// opacity — no spin) + a playful action verb · elapsed · output-token estimate (chars/4, same heuristic
-// Claude Code uses). The verb rotates every 5s so the easter-egg word bank gets airtime. Tokens/elapsed
-// appear once they're meaningful, so the pure-thinking phase (no text yet) reads "● Cogitating… · 3s".
+// opacity — no spin) + elapsed · output-token estimate (chars/4, same heuristic Claude Code uses).
+// Tokens/elapsed appear once they're meaningful, so the pure-thinking phase (no text yet) is just the dot.
 function ThinkingReadout({ chars }: { chars: number }): ReactElement {
   const startRef = useRef(Date.now())
-  const [verb, setVerb] = useState(randomVerb)
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const clock = setInterval(() => setNow(Date.now()), 250)
-    const roll = setInterval(() => setVerb(randomVerb()), 5000)
-    return () => {
-      clearInterval(clock)
-      clearInterval(roll)
-    }
+    return () => clearInterval(clock)
   }, [])
   const elapsed = now - startRef.current
   const tokens = Math.round(chars / 4)
   return (
     <span className="thinking-readout" aria-label="thinking">
       <span className="tr-dot" />
-      <span className="tr-verb">{verb}…</span>
-      {elapsed >= 1000 ? (
-        <>
-          <span className="tr-sep">·</span>
-          <span>{fmtElapsed(elapsed)}</span>
-        </>
-      ) : null}
+      {elapsed >= 1000 ? <span>{fmtElapsed(elapsed)}</span> : null}
       {tokens > 0 ? (
         <>
-          <span className="tr-sep">·</span>
+          {elapsed >= 1000 ? <span className="tr-sep">·</span> : null}
           <span>↓ {fmtReadoutTokens(tokens)} tokens</span>
         </>
       ) : null}
@@ -381,23 +368,39 @@ export function ChatView({ expert, onOpenSettings }: { expert: Expert; onOpenSet
   const permission = activeConv ? chat.permission[activeConv] : null
   const approvals = activeConv ? chat.approvals[activeConv] : undefined
   const listRef = useRef<HTMLDivElement>(null)
+  // Stick to the bottom while streaming. The flag is maintained from the user's OWN scrolls (onListScroll),
+  // NOT recomputed inside the effect — recomputing there mis-fired: each new tool card grows scrollHeight,
+  // so by the next render the distance already exceeds the threshold and we'd wrongly conclude "the user
+  // scrolled up" and stop following (the symptom: a busy multi-expert turn stalling a few rows short).
+  // Content growth never flips this; only a real wheel/drag up does. Our own rAF scroll lands at distance 0,
+  // which onListScroll reads back as still-stuck.
+  const stickRef = useRef(true)
   const [value, setValue] = useState('')
   const [viewer, setViewer] = useState<{ items: ViewerImage[]; index: number } | null>(null)
   const [focusNonce, setFocusNonce] = useState(0)
 
-  useEffect(() => {
+  const onListScroll = (): void => {
     const el = listRef.current
-    if (!el) return
-    // Follow streaming output to the bottom, but only when already near it — a user who scrolled up to read
-    // history isn't yanked back. rAF defers to after layout so scrollHeight includes the tool cards / deltas
-    // / approval cards just rendered (a synchronous scroll would target a stale, too-short height and stop
-    // a row or two short — the symptom on a busy multi-expert turn).
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160
-    if (nearBottom)
-      requestAnimationFrame(() => {
-        if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight
-      })
-  }, [messages, approvals])
+    if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+  }
+
+  // Auto-scroll via a ResizeObserver on the inner content: ANY height growth (tool cards, deltas, approval
+  // cards, async/late renders) fires it, AFTER layout, so scrollHeight is already final. Strictly more
+  // reliable than a [messages] effect — that can fire before the new rows lay out (stale height → stops a
+  // row short) and misses height changes that don't alter the messages array. Follows only when stuck
+  // (stickRef, maintained from the user's own scrolls); re-pins to bottom on conversation switch.
+  useEffect(() => {
+    const list = listRef.current
+    const inner = list?.firstElementChild
+    if (!list || !inner) return
+    stickRef.current = true
+    list.scrollTop = list.scrollHeight
+    const ro = new ResizeObserver(() => {
+      if (stickRef.current) list.scrollTop = list.scrollHeight
+    })
+    ro.observe(inner)
+    return () => ro.disconnect()
+  }, [activeConv])
 
   const openImage = (items: ViewerImage[], index: number): void => setViewer({ items, index })
   const downloadImage = (img: ViewerImage): void => void window.api.media.save(img.url, img.name)
@@ -411,7 +414,7 @@ export function ChatView({ expert, onOpenSettings }: { expert: Expert; onOpenSet
 
   return (
     <div className="main-col">
-      <div className="msg-list" ref={listRef}>
+      <div className="msg-list" ref={listRef} onScroll={onListScroll}>
         <div className="msg-inner">
           {messages.length === 0 ? (
             <EmptyState expert={expert} onChip={setValue} />
