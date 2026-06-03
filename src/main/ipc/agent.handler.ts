@@ -59,7 +59,11 @@ export function registerAgentHandlers(): void {
             if (ev.type === 'assistant') {
               const blocks: AgentBlockDto[] = []
               for (const b of ev.message.content) {
-                if (!isContentBlock(b)) blocks.push({ type: 'server', serverType: b.type })
+                if (!isContentBlock(b)) {
+                  // web_search_call carries its query in action.query — surface it for the status row.
+                  const q = (b as { action?: { query?: string } }).action?.query
+                  blocks.push(q ? { type: 'server', serverType: b.type, query: q } : { type: 'server', serverType: b.type })
+                }
                 else if (b.type === 'text') blocks.push({ type: 'text', text: b.text })
                 else if (b.type === 'tool_use') blocks.push({ type: 'tool_use', id: b.id, name: b.name, input: b.input })
                 // tool_result / image don't appear in an assistant turn — skip

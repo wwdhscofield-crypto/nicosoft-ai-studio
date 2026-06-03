@@ -14,7 +14,7 @@ import type { AgentContext, RequestPermission } from '../agent/context'
 import type { AgentLlmEvent } from '../agent/llm'
 import { runAgent, buildToolsParam, type AgentEvent, type AgentResult } from '../agent/loop'
 import { isContentBlock } from '../agent/types'
-import type { AgentMessage, AnyBlock } from '../agent/types'
+import type { AgentMessage, AnyBlock, ServerToolSchema } from '../agent/types'
 import { CORE_TOOLS } from '../agent/registry'
 import { ENGINEER_SYSTEM_PROMPT } from '../agent/system-prompt'
 import { buildRolePrompt } from '../agent/roles/prompts'
@@ -42,8 +42,9 @@ const ENGINEER_ROLE_ID = 'engineer'
 
 // CORE tool subset per agent role (doc 16 §5). Engineer = full set; OpenAI roles get a read-only +
 // fetch baseline. Writes / exec / orchestration (Write/Edit/MultiEdit/Bash/Task/TodoWrite) stay
-// Engineer-only; WebSearch is Anthropic-server-backed so it's omitted for OpenAI roles (OpenAI server
-// web_search comes later). MCP + Skill are layered on by scope for every agent role.
+// Engineer-only. The local WebSearch tool is Anthropic-server-backed (Engineer only); OpenAI roles get
+// web search via OpenAI's server-side web_search (a serverTool added in run(), not in this list).
+// MCP + Skill are layered on by scope for every agent role.
 const ROLE_CORE_TOOLS: Record<string, readonly string[]> = {
   generalist: ['Read', 'WebFetch'],
   analyst: ['Read', 'WebFetch', 'code_execution'],
@@ -97,6 +98,10 @@ export async function run(
   // Read needs a folder boundary; without a cwd, drop it for non-Engineer roles so the model can't read
   // the process working dir. Engineer always has a cwd (required in the composer).
   if (!input.cwd && roleId !== ENGINEER_ROLE_ID) tools = tools.filter((t) => t.name !== 'Read')
+  // OpenAI server-side web_search (doc 16 §4) for every OpenAI agent role — the API runs it; results
+  // come back as a web_search_call carried as a server block. (Engineer/Anthropic uses the local
+  // WebSearch tool instead.) Future: a configured local search backend takes priority over server-side.
+  const serverTools: ServerToolSchema[] = protocol === 'openai' ? [{ type: 'web_search', name: 'web_search' }] : []
 
   // ① Persist the user turn (tagged with run_id) so context assembly + extraction read it from the DB.
   const userImages = (input.images ?? []).map((i) => ({ url: i.dataUrl }))
@@ -166,6 +171,7 @@ export async function run(
     system,
     messages: seed,
     tools,
+    serverTools,
     ctx,
     contextWindow: input.contextWindow ?? 200_000,
     thinking: input.thinking,

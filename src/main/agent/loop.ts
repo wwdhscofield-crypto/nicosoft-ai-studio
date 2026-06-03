@@ -37,6 +37,9 @@ export interface RunAgentParams {
   system: string
   messages: AgentMessage[] // seed (usually a single user message)
   tools: readonly Tool[]
+  // Protocol server tools declared by type (e.g. OpenAI web_search) — the API runs them, results come
+  // back as server blocks the loop carries but never executes. Empty for the Anthropic path.
+  serverTools?: readonly ServerToolSchema[]
   ctx: AgentContext
   maxTokens?: number
   maxTurns?: number
@@ -90,13 +93,17 @@ function modelSupportsToolSearch(model: string): boolean {
 // the model supports tool_reference, declare the tool_search server tool and mark those tools
 // defer_loading so they're discovered on demand instead of bloating context. Otherwise every tool is
 // declared up front — the common case: Engineer's core set is small and none deferred, so no tool_search.
-export function buildToolsParam(tools: readonly Tool[], model: string): AnyToolSchema[] {
+export function buildToolsParam(
+  tools: readonly Tool[],
+  model: string,
+  serverTools: readonly ServerToolSchema[] = [],
+): AnyToolSchema[] {
   const hasDeferred = tools.some((t) => t.shouldDefer)
   if (!hasDeferred || !modelSupportsToolSearch(model)) {
-    return tools.map((t) => toToolSchema(t, false))
+    return [...serverTools, ...tools.map((t) => toToolSchema(t, false))]
   }
   const searchTool: ServerToolSchema = { type: TOOL_SEARCH_TYPE, name: 'tool_search_tool_regex' }
-  return [searchTool, ...tools.map((t) => toToolSchema(t, t.shouldDefer))]
+  return [searchTool, ...serverTools, ...tools.map((t) => toToolSchema(t, t.shouldDefer))]
 }
 
 export async function* runAgent(
@@ -124,7 +131,7 @@ export async function* runAgent(
   const maxTurns = params.maxTurns ?? 50
   const contextWindow = params.contextWindow ?? 200_000
   let messages: AgentMessage[] = [...params.messages] // let — compaction replaces it
-  const toolSchemas = buildToolsParam(tools, model)
+  const toolSchemas = buildToolsParam(tools, model, params.serverTools)
   let turns = 0
   // Compaction (layers 2/3) state: the full context size billed at the last API turn + where that
   // was, so the running estimate = tokensFromUsage(lastUsage) + char/4 of messages added since.

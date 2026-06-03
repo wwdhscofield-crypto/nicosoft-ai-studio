@@ -13,7 +13,7 @@ import { PathBar } from '@/components/path-bar'
 import { useWorkspace } from '@/stores/workspace'
 import { Avatar, DispatchBadge, NameChip } from '@/components/primitives'
 import { useChat, roleHasAgent, roleHasImageTool, type ChatMessage } from '@/stores/chat'
-import { ToolBubble } from '@/components/tool-bubble'
+import { ToolBubble, ServerBubble } from '@/components/tool-bubble'
 import { Markdown } from '@/components/markdown'
 import { ApprovalDialog } from '@/components/approval-dialog'
 import { useRoleBinding } from '@/lib/use-role-binding'
@@ -166,6 +166,7 @@ function ChatSegment({
           </div>
         ) : null}
         {msg.tools && msg.tools.length > 0 ? msg.tools.map((t) => <ToolBubble key={t.id} tool={t} />) : null}
+        {msg.servers && msg.servers.length > 0 ? msg.servers.map((sv, i) => <ServerBubble key={i} note={sv} />) : null}
         {msg.streaming ? <ThinkingReadout chars={msg.text.length} /> : null}
       </div>
     </div>

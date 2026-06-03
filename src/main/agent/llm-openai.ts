@@ -75,15 +75,17 @@ export function toInput(messages: AgentMessage[]): unknown[] {
   return items
 }
 
-// AnyToolSchema[] → Responses function tools. Anthropic ToolSchema (name/description/input_schema) →
-// {type:'function', …}. ServerToolSchema (tool_search) is skipped — OpenAI has no tool_search, and for
-// OpenAI models buildToolsParam already declares every tool up front (no deferral). OpenAI server tools
-// (web_search) are added in stage B.
+// AnyToolSchema[] → Responses tools. Anthropic ToolSchema (name/description/input_schema) →
+// {type:'function', …}. ServerToolSchema by type: web_search → {type:'web_search'} (server-side search,
+// doc 16 §4; the API runs it, no schema). tool_search is skipped — OpenAI has none, and OpenAI models
+// declare every tool up front (no deferral).
 export function toOpenAITools(schemas: AnyToolSchema[]): unknown[] {
   const out: unknown[] = []
   for (const s of schemas) {
     if ('input_schema' in s) {
       out.push({ type: 'function', name: s.name, description: s.description, parameters: s.input_schema, strict: false })
+    } else if (s.type === 'web_search') {
+      out.push({ type: 'web_search' })
     }
   }
   return out
@@ -194,6 +196,12 @@ export async function* callWithToolsOpenAI(
             if (text) content.push({ type: 'text', text })
           } else if (it.type === 'reasoning') {
             content.push({ ...it } as ServerBlock) // round-trip verbatim (encrypted_content)
+          } else if (it.type === 'web_search_call') {
+            // Server-executed search (doc 16 §4.2): carry verbatim as a server block, never re-execute.
+            // Strip the output-only id so the round-trip to input matches what the API accepts.
+            const rest = { ...it }
+            delete rest.id
+            content.push(rest as ServerBlock)
           }
           break
         }

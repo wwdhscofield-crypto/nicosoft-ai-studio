@@ -120,7 +120,7 @@ export interface AgentResultDto {
 export type AgentBlockDto =
   | { type: 'text'; text: string }
   | { type: 'tool_use'; id: string; name: string; input: unknown }
-  | { type: 'server'; serverType: string } // opaque (tool_search etc.) — shown as a faint status row
+  | { type: 'server'; serverType: string; query?: string } // server tool (web_search etc.) — faint status row; query for web_search
 // A permission request: the renderer shows an approval dialog and replies with the permissionId.
 export interface AgentPermissionRequest {
   streamId: string

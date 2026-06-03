@@ -39,12 +39,19 @@ export interface ChatMessage {
   text: string
   images?: { url: string; name: string; loading?: boolean }[]
   tools?: ToolCall[] // present on agent (tool-using) turns
+  servers?: ServerNote[] // server-side tools the API ran (web_search etc.) — shown as faint status rows
   streaming?: boolean
   // Coordinator-dispatched message: the contributing expert (engineer/translator/...) and (pipeline only) the dispatch
   // chain shared by every step of that turn. The renderer reads both to switch avatar/name per message
   // and draw a single dispatch badge spanning consecutive same-chain messages.
   expertId?: string | null
   dispatch?: string[] | null
+}
+// A server-side tool the API executed (e.g. OpenAI web_search) — carried as a server block, shown as a
+// faint status row (no expand / result; the API ran it, not the loop).
+export interface ServerNote {
+  serverType: string // e.g. 'web_search_call'
+  query?: string // the search query, when the server tool is web_search
 }
 export interface PermissionPrompt {
   permissionId: string
@@ -85,6 +92,9 @@ interface ChatState {
 }
 
 const uid = (): string => globalThis.crypto.randomUUID()
+// Server blocks shown as user-facing status rows (web_search). reasoning / thinking blocks are
+// round-tripped for context only, not shown. Extend when adding server tools (code_interpreter, image gen).
+const SHOWN_SERVER_BLOCKS = new Set(['web_search_call'])
 type Meta = { convId: string; expertId: string; endpointId: string; model: string }
 const streamMeta = new Map<string, Meta>() // chat (plain text) path: streamId → conversation
 const agentMeta = new Map<string, Meta>() // agent (tool use) path: streamId → conversation
@@ -228,6 +238,9 @@ export const useChat = create<ChatState>((set, get) => {
         cur.tools = d.blocks
           .filter((b): b is { type: 'tool_use'; id: string; name: string; input: unknown } => b.type === 'tool_use')
           .map((b) => ({ id: b.id, name: b.name, input: b.input, status: 'running' as const }))
+        cur.servers = d.blocks
+          .filter((b): b is { type: 'server'; serverType: string; query?: string } => b.type === 'server' && SHOWN_SERVER_BLOCKS.has(b.serverType))
+          .map((b) => ({ serverType: b.serverType, query: b.query }))
         cur.streaming = false // turn complete; the next turn (after results) starts a new message
         return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
       })

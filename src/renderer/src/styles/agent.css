@@ -66,6 +66,27 @@
   overflow: auto;
 }
 
+/* — Server-side tool status row (web_search etc.) — faint, non-interactive (the API ran it) — */
+.server-bubble {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 2px;
+  font-size: 12px;
+  color: var(--text-4);
+  min-width: 0;
+}
+.server-bubble svg { color: var(--text-4); flex: 0 0 auto; }
+.sb-label { color: var(--text-3); flex: none; }
+.sb-query {
+  color: var(--text-4);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
 /* — Diff (inside a tool bubble for Edit / Write / MultiEdit) — */
 .diff { font-family: var(--mono); font-size: 12.5px; line-height: 1.65; padding: 6px 0; }
 .diff-del, .diff-add { display: flex; padding: 0 12px; }

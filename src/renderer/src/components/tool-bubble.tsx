@@ -7,7 +7,7 @@
 import { useState } from 'react'
 import type { ReactElement } from 'react'
 import { Icons } from '@/components/icons'
-import type { ToolCall } from '@/stores/chat'
+import type { ToolCall, ServerNote } from '@/stores/chat'
 
 const DIFF_TOOLS = new Set(['Edit', 'Write', 'MultiEdit'])
 
@@ -99,4 +99,20 @@ function DiffView({ name, input }: { name: string; input: Record<string, unknown
     }
   }
   return <div className="diff">{rows}</div>
+}
+
+// Server-side tool the API ran (e.g. web_search) — a faint, non-interactive status row. No expand: the
+// API executed it server-side, so there's no local result to inspect.
+const SERVER_LABELS: Record<string, string> = {
+  web_search_call: 'Searched the web'
+}
+export function ServerBubble({ note }: { note: ServerNote }): ReactElement {
+  const label = SERVER_LABELS[note.serverType] ?? note.serverType
+  return (
+    <div className="server-bubble">
+      <Icons.globe size={11} />
+      <span className="sb-label">{label}</span>
+      {note.query ? <span className="sb-query">{note.query}</span> : null}
+    </div>
+  )
 }
