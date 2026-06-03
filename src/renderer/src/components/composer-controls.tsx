@@ -122,7 +122,7 @@ export function ThinkingPicker({
   )
 }
 
-// Agent permission-mode dropdown — Ask (approve mutations) / Plan (read-only, plan first) / Auto-run
+// Agent permission-mode dropdown — Ask (approve mutations) / Plan (read-only, plan first) / Auto
 // (no prompts). Shown only for agent roles; sets the run's initial mode (the model can still flip it
 // at runtime via EnterPlanMode / ExitPlanMode). Opens upward like the other composer menus.
 export function ModePicker({

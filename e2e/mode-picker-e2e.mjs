@@ -1,5 +1,5 @@
 // mode-picker-e2e: composer permission-mode picker (doc 17 · B). Verifies the ModePicker renders for an
-// agent role, switches mode + persists to localStorage, and that 'bypass' (Auto-run) actually reaches
+// agent role, switches mode + persists to localStorage, and that 'bypass' (Auto) actually reaches
 // the backend ctx — a Write runs with NO approval dialog. MANUAL (real LLM for the bypass leg).
 // Run: node e2e/mode-picker-e2e.mjs
 import { _electron } from 'playwright'
@@ -46,28 +46,28 @@ const defLabel = await page.$eval('.cmp-mode .cmp-model-id', (e) => e.textConten
 assert.equal(defLabel, 'Ask', `default mode label should be "Ask" (got ${JSON.stringify(defLabel)})`)
 console.log('✓ ModePicker renders, default "Ask"')
 
-// 2. Open the menu → exactly 3 modes (Ask / Plan / Auto-run) → screenshot.
+// 2. Open the menu → exactly 3 modes (Ask / Plan / Auto) → screenshot.
 await modeEl.click()
 await page.waitForTimeout(300)
 const opts = await page.$$eval('.cc-mode-menu .rm-item .cc-mode-opt', (els) => els.map((e) => e.querySelector('span')?.textContent))
-assert.deepEqual(opts, ['Ask', 'Plan', 'Auto-run'], `menu modes (got ${JSON.stringify(opts)})`)
+assert.deepEqual(opts, ['Ask', 'Plan', 'Auto'], `menu modes (got ${JSON.stringify(opts)})`)
 await page.screenshot({ path: '/tmp/mode-picker-menu.png' })
 console.log('✓ menu has 3 modes:', JSON.stringify(opts))
 
-// 3. Select Auto-run → label updates + localStorage persists 'bypass'.
+// 3. Select Auto → label updates + localStorage persists 'bypass'.
 const items = await page.$$('.cc-mode-menu .rm-item')
-await items[2].click() // Auto-run → bypass
+await items[2].click() // Auto → bypass
 await page.waitForTimeout(300)
 const newLabel = await page.$eval('.cmp-mode .cmp-model-id', (e) => e.textContent)
-assert.equal(newLabel, 'Auto-run', `label should be "Auto-run" (got ${JSON.stringify(newLabel)})`)
+assert.equal(newLabel, 'Auto', `label should be "Auto" (got ${JSON.stringify(newLabel)})`)
 const persisted = await page.evaluate(() => JSON.parse(localStorage.getItem('nicosoft-studio-mode-by-expert') ?? '{}'))
 assert.equal(persisted.engineer, 'bypass', `localStorage should persist bypass (got ${JSON.stringify(persisted)})`)
-console.log('✓ selected Auto-run → label + localStorage bypass')
+console.log('✓ selected Auto → label + localStorage bypass')
 
 // 4. bypass reaches the backend ctx: a Write runs with NO approval dialog.
 await page.fill('textarea.cmp-textarea', 'Create a file out.txt containing the word ready, using the Write tool. Nothing else.')
 await page.keyboard.press('Enter')
-console.log('sent Write task in Auto-run (bypass) mode...')
+console.log('sent Write task in Auto (bypass) mode...')
 let sawApproval = false
 for (let i = 0; i < 90; i++) {
   await page.waitForTimeout(2000)
