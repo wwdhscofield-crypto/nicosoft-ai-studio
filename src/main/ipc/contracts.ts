@@ -72,6 +72,12 @@ export interface ChatErrorDto {
 // `agent:run` starts an agent stream and returns its streamId; events arrive on the channels below,
 // then `agent:done` or `agent:error`. `agent:stop` aborts. A tool that needs approval pauses on
 // `agent:permission` until the renderer answers via `agent:permission:respond`.
+// Permission mode the run starts in (the model can still flip it at runtime via EnterPlanMode /
+// ExitPlanMode). 'default' gates mutations behind the approval dialog; 'plan' starts read-only
+// (investigate → present a plan); 'bypass' auto-allows everything. Mirrors AgentMode on the renderer
+// (src/renderer/src/lib/agent-mode.ts) — a subset of the loop's PermissionMode ('auto' not surfaced).
+export type AgentPermissionMode = 'default' | 'plan' | 'bypass'
+
 export interface AgentRunInput {
   endpointId: string
   model: string
@@ -81,6 +87,8 @@ export interface AgentRunInput {
   // The role driving this run — selects which scoped MCP tools get injected. Defaults to 'engineer'
   // (the only agent role today); custom agent roles pass their own id.
   roleId?: string
+  // Initial permission mode (default 'default'); the model may still switch it at runtime.
+  permissionMode?: AgentPermissionMode
   contextWindow?: number // model context window, drives compaction threshold (default 200K)
   // Resolved thinking directive (Anthropic extended thinking); budgetTokens drives the thinking budget.
   thinking?: { effort?: 'minimal' | 'none' | 'low' | 'medium' | 'high' | 'xhigh'; budgetTokens?: number }

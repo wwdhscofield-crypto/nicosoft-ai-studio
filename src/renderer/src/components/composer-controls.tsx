@@ -8,6 +8,7 @@ import { Icons } from '@/components/icons'
 import type { Family } from '@/types'
 import { getThinkingCapability, supportedDepths, THINKING_OPTIONS, type ThinkingDepth } from '@/lib/thinking'
 import { imageModelLabel } from '@/lib/image-models'
+import { MODE_OPTIONS, type AgentMode } from '@/lib/agent-mode'
 
 // Model dropdown. `models` is the bound endpoint's configured slug list; a search box appears once the
 // list is long enough to be worth filtering.
@@ -112,6 +113,49 @@ export function ThinkingPicker({
               >
                 <span>{t.label}</span>
                 {t.value === depth ? <Icons.check size={13} /> : null}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// Agent permission-mode dropdown — Ask (approve mutations) / Plan (read-only, plan first) / Auto-run
+// (no prompts). Shown only for agent roles; sets the run's initial mode (the model can still flip it
+// at runtime via EnterPlanMode / ExitPlanMode). Opens upward like the other composer menus.
+export function ModePicker({
+  value,
+  onChange,
+  disabled
+}: {
+  value: AgentMode
+  onChange: (m: AgentMode) => void
+  disabled?: boolean
+}): ReactElement {
+  const [open, setOpen] = useState(false)
+  const cur = MODE_OPTIONS.find((o) => o.value === value) ?? MODE_OPTIONS[0]
+  return (
+    <div className={'cmp-model cmp-mode mode-' + cur.value} onClick={() => !disabled && setOpen((s) => !s)}>
+      <Icons.shield size={13} />
+      <span className="cmp-model-id">{cur.label}</span>
+      <Icons.chevronDown size={12} />
+      {open && (
+        <>
+          <div className="menu-backdrop" onClick={(e) => { e.stopPropagation(); setOpen(false) }} />
+          <div className="row-menu up cc-mode-menu" onClick={(e) => e.stopPropagation()}>
+            {MODE_OPTIONS.map((o) => (
+              <div
+                key={o.value}
+                className={'rm-item' + (o.value === value ? ' active' : '')}
+                onClick={() => { onChange(o.value); setOpen(false) }}
+              >
+                <div className="cc-mode-opt">
+                  <span>{o.label}</span>
+                  <span className="cc-mode-hint">{o.hint}</span>
+                </div>
+                {o.value === value ? <Icons.check size={13} /> : null}
               </div>
             ))}
           </div>

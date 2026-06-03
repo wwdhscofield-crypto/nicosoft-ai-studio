@@ -138,6 +138,36 @@
 .ap-deny kbd { background: var(--bg-3); }
 .ap-allow kbd { background: rgba(255, 255, 255, 0.18); }
 
+/* ExitPlanMode variant — present the model's plan for approval (not a generic tool prompt). */
+.approval-card.ap-plan { max-width: 560px; }
+.ap-plan .ap-icon { color: var(--accent); }
+.ap-plan-body {
+  margin: 0 0 14px;
+  font-family: inherit;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-1);
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--r-md);
+  padding: 14px 16px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 360px;
+  overflow: auto;
+}
+.ap-plan-steps {
+  margin: 0 0 16px;
+  padding-left: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.ap-plan-steps li::marker { color: var(--text-4); }
+
 /* — Project-path selector: Claude-style chip row above the composer.
    Local (plain label) · 📁 project (click → pick folder) · ⎇ branch (click → switch). — */
 .path-bar {

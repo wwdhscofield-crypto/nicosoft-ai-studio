@@ -152,7 +152,7 @@ export async function run(
     cwd: input.cwd,
     signal,
     readFileState: new Map(),
-    permissionMode: 'default', // read-only auto-allows; writes / dangerous ops ask via the UI
+    permissionMode: input.permissionMode ?? 'default', // read-only auto-allows; writes ask; user can preset plan / bypass
     requestPermission: cb.requestPermission,
     todos: [],
     sessionDir,

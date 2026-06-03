@@ -7,7 +7,7 @@ import type { ChangeEvent, ClipboardEvent as ReactClipboardEvent, CSSProperties,
 import { Icons } from '@/components/icons'
 import { AttachmentStrip } from '@/components/attachment-strip'
 import { ImageViewer, type ViewerImage } from '@/components/image-viewer'
-import { ModelPicker, ThinkingPicker, ImageModelPicker } from '@/components/composer-controls'
+import { ModelPicker, ThinkingPicker, ImageModelPicker, ModePicker } from '@/components/composer-controls'
 import { EmptyState } from '@/components/empty-state'
 import { PathBar } from '@/components/path-bar'
 import { useWorkspace } from '@/stores/workspace'
@@ -199,6 +199,8 @@ function Composer({
   const b = useRoleBinding(expert)
   const cwd = useWorkspace((s) => s.cwdByExpert[expert.id] ?? '')
   const setCwd = useWorkspace((s) => s.setCwd)
+  const mode = useWorkspace((s) => s.modeByExpert[expert.id] ?? 'default')
+  const setMode = useWorkspace((s) => s.setMode)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const [attach, setAttach] = useState<ImageAttachment[]>([])
@@ -278,6 +280,7 @@ function Composer({
       images: images.length ? images : undefined,
       cwd: agent ? cwd : undefined,
       contextWindow: agent ? b.contextLength || undefined : undefined,
+      permissionMode: agent ? mode : undefined,
       imageModel: roleHasImageTool(expert.id) ? b.imageModel : undefined
     })
   }
@@ -309,6 +312,7 @@ function Composer({
               <ImageModelPicker models={b.imageModels} value={b.imageModel} onChange={b.onImageModel} disabled={!ready} />
             ) : null}
             <ThinkingPicker family={b.family} model={b.model} depth={effectiveDepth} onChange={b.onDepth} disabled={!ready} />
+            {agent ? <ModePicker value={mode} onChange={(m) => setMode(expert.id, m)} disabled={!ready} /> : null}
             {b.contextLength > 0 ? (
               <span className={'cmp-tokens' + (tokenAmber ? ' amber' : '')}>
                 {fmtTokens(usedTokens)} / {fmtTokens(b.contextLength)}

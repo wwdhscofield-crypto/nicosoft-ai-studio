@@ -26,6 +26,13 @@ const TerminalIcon = (): ReactElement => (
   </svg>
 )
 
+const PlanIcon = (): ReactElement => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M9 11l3 3L22 4" />
+    <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+  </svg>
+)
+
 export function ApprovalDialog({
   prompt,
   onAllow,
@@ -48,6 +55,41 @@ export function ApprovalDialog({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onAllow, onDeny])
+
+  // ExitPlanMode gets its own variant: the model is presenting a plan for approval, not asking to run a
+  // mutating tool. Show the plan (+ optional steps) with Approve / Revise instead of the generic prompt.
+  if (prompt.toolName === 'ExitPlanMode') {
+    const plan = (prompt.input ?? {}) as { plan?: string; steps?: { step: string }[] }
+    const steps = plan.steps ?? []
+    return (
+      <div className="approval-overlay">
+        <div className="approval-card ap-plan">
+          <div className="ap-head">
+            <span className="ap-icon">
+              <PlanIcon />
+            </span>
+            <span className="ap-title">Plan ready for review</span>
+          </div>
+          <pre className="ap-plan-body">{plan.plan ?? ''}</pre>
+          {steps.length ? (
+            <ol className="ap-plan-steps">
+              {steps.map((s, i) => (
+                <li key={i}>{s.step}</li>
+              ))}
+            </ol>
+          ) : null}
+          <div className="ap-actions">
+            <button className="ap-deny" onClick={onDeny}>
+              Revise <kbd>Esc</kbd>
+            </button>
+            <button className="ap-allow" onClick={onAllow}>
+              Approve &amp; run <kbd>↵</kbd>
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="approval-overlay">
