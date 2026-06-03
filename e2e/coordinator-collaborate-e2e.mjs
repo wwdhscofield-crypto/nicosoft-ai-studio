@@ -104,7 +104,7 @@ const probe = await page.evaluate(async () => {
     convId: c.id,
     projectId: c.projectId,
     project: project
-      ? { phase: project.phase, progress: project.progress, experts: project.experts, plan: project.plan.map((t) => ({ who: t.assigneeRoleId, status: t.status })) }
+      ? { title: project.title, phase: project.phase, progress: project.progress, experts: project.experts, plan: project.plan.map((t) => ({ who: t.assigneeRoleId, status: t.status })) }
       : null,
     onScreenError: document.querySelector('.inline-notice')?.textContent ?? null,
     assistants: msgs
@@ -153,6 +153,7 @@ const taskRoles = probe.project.plan.map((t) => t.who).sort()
 assert.deepEqual(taskRoles, ['engineer', 'shuri'], `project seeded a task per expert (got ${JSON.stringify(taskRoles)})`)
 assert.ok(probe.project.plan.every((t) => t.status === 'done'), 'every expert task marked done after the run')
 assert.equal(probe.project.phase, 'done', 'project phase advanced to done (all tasks complete)')
+assert.ok(probe.project.title && probe.project.title.length > 0 && probe.project.title.length <= 70, `project got a generated name, not blank (got "${probe.project.title}")`)
 const chain = probe.assistants.find((a) => Array.isArray(a.dispatch) && a.dispatch.length)?.dispatch
 assert.ok(chain && chain.includes('engineer') && chain.includes('shuri') && chain.includes('coordinator'), `dispatch chain spans both experts + coordinator (got ${JSON.stringify(chain)})`)
 // Collaboration experts run via runAgent (which writes no transcript file — their audit trail is the

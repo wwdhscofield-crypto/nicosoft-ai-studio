@@ -34,8 +34,11 @@ await page.evaluate(async (key) => {
   if (!anthropic) throw new Error('need an anthropic endpoint')
   const bindings = await window.api.roles.listBindings()
   const bound = (id) => !!bindings.find((b) => b.roleId === id)?.endpointId
+  // Seed-aligned fallback (fresh-db only — bound() is true on a configured studio.db, so this is a no-op
+  // there). opus-4.8 matches the app seed so a fresh-db run can't leave coordinator/engineer on a
+  // different model.
   for (const id of ['coordinator', 'generalist', 'engineer', 'translator', 'editor', 'analyst']) {
-    if (!bound(id)) await window.api.roles.setBinding(id, { endpointId: anthropic.id, model: 'nicosoft/claude-haiku-4-5-20251001' })
+    if (!bound(id)) await window.api.roles.setBinding(id, { endpointId: anthropic.id, model: 'nicosoft/claude-opus-4-8' })
   }
 }, NS_KEY)
 

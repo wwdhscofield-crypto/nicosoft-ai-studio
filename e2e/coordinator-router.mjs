@@ -46,10 +46,13 @@ const setup = await page.evaluate(async (key) => {
   const bindings = await window.api.roles.listBindings()
   const existing = (id) => bindings.find((b) => b.roleId === id)
   const needs = (id) => !existing(id)?.endpointId || !existing(id)?.model
-  if (needs('coordinator')) await window.api.roles.setBinding('coordinator', { endpointId: anthropic.id, model: 'nicosoft/claude-haiku-4-5-20251001' })
-  if (needs('engineer')) await window.api.roles.setBinding('engineer', { endpointId: anthropic.id, model: 'nicosoft/claude-sonnet-4-6' })
-  if (needs('translator')) await window.api.roles.setBinding('translator', { endpointId: anthropic.id, model: 'nicosoft/claude-haiku-4-5-20251001' })
-  if (needs('generalist')) await window.api.roles.setBinding('generalist', { endpointId: anthropic.id, model: 'nicosoft/claude-haiku-4-5-20251001' })
+  // Seed-aligned fallbacks (fresh-db only — needs() is false on a configured studio.db, so this never
+  // fires there). All routed roles bind to the anthropic endpoint on opus-4.8 to match the app seed, so
+  // even a fresh-db run can't leave coordinator/engineer on a different model than the real seed.
+  if (needs('coordinator')) await window.api.roles.setBinding('coordinator', { endpointId: anthropic.id, model: 'nicosoft/claude-opus-4-8' })
+  if (needs('engineer')) await window.api.roles.setBinding('engineer', { endpointId: anthropic.id, model: 'nicosoft/claude-opus-4-8' })
+  if (needs('translator')) await window.api.roles.setBinding('translator', { endpointId: anthropic.id, model: 'nicosoft/claude-opus-4-8' })
+  if (needs('generalist')) await window.api.roles.setBinding('generalist', { endpointId: anthropic.id, model: 'nicosoft/claude-opus-4-8' })
   return {
     anthropic: { id: anthropic.id, base: anthropic.baseUrl },
     boundFromExisting: { coordinator: !!existing('coordinator'), engineer: !!existing('engineer') }

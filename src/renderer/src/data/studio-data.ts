@@ -18,15 +18,15 @@ import type {
 } from '@/types'
 
 const EXPERTS: Expert[] = [
-  { id: 'coordinator', name: 'Danny', color: 'var(--exp-coordinator)', specialty: 'Coordinator — routes & merges', personality: 'Calm air-traffic-controller', model: 'claude-opus-4.8', family: 'anthropic', coordinator: true },
-  { id: 'generalist', name: 'Amélie', color: 'var(--exp-generalist)', specialty: 'Generalist — chat & brainstorming', personality: 'Warm, curious front door', model: 'gpt-5.5', family: 'openai' },
-  { id: 'engineer', name: 'Flynn', color: 'var(--exp-engineer)', specialty: 'Backend engineer — APIs, server, data', personality: 'Precise, direct, no pleasantries', model: 'claude-opus-4.8', family: 'anthropic' },
-  { id: 'shuri', name: 'Shuri', color: 'var(--exp-shuri)', specialty: 'Frontend engineer — UI, React, CSS', personality: 'Inventive, detail-driven, craft-proud', model: 'claude-opus-4.8', family: 'anthropic' },
+  { id: 'coordinator', name: 'Danny', color: 'var(--exp-coordinator)', specialty: 'Coordinator — routes & merges', personality: 'Calm air-traffic-controller', model: 'nicosoft/claude-opus-4-8', family: 'anthropic', coordinator: true },
+  { id: 'generalist', name: 'Amélie', color: 'var(--exp-generalist)', specialty: 'Generalist — chat & brainstorming', personality: 'Warm, curious front door', model: 'nicosoft/gpt-5.5', family: 'openai' },
+  { id: 'engineer', name: 'Flynn', color: 'var(--exp-engineer)', specialty: 'Backend engineer — APIs, server, data', personality: 'Precise, direct, no pleasantries', model: 'nicosoft/claude-opus-4-8', family: 'anthropic' },
+  { id: 'shuri', name: 'Shuri', color: 'var(--exp-shuri)', specialty: 'Frontend engineer — UI, React, CSS', personality: 'Inventive, detail-driven, craft-proud', model: 'nicosoft/claude-opus-4-8', family: 'anthropic' },
   { id: 'designer', name: 'Georgia', color: 'var(--exp-designer)', specialty: 'Designer — images & posters', personality: 'Creative, opinionated', model: 'gemini-pro-latest', family: 'gemini' },
   { id: 'translator', name: 'Louise', color: 'var(--exp-translator)', specialty: 'Translator — any language pair', personality: 'Precise, culturally aware', model: 'gemini-flash-latest', family: 'gemini' },
   { id: 'editor', name: 'Miranda', color: 'var(--exp-editor)', specialty: 'Editor — summarize & condense', personality: 'Structured, no padding', model: 'gemini-pro-latest', family: 'gemini' },
-  { id: 'analyst', name: 'Turing', color: 'var(--exp-analyst)', specialty: 'Data analyst — stats & charts', personality: 'Rigorous, honest about uncertainty', model: 'gpt-5.5', family: 'openai' },
-  { id: 'scheduler', name: 'Joan', color: 'var(--exp-scheduler)', specialty: 'Email & scheduling', personality: 'Efficient, situationally appropriate', model: 'gpt-5-mini', family: 'openai' }
+  { id: 'analyst', name: 'Turing', color: 'var(--exp-analyst)', specialty: 'Data analyst — stats & charts', personality: 'Rigorous, honest about uncertainty', model: 'nicosoft/gpt-5.5', family: 'openai' },
+  { id: 'scheduler', name: 'Joan', color: 'var(--exp-scheduler)', specialty: 'Email & scheduling', personality: 'Efficient, situationally appropriate', model: 'nicosoft/gpt-5-mini', family: 'openai' }
 ]
 
 const EXPERT_BY_ID: Record<string, Expert> = Object.fromEntries(EXPERTS.map((e) => [e.id, e]))
@@ -310,7 +310,7 @@ const CONVERSATIONS: Record<string, Conversation> = {
     expert: 'scheduler',
     segments: [
       { who: 'user', ts: 'Mon 11:30 AM', blocks: [{ type: 'para', html: 'Draft a warm but brief reply to Dana thanking her for the intro and proposing three times next week.' }] },
-      { who: 'scheduler', model: 'gpt-5-mini', ts: 'Mon 11:30 AM', blocks: [{ type: 'para', html: '<strong>Subject:</strong> Thanks for the intro — a few times next week' }, { type: 'para', html: "Hi Dana, thank you for connecting us — I really appreciate it. I'd love to find time next week. Would any of these work: <strong>Tue 2pm</strong>, <strong>Wed 10am</strong>, or <strong>Thu 4pm</strong> (all PT)? Happy to adjust to your calendar. Looking forward to it." }] }
+      { who: 'scheduler', model: 'nicosoft/gpt-5-mini', ts: 'Mon 11:30 AM', blocks: [{ type: 'para', html: '<strong>Subject:</strong> Thanks for the intro — a few times next week' }, { type: 'para', html: "Hi Dana, thank you for connecting us — I really appreciate it. I'd love to find time next week. Would any of these work: <strong>Tue 2pm</strong>, <strong>Wed 10am</strong>, or <strong>Thu 4pm</strong> (all PT)? Happy to adjust to your calendar. Looking forward to it." }] }
     ]
   },
   standup: {

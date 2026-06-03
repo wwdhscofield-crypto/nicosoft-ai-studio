@@ -22,8 +22,8 @@ const PROTO_LABEL: Record<Proto, string> = { openai: 'OpenAI', anthropic: 'Anthr
 // experts to (the user refines the model list in Settings later). Without it, endpoints.test fails with
 // "no model configured to test" and the whole connect/auto-bind flow dies.
 const PROTO_DEFAULT_MODEL: Record<Proto, { slug: string; contextLength: number } | null> = {
-  anthropic: { slug: 'claude-3-5-sonnet-latest', contextLength: 200000 },
-  openai: { slug: 'gpt-4o', contextLength: 128000 },
+  anthropic: { slug: 'nicosoft/claude-opus-4-8', contextLength: 200000 },
+  openai: { slug: 'nicosoft/gpt-5.5', contextLength: 128000 },
   gemini: { slug: 'gemini-2.5-flash', contextLength: 1048576 },
   custom: null
 }
@@ -200,11 +200,15 @@ export function Onboarding({ onFinish }: { onFinish: () => void }): ReactElement
 
   const finish = async (): Promise<void> => {
     if (endpoint) {
-      // Auto-bind every expert whose preferred family matches the endpoint's protocol, to the endpoint's
-      // own default model (so the bound slug is actually in availableModels — Batch 2 验收).
-      for (const e of STUDIO_DATA.EXPERTS) {
-        if (e.family === endpoint.protocol) {
-          await window.api.roles.setBinding(e.id, { endpointId: endpoint.id, model: endpoint.defaultModel ?? null })
+      // Auto-bind every expert whose family matches the endpoint, each to ITS OWN seed model — the single
+      // source is EXPERTS (coordinator/engineer/shuri = opus-4.8, etc). Merge those slugs into the
+      // endpoint's available list first so the binding resolves + the Settings model picker shows them.
+      const mine = STUDIO_DATA.EXPERTS.filter((e) => e.family === endpoint.protocol)
+      if (mine.length) {
+        const slugs = new Set([...(endpoint.availableModels ?? []).map((m) => m.slug), ...mine.map((e) => e.model)])
+        await window.api.endpoints.update(endpoint.id, { availableModels: [...slugs].map((slug) => ({ slug, contextLength: 0 })) })
+        for (const e of mine) {
+          await window.api.roles.setBinding(e.id, { endpointId: endpoint.id, model: e.model })
         }
       }
     }

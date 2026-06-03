@@ -1,5 +1,7 @@
 import * as projectService from './project.service'
 import * as convRepo from '../repos/conversation.repo'
+import * as rolesService from './roles.service'
+import * as titleService from './title.service'
 import type { ProjectTaskDto } from '../ipc/contracts'
 
 // Bridges a coordinator COLLABORATE turn to a Project (doc 19 §1, phase 5b). A collaboration IS project
@@ -18,17 +20,17 @@ export interface CollabProject {
 
 // Ensure a project backs this collaboration. Reuse the conversation's project if it has one; otherwise
 // create one from the prompt, seed a task per role, link the conversation, and move it into executing.
-export function ensureProjectForCollab(
+export async function ensureProjectForCollab(
   convId: string,
   prompt: string,
   roles: string[],
   cwdByRole?: Record<string, string>,
-): CollabProject {
+): Promise<CollabProject> {
   const conv = convRepo.getById(convId)
   if (conv?.projectId) return mapOrSeedTasks(conv.projectId, roles)
 
   const cwd = roles.map((r) => cwdByRole?.[r]).find((c): c is string => !!c) ?? null
-  const project = projectService.create({ title: deriveTitle(prompt), goal: prompt, cwd })
+  const project = projectService.create({ title: await projectTitle(prompt), goal: prompt, cwd })
   const taskByRole: Record<string, string> = {}
   for (const roleId of roles) {
     taskByRole[roleId] = projectService.addTask(project.id, { title: taskTitle(roleId), assigneeRoleId: roleId }).id
@@ -36,6 +38,20 @@ export function ensureProjectForCollab(
   convRepo.setProjectId(convId, project.id)
   projectService.setPhase(project.id, 'executing')
   return { projectId: project.id, taskByRole }
+}
+
+// Generate a concise project name from the prompt via the title service: a small/fast model on the
+// coordinator's own endpoint, falling back to the coordinator's MAIN model when the endpoint has no
+// smaller sibling (user ask), and to a plain truncation when there's no usable binding or the call
+// fails. Titling never blocks project creation.
+async function projectTitle(prompt: string): Promise<string> {
+  const b = rolesService.getBinding('coordinator')
+  if (!b?.endpointId || !b.model) return deriveTitle(prompt)
+  try {
+    return await titleService.generate({ firstMessage: prompt, endpointId: b.endpointId, model: b.model })
+  } catch {
+    return deriveTitle(prompt)
+  }
 }
 
 // Mark the given roles' tasks done; if every task in the project is now done, advance the phase to done.
