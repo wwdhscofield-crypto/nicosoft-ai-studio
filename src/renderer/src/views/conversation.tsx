@@ -221,12 +221,21 @@ function Composer({
       : messages.reduce((s, m) => s + m.text.length, 0) / 4 + value.length / 4
   const tokenAmber = b.contextLength > 0 && usedTokens / b.contextLength > 0.85
   const selectedEp = b.endpoints.find((e) => e.id === b.endpointId)
-  const agent = roleHasAgent(expert.id) // agent roles (Engineer) additionally need an Anthropic endpoint + a project folder
-  const needAnthropic = agent && !!selectedEp && selectedEp.protocol !== 'anthropic'
+  const agent = roleHasAgent(expert.id)
+  // Engineer (coding agent) needs a project folder; other agent roles run without one (folder = an
+  // optional restricted-read boundary). Agent roles need an Anthropic or OpenAI endpoint (the loop's
+  // two protocols; Gemini agent loop isn't wired yet).
+  const needsCwd = agent && expert.id === 'engineer'
+  const needAgentProto =
+    agent &&
+    !!selectedEp &&
+    selectedEp.protocol !== 'anthropic' &&
+    selectedEp.protocol !== 'openai' &&
+    selectedEp.protocol !== 'custom'
   const noEndpoint =
     b.loaded &&
-    (b.endpoints.length === 0 || !selectedEp || !selectedEp.enabled || !selectedEp.hasKey || !b.model || needAnthropic)
-  const ready = b.loaded && !noEndpoint && (!agent || !!cwd)
+    (b.endpoints.length === 0 || !selectedEp || !selectedEp.enabled || !selectedEp.hasKey || !b.model || needAgentProto)
+  const ready = b.loaded && !noEndpoint && (!needsCwd || !!cwd)
   const effectiveDepth = (b.depth || 'medium') as ThinkingDepth
 
   const grow = (): void => {
@@ -280,8 +289,8 @@ function Composer({
           <div className="dock-banner">
             <Icons.plug size={15} style={{ color: 'var(--text-3)' }} />
             <span>
-              {needAnthropic
-                ? `${expert.name} needs an Anthropic-protocol endpoint — bind one in its profile`
+              {needAgentProto
+                ? `${expert.name} is an agent — bind an Anthropic or OpenAI endpoint in its profile`
                 : `Bind an endpoint with a key and model to chat with ${expert.name}`}
             </span>
             <span className="db-arrow" onClick={onOpenSettings}>
@@ -313,7 +322,7 @@ function Composer({
             rows={1}
             value={value}
             placeholder={
-              agent && !cwd
+              needsCwd && !cwd
                 ? 'Choose a project folder above to start'
                 : `Ask ${expert.name} — Enter to send, Shift+Enter for newline`
             }

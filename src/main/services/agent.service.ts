@@ -17,6 +17,8 @@ import { isContentBlock } from '../agent/types'
 import type { AgentMessage, AnyBlock } from '../agent/types'
 import { CORE_TOOLS } from '../agent/registry'
 import { ENGINEER_SYSTEM_PROMPT } from '../agent/system-prompt'
+import { buildRolePrompt } from '../agent/roles/prompts'
+import type { Tool } from '../agent/tool'
 import type { AgentRunInput, ToolCallDto } from '../ipc/contracts'
 import * as keychain from '../keychain/keychain'
 import { LlmError } from '../llm/types'
@@ -30,11 +32,30 @@ import * as convService from './conversation.service'
 import * as memoryService from './memory.service'
 import * as compressionService from './compression.service'
 import { pickSmallModel } from './model-select'
-import { countAnthropic } from './token-count.service'
+import { countContext } from './token-count.service'
 import { manager as mcpManager } from './mcp.service'
 import { manager as skillManager } from './skill.service'
 
-const ENGINEER_ROLE_ID = 'engineer' // this version's agent is Engineer-only
+const ENGINEER_ROLE_ID = 'engineer'
+
+// CORE tool subset per agent role (doc 16 §5). Engineer = full set; OpenAI roles get a read-only +
+// fetch baseline. Writes / exec / orchestration (Write/Edit/MultiEdit/Bash/Task/TodoWrite) stay
+// Engineer-only; WebSearch is Anthropic-server-backed so it's omitted for OpenAI roles (OpenAI server
+// web_search comes later). MCP + Skill are layered on by scope for every agent role.
+const ROLE_CORE_TOOLS: Record<string, readonly string[]> = {
+  generalist: ['Read', 'WebFetch'],
+  analyst: ['Read', 'WebFetch'], // + code_execution at stage C
+  scheduler: [] // email/calendar via MCP
+}
+
+function toolsForAgentRole(roleId: string): Tool[] {
+  const core =
+    roleId === ENGINEER_ROLE_ID
+      ? [...CORE_TOOLS]
+      : CORE_TOOLS.filter((t) => (ROLE_CORE_TOOLS[roleId] ?? []).includes(t.name))
+  const skill = skillManager.skillTool(roleId)
+  return [...core, ...mcpManager.toolsForRole(roleId), ...(skill ? [skill] : [])]
+}
 
 export interface AgentCallbacks {
   onStream: (e: AgentLlmEvent) => void // fine-grained deltas (text + tool_use input) for streaming UI
@@ -49,28 +70,33 @@ export async function run(
 ): Promise<{ reason: string; turns: number; convId: string; runId: string; promptTokens: number }> {
   const ep = endpointRepo.getById(input.endpointId)
   if (!ep) throw new LlmError('bad_request', 'endpoint not found')
-  // Engineer's loop speaks the Anthropic Messages protocol (tool use over /v1/messages).
-  if (ep.protocol !== 'anthropic') {
-    throw new LlmError('bad_request', 'Engineer requires an Anthropic-protocol endpoint')
-  }
+  // The agent loop speaks Anthropic Messages (/v1/messages) or OpenAI Responses (/v1/responses) tool
+  // use; Gemini agent loop isn't wired yet.
+  const protocol: 'anthropic' | 'openai' =
+    ep.protocol === 'anthropic'
+      ? 'anthropic'
+      : ep.protocol === 'openai' || ep.protocol === 'custom'
+        ? 'openai'
+        : (() => {
+            throw new LlmError('bad_request', `agent does not support ${ep.protocol} endpoints yet`)
+          })()
   const key = keychain.getApiKey(input.endpointId)
   if (!key) throw new LlmError('bad_key', 'no API key configured for this endpoint')
 
   const convId = input.convId
   const runId = ulid()
-  // MCP tools scoped to this role get appended to the core set — generic across any agent role (the
-  // injection is by roleId + scope, never hardwired). Engineer is the only agent role today.
+  // Tools scoped to this agent role: a CORE subset (doc 16 §5) + MCP + Skill, by roleId + scope.
   const roleId = input.roleId ?? ENGINEER_ROLE_ID
-  // Skills scoped to this role: one Skill tool the model calls to load instructions on demand,
-  // advertised via the "Available skills" system listing (buildEngineerSystem). Null → no in-scope skills.
-  const skillTool = skillManager.skillTool(roleId)
-  const tools = [...CORE_TOOLS, ...mcpManager.toolsForRole(roleId), ...(skillTool ? [skillTool] : [])]
+  let tools = toolsForAgentRole(roleId)
+  // Read needs a folder boundary; without a cwd, drop it for non-Engineer roles so the model can't read
+  // the process working dir. Engineer always has a cwd (required in the composer).
+  if (!input.cwd && roleId !== ENGINEER_ROLE_ID) tools = tools.filter((t) => t.name !== 'Read')
 
   // ① Persist the user turn (tagged with run_id) so context assembly + extraction read it from the DB.
   const userImages = (input.images ?? []).map((i) => ({ url: i.dataUrl }))
   convService.append(convId, {
     author: 'user',
-    expertId: ENGINEER_ROLE_ID,
+    expertId: roleId,
     content: input.prompt,
     attachments: userImages,
     runId,
@@ -79,7 +105,7 @@ export async function run(
   // ② chat-layer context: recall memories + the history after the latest summary's boundary + summary.
   const memories = await memoryService.recall({
     convId,
-    roleId: ENGINEER_ROLE_ID,
+    roleId,
     endpointId: input.endpointId,
     model: input.model,
   })
@@ -89,7 +115,7 @@ export async function run(
 
   // ③ Agent system = ENGINEER prompt + injected memories + summary; seed = history → AgentMessage (Anthropic
   //    needs a user-first list, so drop any leading assistant turns left by a fold boundary).
-  const system = buildEngineerSystem(memories, summary?.content ?? null, skillManager.listingForRole(roleId))
+  const system = buildAgentSystem(roleId, memories, summary?.content ?? null, skillManager.listingForRole(roleId))
   const mapped = conversationToAgentMessages(recent)
   const firstUser = mapped.findIndex((m) => m.role === 'user')
   const seed = firstUser > 0 ? mapped.slice(firstUser) : mapped
@@ -97,7 +123,7 @@ export async function run(
   // Exact prompt tokens for this turn (system + seed + tool schemas) — free via count_tokens, falls
   // back to a small-model probe then chars/4. Drives the composer readout + the compression threshold.
   const toolSchemas = buildToolsParam(tools, input.model)
-  const promptTokens = await countAnthropic({
+  const promptTokens = await countContext(protocol, {
     baseUrl: ep.baseUrl,
     apiKey: key,
     model: input.model,
@@ -105,7 +131,7 @@ export async function run(
     messages: seed as { role: string; content: unknown }[],
     tools: toolSchemas,
     thinkingBudget: input.thinking?.budgetTokens,
-    smallModel: pickSmallModel('anthropic', ep.availableModels, input.model)
+    smallModel: pickSmallModel(protocol, ep.availableModels, input.model)
   })
 
   const sessionDir = join(homedir(), '.nsai', 'sessions', convId)
@@ -127,7 +153,7 @@ export async function run(
   }
 
   const gen = runAgent({
-    protocol: 'anthropic', // Engineer is Anthropic-only today (gated above); OpenAI roles wire in at stage B
+    protocol,
     baseUrl: ep.baseUrl,
     apiKey: key,
     model: input.model,
@@ -169,7 +195,7 @@ export async function run(
   if (finalText) {
     convService.append(convId, {
       author: 'expert',
-      expertId: ENGINEER_ROLE_ID,
+      expertId: roleId,
       model: input.model,
       content: finalText,
       runId,
@@ -184,12 +210,12 @@ export async function run(
   //    plain-chat onDone path: memory extraction cadence + compression check). contextWindow is passed
   //    explicitly because Engineer's model may not be in the endpoint's availableModels catalog.
   void memoryService
-    .onTurn({ convId, roleId: ENGINEER_ROLE_ID, endpointId: input.endpointId, model: input.model })
+    .onTurn({ convId, roleId, endpointId: input.endpointId, model: input.model })
     .catch(() => {})
   void compressionService
     .maybeCompress({
       convId,
-      roleId: ENGINEER_ROLE_ID,
+      roleId,
       endpointId: input.endpointId,
       model: input.model,
       contextWindow: input.contextWindow,
@@ -200,9 +226,11 @@ export async function run(
   return { reason: result.reason, turns: result.turns, convId, runId, promptTokens }
 }
 
-// ENGINEER system prompt + the chat layer's injected context (recalled memories, conversation summary).
-function buildEngineerSystem(memories: MemoryRow[], summary: string | null, skillListing: string): string {
-  const parts = [ENGINEER_SYSTEM_PROMPT]
+// Agent system = the role's base prompt (Engineer's coding prompt, or the role section via
+// buildRolePrompt for other agent roles) + the chat layer's injected context (memories, summary, skills).
+function buildAgentSystem(roleId: string, memories: MemoryRow[], summary: string | null, skillListing: string): string {
+  const base = roleId === ENGINEER_ROLE_ID ? ENGINEER_SYSTEM_PROMPT : (buildRolePrompt(roleId) ?? ENGINEER_SYSTEM_PROMPT)
+  const parts = [base]
   if (memories.length) {
     parts.push(
       "What you've learned about this user (engineering preferences, project conventions):\n" +
