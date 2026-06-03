@@ -289,7 +289,10 @@ function Composer({
             </span>
           </div>
         ) : null}
-        {agent ? <PathBar cwd={cwd} onPick={(dir) => setCwd(expert.id, dir)} /> : null}
+        {/* Folder picker on every chat — per-role cwd (cwdByExpert). For agent roles it's the working
+            dir + restricted-read boundary (required before sending); for chat-only roles it's optional
+            and persisted now, taking effect once that role gets an agent. */}
+        <PathBar cwd={cwd} onPick={(dir) => setCwd(expert.id, dir)} />
         <div className={'composer2' + (ready ? '' : ' disabled')}>
           <div className="cmp-toolbar">
             <ModelPicker models={b.models} value={b.model} onChange={b.onModel} disabled={!ready} />
