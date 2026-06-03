@@ -101,6 +101,14 @@ export interface AgentTextDelta {
   streamId: string
   text: string
 }
+// A tool the model just started calling — streamed the moment the call begins, before the turn
+// finishes, so the renderer can show a running tool card immediately instead of waiting. The full
+// input (and thus the card's summary) arrives with the finished turn (AgentAssistant).
+export interface AgentToolStart {
+  streamId: string
+  id: string
+  name: string
+}
 // A finished assistant turn: its content blocks (text + tool_use + opaque server blocks).
 export interface AgentAssistant {
   streamId: string

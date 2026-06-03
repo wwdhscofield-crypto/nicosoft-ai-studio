@@ -221,6 +221,26 @@ export const useChat = create<ChatState>((set, get) => {
       const meta = agentMeta.get(d.streamId)
       if (meta) appendDelta(meta.convId, d.text)
     })
+    // A tool just started (streamed before the turn finishes) — show a running card immediately so the
+    // user sees the call in flight instead of silence until onAssistant. The full input (and the card's
+    // summary) arrives when the turn completes; onAssistant then overwrites cur.tools with the authoritative
+    // blocks (same tool_use id, so no duplicate).
+    ag.onToolStart((d) => {
+      const meta = agentMeta.get(d.streamId)
+      if (!meta) return
+      set((s) => {
+        const msgs = (s.byConversation[meta.convId] ?? []).map((m) => ({ ...m, tools: m.tools ? [...m.tools] : m.tools }))
+        let cur = msgs[msgs.length - 1]
+        if (!cur || cur.role !== 'assistant' || !cur.streaming) {
+          cur = { id: uid(), role: 'assistant', text: '', streaming: true, tools: [] }
+          msgs.push(cur)
+        }
+        if (!cur.tools?.some((t) => t.id === d.id)) {
+          cur.tools = [...(cur.tools ?? []), { id: d.id, name: d.name, input: {}, status: 'running' as const }]
+        }
+        return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
+      })
+    })
     ag.onAssistant((d) => {
       const meta = agentMeta.get(d.streamId)
       if (!meta) return

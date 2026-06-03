@@ -54,6 +54,7 @@ export function registerAgentHandlers(): void {
         {
           onStream: (ev) => {
             if (ev.type === 'text') send('agent:delta', { streamId, text: ev.delta })
+            else if (ev.type === 'tool_use_start') send('agent:tool:start', { streamId, id: ev.id, name: ev.name })
           },
           onEvent: (ev) => {
             if (ev.type === 'assistant') {

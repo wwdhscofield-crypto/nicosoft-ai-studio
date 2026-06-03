@@ -10,6 +10,7 @@ import type {
   ChatErrorDto,
   AgentRunInput,
   AgentTextDelta,
+  AgentToolStart,
   AgentAssistant,
   AgentToolResults,
   AgentPermissionRequest,
@@ -111,6 +112,7 @@ const api = {
     respondPermission: (resp: AgentPermissionResponse): Promise<void> =>
       ipcRenderer.invoke('agent:permission:respond', resp),
     onDelta: (cb: (d: AgentTextDelta) => void): (() => void) => agentListen('agent:delta', cb),
+    onToolStart: (cb: (d: AgentToolStart) => void): (() => void) => agentListen('agent:tool:start', cb),
     onAssistant: (cb: (d: AgentAssistant) => void): (() => void) => agentListen('agent:assistant', cb),
     onResults: (cb: (d: AgentToolResults) => void): (() => void) => agentListen('agent:results', cb),
     onPermission: (cb: (d: AgentPermissionRequest) => void): (() => void) => agentListen('agent:permission', cb),
