@@ -40,9 +40,9 @@ const setup = await page.evaluate(async (key) => {
     const b = bindings.find((x) => x.roleId === id)
     return !b?.endpointId || !b?.model
   }
-  if (needs('coordinator')) await window.api.roles.setBinding('coordinator', { endpointId: anthropic.id, model: 'nicosoft/claude-haiku-4-5-20251001' })
-  if (needs('engineer')) await window.api.roles.setBinding('engineer', { endpointId: anthropic.id, model: 'nicosoft/claude-sonnet-4-6' })
-  if (needs('shuri')) await window.api.roles.setBinding('shuri', { endpointId: anthropic.id, model: 'nicosoft/claude-sonnet-4-6' })
+  if (needs('coordinator')) await window.api.roles.setBinding('coordinator', { endpointId: anthropic.id, model: 'nicosoft/claude-opus-4-8' })
+  if (needs('engineer')) await window.api.roles.setBinding('engineer', { endpointId: anthropic.id, model: 'nicosoft/claude-opus-4-8' })
+  if (needs('shuri')) await window.api.roles.setBinding('shuri', { endpointId: anthropic.id, model: 'nicosoft/claude-opus-4-8' })
   return { hasKey: !!fresh.find((e) => e.protocol === 'anthropic')?.hasKey || !!key }
 }, NS_KEY)
 console.log('setup:', JSON.stringify(setup))
@@ -85,6 +85,12 @@ for (let i = 0; i < 150; i++) {
 }
 await page.waitForTimeout(1500)
 await page.screenshot({ path: '/tmp/coordinator-collaborate.png', fullPage: true })
+// Problem-1 check: after a busy multi-expert stream (many tool cards), the output should have auto-scrolled
+// to the bottom (rAF + near-bottom follow), not stopped a few rows short.
+const scrolledToBottom = await page.evaluate(() => {
+  const el = document.querySelector('.msg-list')
+  return el ? el.scrollHeight - el.scrollTop - el.clientHeight < 220 : false
+})
 
 // 5. Inspect DB messages + the per-expert transcripts on disk (collab writes to <convId>/<roleId>/).
 const probe = await page.evaluate(async () => {
@@ -131,6 +137,7 @@ console.log('page errors:', errors.length ? JSON.stringify(errors) : 'none')
 assert.equal(errors.length, 0, 'no JS errors:\n' + errors.join('\n'))
 assert.equal(probe.onScreenError, null, 'no on-screen error notice')
 assert.ok(finished, 'the collaboration ENDED (no deadlock — quiescence detection works)')
+assert.ok(scrolledToBottom, 'output auto-scrolled to the bottom after the multi-expert stream')
 assert.ok(expertIds.includes('engineer') && expertIds.includes('shuri'), 'both Flynn + Shuri persisted as collaborate steps')
 const chain = probe.assistants.find((a) => Array.isArray(a.dispatch) && a.dispatch.length)?.dispatch
 assert.ok(chain && chain.includes('engineer') && chain.includes('shuri') && chain.includes('coordinator'), `dispatch chain spans both experts + coordinator (got ${JSON.stringify(chain)})`)

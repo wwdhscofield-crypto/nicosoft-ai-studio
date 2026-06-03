@@ -52,9 +52,9 @@ const setup = await page.evaluate(async (key) => {
     const b = bindings.find((x) => x.roleId === id)
     return !b?.endpointId || !b?.model
   }
-  if (needs('coordinator')) await window.api.roles.setBinding('coordinator', { endpointId: anthropic.id, model: 'nicosoft/claude-haiku-4-5-20251001' })
-  if (needs('engineer')) await window.api.roles.setBinding('engineer', { endpointId: anthropic.id, model: 'nicosoft/claude-sonnet-4-6' })
-  if (needs('shuri')) await window.api.roles.setBinding('shuri', { endpointId: anthropic.id, model: 'nicosoft/claude-sonnet-4-6' })
+  if (needs('coordinator')) await window.api.roles.setBinding('coordinator', { endpointId: anthropic.id, model: 'nicosoft/claude-opus-4-8' })
+  if (needs('engineer')) await window.api.roles.setBinding('engineer', { endpointId: anthropic.id, model: 'nicosoft/claude-opus-4-8' })
+  if (needs('shuri')) await window.api.roles.setBinding('shuri', { endpointId: anthropic.id, model: 'nicosoft/claude-opus-4-8' })
   return { hasKey: !!fresh.find((e) => e.protocol === 'anthropic')?.hasKey || !!key }
 }, NS_KEY)
 console.log('setup:', JSON.stringify(setup))

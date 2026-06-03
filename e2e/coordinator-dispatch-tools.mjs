@@ -38,8 +38,8 @@ const setup = await page.evaluate(async (key) => {
   const bindings = await window.api.roles.listBindings()
   const existing = (id) => bindings.find((b) => b.roleId === id)
   const needs = (id) => !existing(id)?.endpointId || !existing(id)?.model
-  if (needs('coordinator')) await window.api.roles.setBinding('coordinator', { endpointId: anthropic.id, model: 'nicosoft/claude-haiku-4-5-20251001' })
-  if (needs('engineer')) await window.api.roles.setBinding('engineer', { endpointId: anthropic.id, model: 'nicosoft/claude-sonnet-4-6' })
+  if (needs('coordinator')) await window.api.roles.setBinding('coordinator', { endpointId: anthropic.id, model: 'nicosoft/claude-opus-4-8' })
+  if (needs('engineer')) await window.api.roles.setBinding('engineer', { endpointId: anthropic.id, model: 'nicosoft/claude-opus-4-8' })
   const after = await window.api.roles.listBindings()
   const eng = after.find((b) => b.roleId === 'engineer')
   const ep = eps.find((e) => e.id === eng?.endpointId)

@@ -379,6 +379,7 @@ export function ChatView({ expert, onOpenSettings }: { expert: Expert; onOpenSet
   const messages = activeConv ? (chat.byConversation[activeConv] ?? []) : []
   const error = activeConv ? chat.error[activeConv] : null
   const permission = activeConv ? chat.permission[activeConv] : null
+  const approvals = activeConv ? chat.approvals[activeConv] : undefined
   const listRef = useRef<HTMLDivElement>(null)
   const [value, setValue] = useState('')
   const [viewer, setViewer] = useState<{ items: ViewerImage[]; index: number } | null>(null)
@@ -386,8 +387,17 @@ export function ChatView({ expert, onOpenSettings }: { expert: Expert; onOpenSet
 
   useEffect(() => {
     const el = listRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [messages])
+    if (!el) return
+    // Follow streaming output to the bottom, but only when already near it — a user who scrolled up to read
+    // history isn't yanked back. rAF defers to after layout so scrollHeight includes the tool cards / deltas
+    // / approval cards just rendered (a synchronous scroll would target a stale, too-short height and stop
+    // a row or two short — the symptom on a busy multi-expert turn).
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160
+    if (nearBottom)
+      requestAnimationFrame(() => {
+        if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight
+      })
+  }, [messages, approvals])
 
   const openImage = (items: ViewerImage[], index: number): void => setViewer({ items, index })
   const downloadImage = (img: ViewerImage): void => void window.api.media.save(img.url, img.name)
