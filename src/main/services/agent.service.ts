@@ -44,7 +44,7 @@ const ENGINEER_ROLE_ID = 'engineer'
 // web_search comes later). MCP + Skill are layered on by scope for every agent role.
 const ROLE_CORE_TOOLS: Record<string, readonly string[]> = {
   generalist: ['Read', 'WebFetch'],
-  analyst: ['Read', 'WebFetch'], // + code_execution at stage C
+  analyst: ['Read', 'WebFetch', 'code_execution'],
   scheduler: [] // email/calendar via MCP
 }
 

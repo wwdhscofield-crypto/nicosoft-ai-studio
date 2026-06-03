@@ -4,6 +4,7 @@
 
 import type { Tool } from './tool'
 import { bashTool } from './tools/bash'
+import { codeExecutionTool } from './tools/code-execution'
 import { editTool } from './tools/edit'
 import { globTool } from './tools/glob'
 import { grepTool } from './tools/grep'
@@ -25,6 +26,7 @@ export const CORE_TOOLS: readonly Tool[] = [
   globTool,
   grepTool,
   bashTool,
+  codeExecutionTool,
   webFetchTool,
   webSearchTool,
   todoTool,
