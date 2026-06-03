@@ -18,6 +18,8 @@ import type { AgentMessage, AnyBlock } from '../agent/types'
 import { CORE_TOOLS } from '../agent/registry'
 import { ENGINEER_SYSTEM_PROMPT } from '../agent/system-prompt'
 import { buildRolePrompt } from '../agent/roles/prompts'
+import { enterPlanModeTool } from '../agent/tools/enter-plan-mode'
+import { exitPlanModeTool } from '../agent/tools/exit-plan-mode'
 import type { Tool } from '../agent/tool'
 import type { AgentRunInput, ToolCallDto } from '../ipc/contracts'
 import * as keychain from '../keychain/keychain'
@@ -48,13 +50,17 @@ const ROLE_CORE_TOOLS: Record<string, readonly string[]> = {
   scheduler: [] // email/calendar via MCP
 }
 
+// Plan-mode tools (EnterPlanMode/ExitPlanMode) — every agent role gets them (doc 17). They're
+// read-only (mode switch + plan presentation), so they're never gated by the plan-mode mutation deny.
+const PLAN_TOOLS = [enterPlanModeTool, exitPlanModeTool] as unknown as Tool[]
+
 function toolsForAgentRole(roleId: string): Tool[] {
   const core =
     roleId === ENGINEER_ROLE_ID
       ? [...CORE_TOOLS]
       : CORE_TOOLS.filter((t) => (ROLE_CORE_TOOLS[roleId] ?? []).includes(t.name))
   const skill = skillManager.skillTool(roleId)
-  return [...core, ...mcpManager.toolsForRole(roleId), ...(skill ? [skill] : [])]
+  return [...core, ...PLAN_TOOLS, ...mcpManager.toolsForRole(roleId), ...(skill ? [skill] : [])]
 }
 
 export interface AgentCallbacks {
@@ -228,9 +234,15 @@ export async function run(
 
 // Agent system = the role's base prompt (Engineer's coding prompt, or the role section via
 // buildRolePrompt for other agent roles) + the chat layer's injected context (memories, summary, skills).
+// Plan-mode guidance — every agent role learns when to self-select EnterPlanMode (doc 17).
+const PLAN_GUIDANCE =
+  'When a task is complex or has side effects, call EnterPlanMode first: investigate read-only, then ' +
+  'present a concrete plan via ExitPlanMode for the user to approve before making changes. You decide ' +
+  'when planning is worth it; in plan mode only read-only tools run.'
+
 function buildAgentSystem(roleId: string, memories: MemoryRow[], summary: string | null, skillListing: string): string {
   const base = roleId === ENGINEER_ROLE_ID ? ENGINEER_SYSTEM_PROMPT : (buildRolePrompt(roleId) ?? ENGINEER_SYSTEM_PROMPT)
-  const parts = [base]
+  const parts = [base, PLAN_GUIDANCE]
   if (memories.length) {
     parts.push(
       "What you've learned about this user (engineering preferences, project conventions):\n" +

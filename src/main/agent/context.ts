@@ -42,6 +42,9 @@ export interface AgentContext {
   signal: AbortSignal // cancellation — threaded into bash spawns and sub-agents
   readFileState: Map<string, ReadFileEntry> // keyed by absolute path; powers stale-write detection
   permissionMode: PermissionMode
+  // EnterPlanMode/ExitPlanMode flip the mode at runtime (doc 17); set by runAgent so the change
+  // persists across turns (the loop re-reads it when assembling each turn's context).
+  setPermissionMode?: (mode: PermissionMode) => void
   requestPermission: RequestPermission
   todos: TodoItem[] // the agent's working todo list (TodoWrite replaces it); UI renders it in H4
   spawnSubAgent?: SpawnSubAgent // set by runAgent for the Task tool; undefined inside a sub-agent

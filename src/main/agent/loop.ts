@@ -14,7 +14,7 @@ import {
   SYSTEM_PROMPT_RESERVE,
   tokensFromUsage,
 } from './compact'
-import type { AgentContext, SpawnSubAgent } from './context'
+import type { AgentContext, PermissionMode, SpawnSubAgent } from './context'
 import { StreamingToolExecutor } from './execution'
 import { callWithTools, type AgentLlmEvent } from './llm'
 import type { Tool } from './tool'
@@ -110,7 +110,17 @@ export async function* runAgent(
   // searchModel (e.g. a cheaper Haiku / Sonnet, where configured) to override.
   const smallModel = params.smallModel ?? model
   const searchModel = params.searchModel ?? model
-  const ctx: AgentContext = { ...params.ctx, llm: params.ctx.llm ?? { baseUrl, apiKey, smallModel, searchModel } }
+  // Plan mode can flip at runtime (EnterPlanMode/ExitPlanMode); hold it in a closure var so the change
+  // persists across turns — each turnCtx below reads the latest. doc 17.
+  let planMode: PermissionMode = params.ctx.permissionMode
+  const setPlanMode = (m: PermissionMode): void => {
+    planMode = m
+  }
+  const ctx: AgentContext = {
+    ...params.ctx,
+    llm: params.ctx.llm ?? { baseUrl, apiKey, smallModel, searchModel },
+    setPermissionMode: setPlanMode,
+  }
   const maxTurns = params.maxTurns ?? 50
   const contextWindow = params.contextWindow ?? 200_000
   let messages: AgentMessage[] = [...params.messages] // let — compaction replaces it
@@ -200,7 +210,7 @@ export async function* runAgent(
     // ctx.signal wired through, and the composite is GC'd once the turn ends.
     const turnAbort = new AbortController()
     const turnSignal = AbortSignal.any([ctx.signal, turnAbort.signal])
-    const turnCtx: AgentContext = { ...ctx, signal: turnSignal, spawnSubAgent: makeSpawnSubAgent(turnSignal) }
+    const turnCtx: AgentContext = { ...ctx, permissionMode: planMode, signal: turnSignal, spawnSubAgent: makeSpawnSubAgent(turnSignal) }
     const streamExec = new StreamingToolExecutor(tools, turnCtx)
     try {
       // Stream the turn: each tool_use block is yielded as it finishes, so execution starts
