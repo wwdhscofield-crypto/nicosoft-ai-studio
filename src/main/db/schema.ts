@@ -104,6 +104,7 @@ CREATE TABLE IF NOT EXISTS projects (
   id         TEXT PRIMARY KEY,
   title      TEXT NOT NULL,
   goal       TEXT,
+  cwd        TEXT,                                 -- working directory the experts operate in (project/folder path)
   phase      TEXT NOT NULL DEFAULT 'planning',    -- planning | executing | testing | done
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

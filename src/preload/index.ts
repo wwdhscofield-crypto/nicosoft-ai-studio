@@ -61,7 +61,15 @@ import type {
   McpTestResult,
   SkillDto,
   SkillInput,
-  PluginDto
+  PluginDto,
+  ProjectDto,
+  ProjectTaskDto,
+  ProjectTestDto,
+  ProjectCreateInput,
+  ProjectTaskInput,
+  ProjectPhase,
+  ProjectTaskStatus,
+  ProjectTestStatus
 } from '../main/ipc/contracts'
 
 // Typed bridge exposed to the renderer as `window.api`. Window controls (Batch 0) + Batch 1
@@ -174,7 +182,20 @@ const api = {
     pick: (): Promise<string | null> => ipcRenderer.invoke('project:pick'),
     branch: (cwd: string): Promise<string | null> => ipcRenderer.invoke('project:branch', cwd),
     branches: (cwd: string): Promise<string[]> => ipcRenderer.invoke('project:branches', cwd),
-    checkout: (cwd: string, branch: string): Promise<boolean> => ipcRenderer.invoke('project:checkout', cwd, branch)
+    checkout: (cwd: string, branch: string): Promise<boolean> => ipcRenderer.invoke('project:checkout', cwd, branch),
+    list: (): Promise<ProjectDto[]> => ipcRenderer.invoke('project:list'),
+    get: (id: string): Promise<ProjectDto | null> => ipcRenderer.invoke('project:get', id),
+    create: (input: ProjectCreateInput): Promise<ProjectDto> => ipcRenderer.invoke('project:create', input),
+    remove: (id: string): Promise<void> => ipcRenderer.invoke('project:remove', id),
+    phase: (id: string, phase: ProjectPhase): Promise<void> => ipcRenderer.invoke('project:phase', id, phase),
+    addTask: (projectId: string, input: ProjectTaskInput): Promise<ProjectTaskDto> =>
+      ipcRenderer.invoke('project:task:add', projectId, input),
+    setTaskStatus: (projectId: string, taskId: string, status: ProjectTaskStatus, output?: string | null): Promise<void> =>
+      ipcRenderer.invoke('project:task:status', projectId, taskId, status, output),
+    addTest: (projectId: string, title: string): Promise<ProjectTestDto> =>
+      ipcRenderer.invoke('project:test:add', projectId, title),
+    setTestStatus: (projectId: string, testId: string, status: ProjectTestStatus): Promise<void> =>
+      ipcRenderer.invoke('project:test:status', projectId, testId, status)
   },
 
   roles: {

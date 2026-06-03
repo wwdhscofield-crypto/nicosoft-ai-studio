@@ -3,10 +3,14 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { dialog, ipcMain } from 'electron'
+import * as projectService from '../services/project.service'
+import type { ProjectCreateInput, ProjectPhase, ProjectTaskInput, ProjectTaskStatus, ProjectTestStatus } from './contracts'
 
 const execFileAsync = promisify(execFile)
 
-// Project picker + git branch list / switch for Engineer's path selector (Claude-style chip row).
+// Project picker + git branch list / switch for Engineer's path selector (Claude-style chip row), plus
+// the Project CRUD boundary (Coordinator 2.0 — doc 19 §1). All CRUD handlers are thin: parse args, call
+// the service, return — no SQL, no business logic here.
 export function registerProjectHandlers(): void {
   // Open a native folder picker; returns the chosen absolute path or null if cancelled.
   ipcMain.handle('project:pick', async (): Promise<string | null> => {
@@ -48,4 +52,19 @@ export function registerProjectHandlers(): void {
       return false
     }
   })
+
+  // --- Project CRUD (doc 19 §1) ---
+  ipcMain.handle('project:list', () => projectService.list())
+  ipcMain.handle('project:get', (_e, id: string) => projectService.get(id))
+  ipcMain.handle('project:create', (_e, input: ProjectCreateInput) => projectService.create(input))
+  ipcMain.handle('project:remove', (_e, id: string) => projectService.remove(id))
+  ipcMain.handle('project:phase', (_e, id: string, phase: ProjectPhase) => projectService.setPhase(id, phase))
+  ipcMain.handle('project:task:add', (_e, projectId: string, input: ProjectTaskInput) => projectService.addTask(projectId, input))
+  ipcMain.handle('project:task:status', (_e, projectId: string, taskId: string, status: ProjectTaskStatus, output?: string | null) =>
+    projectService.setTaskStatus(projectId, taskId, status, output),
+  )
+  ipcMain.handle('project:test:add', (_e, projectId: string, title: string) => projectService.addTest(projectId, title))
+  ipcMain.handle('project:test:status', (_e, projectId: string, testId: string, status: ProjectTestStatus) =>
+    projectService.setTestStatus(projectId, testId, status),
+  )
 }

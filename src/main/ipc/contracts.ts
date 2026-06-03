@@ -533,3 +533,53 @@ export interface PluginInstallResult {
   plugin?: PluginDto
   error?: string
 }
+
+// === Project (Coordinator 2.0 — doc 19 §1/§13) ===
+// A project is one complete piece of work: goal + a working directory + a plan of tasks (assigned to
+// experts, with a dep graph) + tests. ProjectDto is a VIEW — progress/experts are derived by the service
+// from the task rows, plan/tests are the joined children. The raw rows live in project.repo.
+export type ProjectPhase = 'planning' | 'executing' | 'testing' | 'done'
+export type ProjectTaskStatus = 'todo' | 'doing' | 'done'
+export type ProjectTestStatus = 'pending' | 'pass' | 'fail'
+
+export interface ProjectTaskDto {
+  id: string
+  stepNo: number
+  title: string
+  assigneeRoleId: string | null
+  deps: string[]
+  status: ProjectTaskStatus
+  output: string | null
+}
+export interface ProjectTestDto {
+  id: string
+  title: string
+  status: ProjectTestStatus
+}
+export interface ProjectDto {
+  id: string
+  title: string
+  goal: string | null
+  cwd: string | null
+  phase: ProjectPhase
+  progress: number // derived: done tasks / total (0 when no tasks)
+  experts: string[] // derived: distinct task assignees, coordinator first
+  plan: ProjectTaskDto[]
+  tests: ProjectTestDto[]
+  createdAt: string
+  updatedAt: string
+}
+export interface ProjectCreateInput {
+  title: string
+  goal?: string | null
+  cwd?: string | null
+}
+export interface ProjectTaskInput {
+  title: string
+  assigneeRoleId?: string | null
+  deps?: string[]
+  stepNo?: number
+}
+export interface ProjectTestInput {
+  title: string
+}
