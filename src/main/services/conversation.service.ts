@@ -20,6 +20,7 @@ function toConvDto(r: convRepo.ConversationRow): ConversationDto {
     kind: r.kind,
     primaryRoleId: r.primaryRoleId,
     title: r.title,
+    projectId: r.projectId,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt
   }

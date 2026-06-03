@@ -380,6 +380,7 @@ export interface ConversationDto {
   kind: string // single | multi
   primaryRoleId: string | null
   title: string | null
+  projectId: string | null // set when a collaborate turn linked this chat to a project (doc 19 §1)
   createdAt: string
   updatedAt: string
 }

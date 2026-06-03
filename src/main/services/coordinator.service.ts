@@ -23,6 +23,7 @@ import * as roleRepo from '../repos/role.repo'
 import * as keychain from '../keychain/keychain'
 import * as memoryService from './memory.service'
 import * as convService from './conversation.service'
+import * as collabProject from './collab-project.service'
 import * as rolesService from './roles.service'
 import * as compressionService from './compression.service'
 import { chat as llmChat } from '../llm/client'
@@ -230,9 +231,14 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
     const fullChain = [...decision.roles!, 'coordinator']
     cb.onDispatch(fullChain, decision.reason)
     if (decision.intro) emitCoordinatorIntro(input.convId, decision.intro, cb)
+    // phase 5b: a collaboration is project work — ensure a project backs it (created from the prompt, or
+    // reused when the chat was opened inside one), with a task per collaborating expert + the conversation
+    // linked. Each expert that produces output marks its task done; the phase advances to done when all are.
+    const project = collabProject.ensureProjectForCollab(input.convId, input.prompt, decision.roles!, input.cwdByRole)
     const outputs = await runCollaboration(input, decision.roles!, fullChain, cb, signal)
     if (signal.aborted) throw new LlmError('network', 'aborted mid-collaboration')
     if (outputs.length === 0) throw new LlmError('upstream', 'collaboration produced no output')
+    collabProject.completeCollabTasks(project, outputs.map((o) => o.role))
     const synthInput = buildParallelSynthesisInput(input.prompt, outputs)
     const synth = await runRoleStep({
       convId: input.convId,

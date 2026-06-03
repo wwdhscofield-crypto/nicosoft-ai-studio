@@ -98,8 +98,14 @@ const probe = await page.evaluate(async () => {
   const c = convs.find((x) => x.primaryRoleId === 'coordinator')
   if (!c) return null
   const msgs = await window.api.conversations.messages(c.id)
+  // phase 5b: the collaboration should have created + linked a project, one task per collaborating expert.
+  const project = c.projectId ? await window.api.project.get(c.projectId) : null
   return {
     convId: c.id,
+    projectId: c.projectId,
+    project: project
+      ? { phase: project.phase, progress: project.progress, experts: project.experts, plan: project.plan.map((t) => ({ who: t.assigneeRoleId, status: t.status })) }
+      : null,
     onScreenError: document.querySelector('.inline-notice')?.textContent ?? null,
     assistants: msgs
       .filter((m) => m.author !== 'user')
@@ -133,12 +139,20 @@ const files = existsSync(CWD) ? readdirSync(CWD, { recursive: true }) : []
 console.log('finished:', finished, '| experts:', JSON.stringify(expertIds), '| consult:', JSON.stringify(consultTools))
 console.log('files:', JSON.stringify(files), '| onScreenError:', probe.onScreenError)
 console.log('page errors:', errors.length ? JSON.stringify(errors) : 'none')
+console.log('project:', JSON.stringify({ projectId: probe.projectId, ...probe.project }))
 
 assert.equal(errors.length, 0, 'no JS errors:\n' + errors.join('\n'))
 assert.equal(probe.onScreenError, null, 'no on-screen error notice')
 assert.ok(finished, 'the collaboration ENDED (no deadlock — quiescence detection works)')
 assert.ok(scrolledToBottom, 'output auto-scrolled to the bottom after the multi-expert stream')
 assert.ok(expertIds.includes('engineer') && expertIds.includes('shuri'), 'both Flynn + Shuri persisted as collaborate steps')
+// phase 5b: a project was created + linked, with a task per collaborating expert, all marked done, phase advanced.
+assert.ok(probe.projectId, 'the collaboration created + linked a project (conversation.projectId set)')
+assert.ok(probe.project, 'the linked project is fetchable via window.api.project.get')
+const taskRoles = probe.project.plan.map((t) => t.who).sort()
+assert.deepEqual(taskRoles, ['engineer', 'shuri'], `project seeded a task per expert (got ${JSON.stringify(taskRoles)})`)
+assert.ok(probe.project.plan.every((t) => t.status === 'done'), 'every expert task marked done after the run')
+assert.equal(probe.project.phase, 'done', 'project phase advanced to done (all tasks complete)')
 const chain = probe.assistants.find((a) => Array.isArray(a.dispatch) && a.dispatch.length)?.dispatch
 assert.ok(chain && chain.includes('engineer') && chain.includes('shuri') && chain.includes('coordinator'), `dispatch chain spans both experts + coordinator (got ${JSON.stringify(chain)})`)
 // Collaboration experts run via runAgent (which writes no transcript file — their audit trail is the

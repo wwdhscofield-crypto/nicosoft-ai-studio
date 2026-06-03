@@ -144,6 +144,13 @@ export function rename(id: string, title: string): void {
   getDb().prepare('UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?').run(title, now, id)
 }
 
+// Link a conversation to a project (Coordinator 2.0 — doc 19 §1). Set when a collaborate turn creates
+// (or is opened inside) a project; null detaches it.
+export function setProjectId(id: string, projectId: string | null): void {
+  const now = new Date().toISOString()
+  getDb().prepare('UPDATE conversations SET project_id = ?, updated_at = ? WHERE id = ?').run(projectId, now, id)
+}
+
 export function touch(id: string): void {
   const now = new Date().toISOString()
   getDb().prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(now, id)
