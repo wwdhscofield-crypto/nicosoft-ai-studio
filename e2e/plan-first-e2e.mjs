@@ -26,7 +26,7 @@ const setup = await page.evaluate(async (cwd) => {
   const eps = await window.api.endpoints.list()
   const anthropic = eps.find((e) => e.protocol === 'anthropic')
   if (!anthropic || !anthropic.hasKey) return { ok: false, why: 'anthropic endpoint has no key' }
-  await window.api.roles.setBinding('engineer', { endpointId: anthropic.id, model: 'nicosoft/claude-opus-4-8' })
+  await window.api.roles.setBinding('engineer', { endpointId: anthropic.id, model: 'nicosoft/claude-opus-4-8', thinkingDepth: 'max' })
   // Wipe old engineer conversations so the transcript we read is THIS run only.
   const convs = await window.api.conversations.list()
   const oldIds = convs.filter((c) => c.primaryRoleId === 'engineer').map((c) => c.id)

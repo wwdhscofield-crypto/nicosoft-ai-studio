@@ -21,7 +21,7 @@ const setup = await page.evaluate(async () => {
   const anthropic = eps.find((e) => e.protocol === 'anthropic')
   if (!anthropic) return { ok: false, why: 'no anthropic endpoint' }
   if (!anthropic.hasKey) return { ok: false, why: 'anthropic endpoint has no key' }
-  await window.api.roles.setBinding('engineer', { endpointId: anthropic.id, model: 'nicosoft/claude-opus-4-8' })
+  await window.api.roles.setBinding('engineer', { endpointId: anthropic.id, model: 'nicosoft/claude-opus-4-8', thinkingDepth: 'max' })
   // Fresh standalone engineer conversation (not coordinator) so it runs the single-agent loop (line 290).
   localStorage.setItem('nicosoft-studio-state-v1', JSON.stringify({ view: 'app', activeExpert: 'engineer' }))
   localStorage.setItem('nicosoft-studio-cwd-by-expert', JSON.stringify({ engineer: '/tmp' }))

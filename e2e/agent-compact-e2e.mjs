@@ -32,7 +32,7 @@ const setup = await page.evaluate(async () => {
   const eps = await window.api.endpoints.list()
   const anthropic = eps.find((e) => e.protocol === 'anthropic')
   if (!anthropic || !anthropic.hasKey) return { ok: false, why: 'anthropic endpoint has no key' }
-  await window.api.roles.setBinding('engineer', { endpointId: anthropic.id, model: 'nicosoft/claude-opus-4-8' })
+  await window.api.roles.setBinding('engineer', { endpointId: anthropic.id, model: 'nicosoft/claude-opus-4-8', thinkingDepth: 'max' })
   const conv = await window.api.conversations.create({ kind: 'single', primaryRoleId: 'engineer', title: 'Compact Test' })
   for (let i = 0; i < 8; i++) {
     await window.api.conversations.append(conv.id, {
