@@ -600,3 +600,16 @@ export interface ProjectUpdatedEvent {
   streamId: string
   projectId: string
 }
+
+// Pushed on project:service — the live dev services a collaboration has running (5c-C3). A snapshot, not
+// persisted (the registry is torn down with the collab session); empty array on teardown.
+export interface ProjectServiceDto {
+  name: string
+  port: number | null
+  status: string
+}
+export interface ProjectServiceEvent {
+  streamId: string
+  projectId: string
+  services: ProjectServiceDto[]
+}

@@ -88,6 +88,8 @@ export interface CoordinatorCallbacks {
   // phase 5c: a live collab event mutated the backing project's tasks — tells the renderer to refetch so
   // an open ProjectDetail reflects lanes changing in real time.
   onProjectUpdated?: (projectId: string) => void
+  // phase 5c-C3: live dev services the collaboration started, for the project workbench's service chips.
+  onServices?: (projectId: string, services: { name: string; port: number | null; status: string }[]) => void
 }
 
 const ROUTER_HISTORY_LIMIT = 4 // last N messages handed to the router for context
@@ -717,6 +719,10 @@ async function runCollaboration(
       // phase 5c: a collab event that moves task state (turn/done) refetches an open ProjectDetail so lanes
       // change in real time. send/assign/wait/wake don't move tasks → no push (consult arrows in phase 5c-B).
       if (project && collabProject.applyCollabEvent(project, e)) cb.onProjectUpdated?.(project.projectId)
+    },
+    // phase 5c-C3: forward the collaboration's live dev services to the project workbench.
+    onServices: (services) => {
+      if (project) cb.onServices?.(project.projectId, services.map((s) => ({ name: s.name, port: s.port, status: s.status })))
     },
     onExpertStream: (roleId, ev) => {
       if (ev.type === 'text') cb.onDelta(roleId, ev.delta)

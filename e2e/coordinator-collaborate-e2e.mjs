@@ -193,6 +193,16 @@ console.log('consults:', JSON.stringify(probe.project.consults), '| arrow paths 
 assert.ok(arrowPaths > 0, `phase 5c-B: ProjectDetail drew consult arrow(s) from the persisted edges (got ${arrowPaths})`)
 console.log('✓ phase 5c-B — consult edges persisted + ProjectDetail rendered consult arrows')
 
+// phase 5c-C2: the dock shows Danny's latest report + a live input (not the old read-only placeholder).
+const dock = await page.evaluate(() => ({
+  reply: document.querySelector('.wb-dock-text')?.textContent ?? null,
+  inputLive: !(document.querySelector('.wb-dock-input input')?.disabled ?? true),
+}))
+console.log('dock:', JSON.stringify(dock))
+assert.ok(dock.reply && dock.reply.length > 0, `phase 5c-C2: dock shows Danny's report (got ${JSON.stringify(dock.reply)})`)
+assert.ok(dock.inputLive, 'phase 5c-C2: dock input is live (not read-only)')
+console.log('✓ phase 5c-C2 — dock shows Danny + live input')
+
 await app.close()
 console.log('✓ coordinator collaborate e2e OK — concurrent multi-expert session ran to quiescence + synthesized')
 process.exit(0)

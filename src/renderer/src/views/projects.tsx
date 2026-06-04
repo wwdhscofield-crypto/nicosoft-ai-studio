@@ -363,25 +363,66 @@ function ProjectDetail({
   const doers = project.experts.filter((id) => id !== 'coordinator')
   const [lanesEl, setLanesEl] = useState<HTMLDivElement | null>(null)
   const [pending, setPending] = useState<PendingDto[]>([])
+  const [convId, setConvId] = useState<string | null>(null)
+  const [dannyReply, setDannyReply] = useState('')
+  const [running, setRunning] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [services, setServices] = useState<{ name: string; port: number | null; status: string }[]>([])
 
-  // phase 5c-C: red-zone actions an expert deferred (doc 19 §8) for this project. Pending records are bound
-  // to the conversation, so find the project's conversation then list its pending. Reloads on a new red-zone
-  // record (coordinator:approval push) so the bar appears live.
+  // phase 5c-C3: live dev services the collaboration started, pushed while it runs (cleared on teardown).
+  useEffect(() => {
+    return window.api.project.onService(({ projectId, services: svcs }) => {
+      if (projectId === project.id) setServices(svcs)
+    })
+  }, [project.id])
+
+  // phase 5c-C: bind to the project's conversation (conversation.projectId) — its latest coordinator message
+  // is Danny's report (dock), its pending records are the red-zone bar (doc 19 §8). Reloads pending on a
+  // red-zone push so the bar appears live; the dock's own coordinator:done reload (in send) refreshes Danny.
   useEffect(() => {
     let live = true
-    const load = async (): Promise<void> => {
+    void (async () => {
       const convs = await window.api.conversations.list()
       const conv = convs.find((c) => c.projectId === project.id)
-      const ps = conv ? await window.api.approval.list(conv.id) : []
-      if (live) setPending(ps)
-    }
-    void load()
-    const off = window.api.coordinator.onApproval(() => void load())
+      if (!live) return
+      setConvId(conv?.id ?? null)
+      if (!conv) return
+      const [msgs, ps] = await Promise.all([window.api.conversations.messages(conv.id), window.api.approval.list(conv.id)])
+      if (!live) return
+      setDannyReply([...msgs].reverse().find((m) => m.author !== 'user')?.content ?? '')
+      setPending(ps)
+    })()
+    const off = window.api.coordinator.onApproval(async () => {
+      const convs = await window.api.conversations.list()
+      const conv = convs.find((c) => c.projectId === project.id)
+      if (conv) setPending(await window.api.approval.list(conv.id))
+    })
     return () => {
       live = false
       off()
     }
   }, [project.id])
+
+  // Dock: send a new instruction to the team from inside the project. Persists the user turn (chat-path
+  // style), runs the coordinator on the project's conversation with project.cwd as every doer's cwd, and
+  // refreshes Danny's reply on done. The run's tool activity streams to chat; lanes/arrows update here live
+  // via 5c-A/B (project:updated).
+  const send = async (): Promise<void> => {
+    const prompt = draft.trim()
+    if (!convId || !prompt || running) return
+    setDraft('')
+    setRunning(true)
+    await window.api.conversations.append(convId, { author: 'user', content: prompt })
+    const cwdByRole = project.cwd ? Object.fromEntries(doers.map((r) => [r, project.cwd as string])) : undefined
+    const { streamId } = await window.api.coordinator.run({ convId, prompt, cwdByRole })
+    const off = window.api.coordinator.onDone(async (d) => {
+      if (d.streamId !== streamId) return
+      off()
+      setRunning(false)
+      const msgs = await window.api.conversations.messages(convId)
+      setDannyReply([...msgs].reverse().find((m) => m.author !== 'user')?.content ?? '')
+    })
+  }
 
   const resolve = async (id: string, ok: boolean): Promise<void> => {
     if (ok) await window.api.approval.approve(id)
@@ -404,6 +445,16 @@ function ProjectDetail({
       <div className="wb-body">
         <div className="wb-top">
           <PhaseRail phase={project.phase} />
+          {services.length > 0 && (
+            <span className="wb-services">
+              {services.map((s) => (
+                <span className={'wb-svc ' + s.status} key={s.name}>
+                  <span className="wb-svc-dot" />
+                  {s.name} {s.port ? <span className="wb-svc-port">:{s.port}</span> : null} {s.status}
+                </span>
+              ))}
+            </span>
+          )}
         </div>
 
         <div className="wb-goalrow">
@@ -468,11 +519,33 @@ function ProjectDetail({
         {project.tests.length > 0 && <ProjectTests tests={project.tests} />}
       </div>
 
-      {/* Dock — talking to the team lives in the chat tab for now (live dock in phase 5c) */}
+      {/* Dock — Danny's latest report + send the team a new instruction from inside the project (5c-C2) */}
       <div className="wb-dock">
+        {dannyReply ? (
+          <div className="wb-dock-msg">
+            <Avatar expert={STUDIO_DATA.EXPERT_BY_ID.coordinator} size={22} />
+            <div className="wb-dock-body">
+              <div className="wb-dock-who">
+                Danny <span className="wb-dock-at">@you</span>
+              </div>
+              <div className="wb-dock-text">{running ? 'Working on it…' : dannyReply}</div>
+            </div>
+          </div>
+        ) : null}
         <div className="wb-dock-input">
-          <input placeholder="Talk to the team in the chat tab — Danny coordinates from there…" readOnly />
-          <button className="wb-dock-send" disabled>
+          <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                void send()
+              }
+            }}
+            placeholder={convId ? 'Reply to Danny, or send the team a new instruction…' : 'No conversation linked to this project yet'}
+            disabled={!convId || running}
+          />
+          <button className="wb-dock-send" onClick={() => void send()} disabled={!convId || running || !draft.trim()}>
             <Icons.arrowUp size={16} />
           </button>
         </div>

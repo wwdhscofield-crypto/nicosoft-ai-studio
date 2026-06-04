@@ -22,7 +22,7 @@ import { enterPlanModeTool } from '../agent/tools/enter-plan-mode'
 import { exitPlanModeTool } from '../agent/tools/exit-plan-mode'
 import { sendMessageTool, assignTaskTool, waitTool } from '../agent/tools/consult'
 import { CollabSession, type ExpertSpec, type CollabEvent } from '../agent/collab'
-import { ServiceRegistry } from '../agent/service-registry'
+import { ServiceRegistry, type ServiceInfo } from '../agent/service-registry'
 import { startServiceTool, stopServiceTool, serviceLogsTool, listServicesTool } from '../agent/tools/service'
 import type { Tool } from '../agent/tool'
 import type { AgentRunInput, ToolCallDto, RunTranscript } from '../ipc/contracts'
@@ -401,6 +401,8 @@ export interface CollabHooks {
   onExpertStream: (roleId: string, ev: AgentLlmEvent) => void
   onExpertEvent: (roleId: string, ev: AgentEvent) => void
   requestPermission: (roleId: string, req: PermissionRequest, signal?: AbortSignal) => Promise<PermissionDecision>
+  // phase 5c-C3: snapshot of the live dev services the collaboration started (empty when none / on teardown).
+  onServices?: (services: ServiceInfo[]) => void
 }
 
 // The role's coding/section prompt + a "working as a team" addendum naming the reachable teammates, so the
@@ -504,9 +506,16 @@ export async function runCollabSession(
       },
     }
   })
+  // phase 5c-C3: snapshot the live services on every collab event so an open ProjectDetail shows them as
+  // they come up; clear on teardown when the registry is disposed.
+  const onEvent = (e: CollabEvent): void => {
+    hooks.onEvent(e)
+    hooks.onServices?.(registry.list())
+  }
   try {
-    return await new CollabSession(specs, hooks.onEvent, nowMs).run(signal)
+    return await new CollabSession(specs, onEvent, nowMs).run(signal)
   } finally {
+    hooks.onServices?.([])
     registry.dispose() // tree-kill every service the collaboration started — no lingering ports
   }
 }

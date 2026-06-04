@@ -24,6 +24,7 @@ import type {
   CoordinatorPermissionRequest,
   CoordinatorApprovalEvent,
   ProjectUpdatedEvent,
+  ProjectServiceEvent,
   AgentBlockDto,
   AgentResultDto,
   AgentPermissionResponse
@@ -153,6 +154,11 @@ export function registerCoordinatorHandlers(): void {
           onProjectUpdated: (projectId) => {
             const ev: ProjectUpdatedEvent = { streamId, projectId }
             send('project:updated', ev)
+          },
+          // phase 5c-C3: live dev services snapshot → the project workbench's service chips.
+          onServices: (projectId, services) => {
+            const ev: ProjectServiceEvent = { streamId, projectId, services }
+            send('project:service', ev)
           }
         },
         controller.signal

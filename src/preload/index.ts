@@ -70,7 +70,8 @@ import type {
   ProjectPhase,
   ProjectTaskStatus,
   ProjectTestStatus,
-  ProjectUpdatedEvent
+  ProjectUpdatedEvent,
+  ProjectServiceEvent
 } from '../main/ipc/contracts'
 
 // Typed bridge exposed to the renderer as `window.api`. Window controls (Batch 0) + Batch 1
@@ -197,7 +198,8 @@ const api = {
       ipcRenderer.invoke('project:test:add', projectId, title),
     setTestStatus: (projectId: string, testId: string, status: ProjectTestStatus): Promise<void> =>
       ipcRenderer.invoke('project:test:status', projectId, testId, status),
-    onUpdated: (cb: (d: ProjectUpdatedEvent) => void): (() => void) => agentListen('project:updated', cb)
+    onUpdated: (cb: (d: ProjectUpdatedEvent) => void): (() => void) => agentListen('project:updated', cb),
+    onService: (cb: (d: ProjectServiceEvent) => void): (() => void) => agentListen('project:service', cb)
   },
 
   roles: {
