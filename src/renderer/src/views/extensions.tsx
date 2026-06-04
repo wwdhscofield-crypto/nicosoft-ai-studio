@@ -5,9 +5,11 @@
    Skills = packaged workflows the model triggers
    Plugins = bundles that install a whole set
    ============================================================ */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
+import { createPortal } from 'react-dom'
 import { Icons } from '@/components/icons'
+import { useAnchoredMenu } from '@/lib/use-anchored-menu'
 import { Avatar, HealthDot } from '@/components/primitives'
 import { ImageModelPicker } from '@/components/composer-controls'
 import { McpDialog, SkillDialog, PluginDialog } from '@/components/dialogs'
@@ -28,6 +30,41 @@ function Toggle({ on, onClick, disabled }: { on: boolean; onClick: () => void; d
     >
       <span className="knob" />
     </button>
+  );
+}
+
+/* — three-dot row action menu. Portals to <body> with fixed positioning (useAnchoredMenu) so the
+     .ext-list overflow:hidden / .ext-body scroll can't clip it off at the card edge. Self-manages
+     open state; one instance per row. — */
+function RowMenu({ items }: { items: { label: string; danger?: boolean; onClick: () => void }[] }): ReactElement {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const { menuRef, style } = useAnchoredMenu(open, btnRef, "right");
+  return (
+    <div className="ext-more-wrap">
+      <button ref={btnRef} className="icon-btn ext-more" onClick={() => setOpen((s) => !s)}>
+        <Icons.more size={16} />
+      </button>
+      {open
+        ? createPortal(
+            <>
+              <div className="menu-backdrop" onClick={() => setOpen(false)} />
+              <div ref={menuRef} className="row-menu right" style={style}>
+                {items.map((it, i) => (
+                  <div
+                    key={i}
+                    className={"rm-item" + (it.danger ? " danger" : "")}
+                    onClick={() => { it.onClick(); setOpen(false); }}
+                  >
+                    {it.label}
+                  </div>
+                ))}
+              </div>
+            </>,
+            document.body,
+          )
+        : null}
+    </div>
   );
 }
 
@@ -70,7 +107,6 @@ function MCPTab({ onCount }: { onCount: (n: number) => void }): ReactElement {
   const [servers, setServers] = useState<McpServerDto[]>([]);
   const [plugins, setPlugins] = useState<PluginDto[]>([]);
   const [dialog, setDialog] = useState<{ editing: McpServerDto | null } | null>(null);
-  const [menu, setMenu] = useState<string | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
 
   const reload = (): void => {
@@ -89,12 +125,10 @@ function MCPTab({ onCount }: { onCount: (n: number) => void }): ReactElement {
       .then(reload);
   };
   const onTest = (id: string): void => {
-    setMenu(null);
     setTesting(id);
     void window.api.mcp.test(id).then(() => { setTesting(null); reload(); });
   };
   const onRemove = (id: string): void => {
-    setMenu(null);
     void window.api.mcp.remove(id).then(reload);
   };
 
@@ -129,21 +163,13 @@ function MCPTab({ onCount }: { onCount: (n: number) => void }): ReactElement {
                   <Toggle on={m.enabled} onClick={() => onToggle(m)} disabled={owned} />
                 </div>
                 {owned ? null : (
-                  <div className="ext-more-wrap">
-                    <button className="icon-btn ext-more" onClick={() => setMenu(menu === m.id ? null : m.id)}>
-                      <Icons.more size={16} />
-                    </button>
-                    {menu === m.id ? (
-                      <>
-                        <div className="menu-backdrop" onClick={() => setMenu(null)} />
-                        <div className="row-menu right">
-                          <div className="rm-item" onClick={() => { setDialog({ editing: m }); setMenu(null); }}>Edit</div>
-                          <div className="rm-item" onClick={() => onTest(m.id)}>Test connection</div>
-                          <div className="rm-item danger" onClick={() => onRemove(m.id)}>Remove</div>
-                        </div>
-                      </>
-                    ) : null}
-                  </div>
+                  <RowMenu
+                    items={[
+                      { label: "Edit", onClick: () => setDialog({ editing: m }) },
+                      { label: "Test connection", onClick: () => onTest(m.id) },
+                      { label: "Remove", danger: true, onClick: () => onRemove(m.id) },
+                    ]}
+                  />
                 )}
               </div>
             );
@@ -162,7 +188,6 @@ function SkillsTab({ onCount }: { onCount: (n: number) => void }): ReactElement 
   const [skills, setSkills] = useState<SkillDto[]>([]);
   const [plugins, setPlugins] = useState<PluginDto[]>([]);
   const [dialog, setDialog] = useState<{ editing: SkillDto | null } | null>(null);
-  const [menu, setMenu] = useState<string | null>(null);
 
   const reload = (): void => {
     void window.api.skills.list().then((s) => { setSkills(s); onCount(s.length); });
@@ -175,7 +200,6 @@ function SkillsTab({ onCount }: { onCount: (n: number) => void }): ReactElement 
     void window.api.skills.update(s.id, { source: s.source, enabled: !s.enabled }).then(reload);
   };
   const onRemove = (id: string): void => {
-    setMenu(null);
     void window.api.skills.remove(id).then(reload);
   };
 
@@ -204,20 +228,12 @@ function SkillsTab({ onCount }: { onCount: (n: number) => void }): ReactElement 
                   <Toggle on={s.enabled} onClick={() => onToggle(s)} disabled={owned} />
                 </div>
                 {owned ? null : (
-                  <div className="ext-more-wrap">
-                    <button className="icon-btn ext-more" onClick={() => setMenu(menu === s.id ? null : s.id)}>
-                      <Icons.more size={16} />
-                    </button>
-                    {menu === s.id ? (
-                      <>
-                        <div className="menu-backdrop" onClick={() => setMenu(null)} />
-                        <div className="row-menu right">
-                          <div className="rm-item" onClick={() => { setDialog({ editing: s }); setMenu(null); }}>Edit</div>
-                          <div className="rm-item danger" onClick={() => onRemove(s.id)}>Remove</div>
-                        </div>
-                      </>
-                    ) : null}
-                  </div>
+                  <RowMenu
+                    items={[
+                      { label: "Edit", onClick: () => setDialog({ editing: s }) },
+                      { label: "Remove", danger: true, onClick: () => onRemove(s.id) },
+                    ]}
+                  />
                 )}
               </div>
             );
@@ -236,13 +252,12 @@ const BUNDLE_ICON: Record<PluginBundle['type'], string> = { skill: "zap", mcp: "
 function PluginsTab({ onCount }: { onCount: (n: number) => void }): ReactElement {
   const [plugins, setPlugins] = useState<PluginDto[]>([]);
   const [dialog, setDialog] = useState(false);
-  const [menu, setMenu] = useState<string | null>(null);
 
   const reload = (): void => void window.api.plugins.list().then((p) => { setPlugins(p); onCount(p.length); });
   useEffect(() => { reload(); }, []);
 
   const onToggle = (p: PluginDto): void => void window.api.plugins.toggle(p.id, !p.enabled).then(reload);
-  const onUninstall = (id: string): void => { setMenu(null); void window.api.plugins.uninstall(id).then(reload); };
+  const onUninstall = (id: string): void => { void window.api.plugins.uninstall(id).then(reload); };
 
   return (
     <div className="ext-tab">
@@ -275,19 +290,7 @@ function PluginsTab({ onCount }: { onCount: (n: number) => void }): ReactElement
                 <span className="ext-summary">{bundleSummary(p.bundles)}</span>
                 <Toggle on={p.enabled} onClick={() => onToggle(p)} />
               </div>
-              <div className="ext-more-wrap">
-                <button className="icon-btn ext-more" onClick={() => setMenu(menu === p.id ? null : p.id)}>
-                  <Icons.more size={16} />
-                </button>
-                {menu === p.id ? (
-                  <>
-                    <div className="menu-backdrop" onClick={() => setMenu(null)} />
-                    <div className="row-menu right">
-                      <div className="rm-item danger" onClick={() => onUninstall(p.id)}>Uninstall</div>
-                    </div>
-                  </>
-                ) : null}
-              </div>
+              <RowMenu items={[{ label: "Uninstall", danger: true, onClick: () => onUninstall(p.id) }]} />
             </div>
           ))
         )}

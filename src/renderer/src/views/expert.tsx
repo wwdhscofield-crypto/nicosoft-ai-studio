@@ -2,13 +2,15 @@
    NicoSoft AI Studio — Expert detail page
    Profile · model binding · memory (3 layers) · equipped · recents
    ============================================================ */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
+import { createPortal } from 'react-dom'
 import { STUDIO_DATA } from '@/data/studio-data'
 import { useMemory } from '@/stores/memory'
 import { useChat } from '@/stores/chat'
 import { useCustomRoles } from '@/stores/custom-roles'
 import { useAllExperts } from '@/lib/all-experts'
+import { useAnchoredMenu } from '@/lib/use-anchored-menu'
 import type { Expert, MemoryItem } from '@/types'
 import type { MemoryDto } from '@/lib/api'
 import { Icons } from '@/components/icons'
@@ -110,6 +112,8 @@ function EquippedSection({ expertId }: { expertId: string }): ReactElement {
   ];
   const [equipped, setEquipped] = useState<EquippedItem[]>(initial);
   const [menu, setMenu] = useState(false);
+  const equipBtnRef = useRef<HTMLButtonElement>(null);
+  const { menuRef: equipMenuRef, style: equipMenuStyle } = useAnchoredMenu(menu, equipBtnRef, "right");
 
   const all: EquippedItem[] = [
     ...EXTENSIONS.mcp.map((m) => ({ type: "mcp" as const, name: m.name })),
@@ -124,20 +128,23 @@ function EquippedSection({ expertId }: { expertId: string }): ReactElement {
       <div className="ds-head">
         <span className="ds-title">Equipped capabilities</span>
         <div className="ds-add">
-          <button className="btn ghost sm" onClick={() => setMenu((s) => !s)}><Icons.plus size={14} /> Equip</button>
-          {menu && (
-            <>
-              <div className="menu-backdrop" onClick={() => setMenu(false)} />
-              <div className="row-menu right">
-                {available.length === 0 ? <div className="rm-empty">Everything is equipped</div>
-                  : available.map((a) => (
-                    <div className="rm-item" key={a.type + a.name} onClick={() => add(a)}>
-                      <Icons.plus size={13} /> <span className="rm-type">{a.type === "mcp" ? "MCP" : "Skill"}</span> {a.name}
-                    </div>
-                  ))}
-              </div>
-            </>
-          )}
+          <button ref={equipBtnRef} className="btn ghost sm" onClick={() => setMenu((s) => !s)}><Icons.plus size={14} /> Equip</button>
+          {menu
+            ? createPortal(
+                <>
+                  <div className="menu-backdrop" onClick={() => setMenu(false)} />
+                  <div ref={equipMenuRef} className="row-menu right" style={equipMenuStyle}>
+                    {available.length === 0 ? <div className="rm-empty">Everything is equipped</div>
+                      : available.map((a) => (
+                        <div className="rm-item" key={a.type + a.name} onClick={() => add(a)}>
+                          <Icons.plus size={13} /> <span className="rm-type">{a.type === "mcp" ? "MCP" : "Skill"}</span> {a.name}
+                        </div>
+                      ))}
+                  </div>
+                </>,
+                document.body,
+              )
+            : null}
         </div>
       </div>
       {equipped.length === 0 ? (

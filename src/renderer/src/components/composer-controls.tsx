@@ -2,9 +2,11 @@
 // thinking-depth picker. Both menus open UPWARD (the composer sits at the bottom of the pane). Used by
 // the regular conversation composer and the Engineer agent composer so every role's footer is consistent.
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { ReactElement } from 'react'
+import { createPortal } from 'react-dom'
 import { Icons } from '@/components/icons'
+import { useAnchoredMenu } from '@/lib/use-anchored-menu'
 import type { Family } from '@/types'
 import { getThinkingCapability, supportedDepths, THINKING_OPTIONS, type ThinkingDepth } from '@/lib/thinking'
 import { imageModelLabel } from '@/lib/image-models'
@@ -179,28 +181,35 @@ export function ImageModelPicker({
   disabled?: boolean
 }): ReactElement {
   const [open, setOpen] = useState(false)
+  // Used both in the composer footer AND in the Extensions › Tools card, whose .ext-list/.ext-body
+  // overflow would clip an absolutely-positioned menu — so portal it to <body> with fixed positioning.
+  const triggerRef = useRef<HTMLDivElement>(null)
+  const { menuRef, style } = useAnchoredMenu(open, triggerRef, 'up')
   return (
-    <div className="cmp-model" onClick={() => !disabled && setOpen((s) => !s)}>
+    <div ref={triggerRef} className="cmp-model" onClick={() => !disabled && setOpen((s) => !s)}>
       <Icons.image size={13} />
       <span className="cmp-model-id">{imageModelLabel(value)}</span>
       <Icons.chevronDown size={12} />
-      {open && (
-        <>
-          <div className="menu-backdrop" onClick={(e) => { e.stopPropagation(); setOpen(false) }} />
-          <div className="row-menu up" onClick={(e) => e.stopPropagation()}>
-            {models.map((m) => (
-              <div
-                key={m}
-                className={'rm-item' + (m === value ? ' active' : '')}
-                onClick={() => { onChange(m); setOpen(false) }}
-              >
-                <span>{imageModelLabel(m)}</span>
-                {m === value ? <Icons.check size={13} /> : null}
+      {open
+        ? createPortal(
+            <>
+              <div className="menu-backdrop" onClick={(e) => { e.stopPropagation(); setOpen(false) }} />
+              <div ref={menuRef} className="row-menu up" style={style} onClick={(e) => e.stopPropagation()}>
+                {models.map((m) => (
+                  <div
+                    key={m}
+                    className={'rm-item' + (m === value ? ' active' : '')}
+                    onClick={() => { onChange(m); setOpen(false) }}
+                  >
+                    <span>{imageModelLabel(m)}</span>
+                    {m === value ? <Icons.check size={13} /> : null}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </>
-      )}
+            </>,
+            document.body
+          )
+        : null}
     </div>
   )
 }
