@@ -498,11 +498,17 @@ export async function runCollabSession(
   const registry = new ServiceRegistry()
   const inTokensByRole = new Map<string, number>() // accumulated prompt tokens per expert → its per-message ↑ readout
   const roster = experts.map((x) => ({ id: x.roleId, name: displayName(x.roleId) ?? x.roleId }))
+  const lspByExpert: LSPManager[] = [] // one per dev expert; tree-killed in the finally
   const specs: ExpertSpec[] = experts.map((x) => {
     // Per-expert state shared across its turns: the read-file cache + todo list persist as it loops, so it
     // doesn't forget what it read between being woken.
     const readFileState: AgentContext['readFileState'] = new Map()
     const todos: AgentContext['todos'] = []
+    const toolNames = new Map<string, string>() // tool_use id → name, to pair tool:post with its tool (audit)
+    // Per-expert language server (dev roles) — Shuri's TS frontend benefits most; persists across this
+    // expert's turns, lazily spawns on the first lsp query, disposed when the collaboration ends.
+    const lsp = DEV_ROLES.has(x.roleId) ? new LSPManager(x.cwd) : undefined
+    if (lsp) lspByExpert.push(lsp)
     const tools = [
       ...toolsForAgentRole(x.roleId),
       sendMessageTool,
@@ -511,7 +517,8 @@ export async function runCollabSession(
       startServiceTool,
       stopServiceTool,
       serviceLogsTool,
-      listServicesTool
+      listServicesTool,
+      ...(DEV_ROLES.has(x.roleId) ? [lspTool as unknown as Tool] : [])
     ]
     const serverTools: ServerToolSchema[] = x.protocol === 'openai' ? [{ type: 'web_search', name: 'web_search' }] : []
     const system = buildCollabSystem(
@@ -535,7 +542,8 @@ export async function runCollabSession(
           todos,
           sessionDir,
           collab,
-          services: registry
+          services: registry,
+          lsp
         }
         const gen = runAgent({
           protocol: x.protocol,
@@ -558,7 +566,23 @@ export async function runCollabSession(
             result = value
             break
           }
-          if (value.type === 'assistant') turnIn += promptTokensFromUsage(value.usage) // incl. cache read/creation
+          // Emit the same tool:pre/post audit trail as runAgentLoop, so a collaboration's tool usage is
+          // observable too (previously a gap — collab experts don't go through runAgentLoop).
+          if (value.type === 'assistant') {
+            turnIn += promptTokensFromUsage(value.usage) // incl. cache read/creation
+            for (const b of value.message.content) {
+              if (isContentBlock(b) && b.type === 'tool_use') {
+                toolNames.set(b.id, b.name)
+                agentEvents.emit({ type: 'tool:pre', convId, roleId: x.roleId, tool: b.name, ts: Date.now() })
+              }
+            }
+          } else if (value.type === 'tool_results') {
+            for (const b of value.message.content) {
+              if (isContentBlock(b) && b.type === 'tool_result') {
+                agentEvents.emit({ type: 'tool:post', convId, roleId: x.roleId, tool: toolNames.get(b.tool_use_id) ?? 'unknown', isError: b.is_error ?? false, ts: Date.now() })
+              }
+            }
+          }
           hooks.onExpertEvent(x.roleId, value)
         }
         inTokensByRole.set(x.roleId, (inTokensByRole.get(x.roleId) ?? 0) + turnIn)
@@ -580,6 +604,7 @@ export async function runCollabSession(
   } finally {
     hooks.onServices?.([])
     registry.dispose() // tree-kill every service the collaboration started — no lingering ports
+    for (const lsp of lspByExpert) lsp.dispose() // tree-kill each expert's language server
   }
 }
 
