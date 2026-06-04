@@ -86,7 +86,9 @@
   white-space: nowrap;
   min-width: 0;
 }
-.server-bubble.sb-link { text-decoration: none; cursor: pointer; }
+/* a block-level status row, not an inline text link — drop the .seg-body a underline-border (it spans the
+   full width and reads as a spurious divider above the Sources row). Hover still underlines the query text. */
+.server-bubble.sb-link { text-decoration: none; cursor: pointer; border-bottom: none; }
 .server-bubble.sb-link:hover .sb-query { color: var(--text-2); text-decoration: underline; }
 .server-bubble.sb-link:hover svg { color: var(--text-3); }
 
