@@ -25,7 +25,9 @@ import { askUserQuestionTool } from '../agent/tools/ask-user-question'
 import { sendMessageTool, assignTaskTool, waitTool } from '../agent/tools/consult'
 import { CollabSession, type ExpertSpec, type CollabEvent } from '../agent/collab'
 import { ServiceRegistry, type ServiceInfo } from '../agent/service-registry'
+import { AsyncSubAgentPool } from '../agent/sub-agent-pool'
 import { startServiceTool, stopServiceTool, serviceLogsTool, listServicesTool } from '../agent/tools/service'
+import { agentSpawnTool, agentSendTool, agentWaitTool, agentCloseTool, agentBatchTool } from '../agent/tools/async-subagent'
 import type { Tool } from '../agent/tool'
 import type { AgentRunInput, ToolCallDto, RunTranscript } from '../ipc/contracts'
 import * as keychain from '../keychain/keychain'
@@ -69,6 +71,10 @@ const PLAN_TOOLS = [enterPlanModeTool, exitPlanModeTool] as unknown as Tool[]
 // so they run dev servers via start_service — detached + readiness-probed + tree-killed — instead of a
 // blocking `Bash ... &` that wedges the loop and leaks the process.
 const SERVICE_TOOLS = [startServiceTool, stopServiceTool, serviceLogsTool, listServicesTool] as unknown as Tool[]
+// Async sub-agent tools (batch 3) — only on top-level dev-role runs, which reach ctx.subAgents (set by
+// runAgentLoop). Sub-agents and collab experts don't get them: their ctx.subAgents is undefined (the loop
+// also strips agent_* from the child tool set), so a child can't spawn children (depth 1).
+const SUBAGENT_TOOLS = [agentSpawnTool, agentSendTool, agentWaitTool, agentCloseTool, agentBatchTool] as unknown as Tool[]
 
 function toolsForAgentRole(roleId: string): Tool[] {
   const core =
@@ -111,7 +117,7 @@ export async function run(
   // Tools scoped to this agent role: a CORE subset (doc 16 §5) + MCP + Skill, by roleId + scope.
   const roleId = input.roleId ?? ENGINEER_ROLE_ID
   let tools = toolsForAgentRole(roleId)
-  if (DEV_ROLES.has(roleId)) tools = [...tools, ...SERVICE_TOOLS]
+  if (DEV_ROLES.has(roleId)) tools = [...tools, ...SERVICE_TOOLS, ...SUBAGENT_TOOLS]
   // Read needs a folder boundary; without a cwd, drop it for non-dev roles so the model can't read the
   // process working dir. Dev roles (Flynn/Shuri) always have a cwd (required in the composer).
   if (!input.cwd && !DEV_ROLES.has(roleId)) tools = tools.filter((t) => t.name !== 'Read')
@@ -263,6 +269,9 @@ export async function runAgentLoop(
   // Per-run service registry: dev roles start dev servers through it (start_service); everything it
   // launched is tree-killed when the run ends (finally) — no leftover dev servers piling up across runs.
   const registry = new ServiceRegistry()
+  // Per-run async sub-agent pool (batch 3): runAgent injects the child runner into it; tree-killed in the
+  // same finally as the registry so no background child outlives the run.
+  const subAgents = new AsyncSubAgentPool(signal)
   const ctx: AgentContext = {
     cwd: loop.cwd,
     signal,
@@ -273,6 +282,7 @@ export async function runAgentLoop(
     todos: [],
     sessionDir,
     services: registry,
+    subAgents,
   }
 
   const gen = runAgent({
@@ -326,6 +336,7 @@ export async function runAgentLoop(
   } finally {
     transcript.end()
     registry.dispose() // tree-kill any dev servers this run started — no zombies, no resource pile-up
+    subAgents.disposeAll() // tree-kill any background sub-agents — none outlive the parent run
   }
 
   return {
@@ -371,7 +382,7 @@ export async function runDispatchedAgent(
   signal: AbortSignal,
 ): Promise<{ text: string; inTokens: number; outTokens: number }> {
   let tools = toolsForAgentRole(d.roleId)
-  if (DEV_ROLES.has(d.roleId)) tools = [...tools, ...SERVICE_TOOLS]
+  if (DEV_ROLES.has(d.roleId)) tools = [...tools, ...SERVICE_TOOLS, ...SUBAGENT_TOOLS]
   if (!d.cwd && !DEV_ROLES.has(d.roleId)) tools = tools.filter((t) => t.name !== 'Read')
   const serverTools: ServerToolSchema[] = d.protocol === 'openai' ? [{ type: 'web_search', name: 'web_search' }] : []
   const system = buildAgentSystem(d.roleId, d.memories, d.summary, skillManager.listingForRole(d.roleId), d.cwd)

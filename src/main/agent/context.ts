@@ -50,6 +50,18 @@ export interface TodoItem {
 // recursion is bounded to one level.
 export type SpawnSubAgent = (input: { description: string; prompt: string }) => Promise<string>
 
+// Async sub-agent pool (batch 3 / doc 25). Where Task is synchronous (spawn → run → summary, blocking the
+// parent's turn), this lets the parent spawn PERSISTENT children that keep running in the background:
+// agent_spawn → handle id, agent_send messages it mid-flight, agent_wait pulls its next reply, agent_close
+// ends it. Set by runAgent; undefined inside a sub-agent (depth 1) and in collab experts → those tools no-op.
+export interface SubAgentPool {
+  spawn(prompt: string): string
+  send(id: string, msg: string): string
+  wait(id: string): Promise<string>
+  close(id: string): string
+  list(): { id: string; status: string }[]
+}
+
 export interface AgentContext {
   cwd: string // confined project root; every tool path must resolve under this
   signal: AbortSignal // cancellation — threaded into bash spawns and sub-agents
@@ -76,6 +88,9 @@ export interface AgentContext {
   // a backend, Shuri connects). The start_service / stop_service / service_logs / list_services tools reach
   // it here. Undefined outside a collaboration → those tools no-op with a message.
   services?: ServiceHandle
+  // Async sub-agent pool (batch 3): agent_spawn / agent_send / agent_wait / agent_close reach it here. Set
+  // by runAgent on the top-level run; undefined inside a sub-agent so children can't spawn (depth 1).
+  subAgents?: SubAgentPool
 }
 
 // What a tool needs to make its own LLM call (a content-extraction summary, a delegated search).

@@ -15,6 +15,7 @@ import {
   tokensFromUsage,
 } from './compact'
 import type { AgentContext, PermissionMode, SpawnSubAgent } from './context'
+import { AsyncSubAgentPool, type RunChild } from './sub-agent-pool'
 import { StreamingToolExecutor } from './execution'
 import { callWithTools, type AgentLlmEvent } from './llm'
 import type { Tool } from './tool'
@@ -184,6 +185,37 @@ export async function* runAgent(
       }
       return last
     }
+
+  // Async sub-agent pool (batch 3): on the top-level run, give the pool (created by runAgentLoop) a
+  // runChild that runs one of a child's turns with the sub-agent tool set — no Task, no nested agent_*
+  // (depth 1) — threading the child's persisted readFileState/todos. Sub-agents get subAgents: undefined.
+  if (ctx.subAgents instanceof AsyncSubAgentPool) {
+    const asyncChildTools = tools.filter((t) => t.name !== 'Task' && !t.name.startsWith('agent_'))
+    const runChild: RunChild = async (childMessages, signal, readFileState, todos) => {
+      const sub = runAgent({
+        protocol: params.protocol,
+        baseUrl,
+        apiKey,
+        model,
+        system: SUBAGENT_SYSTEM,
+        messages: childMessages,
+        tools: asyncChildTools,
+        ctx: { ...ctx, signal, readFileState, todos, spawnSubAgent: undefined, subAgents: undefined },
+        maxTokens,
+        maxTurns: Math.min(maxTurns, SUBAGENT_MAX_TURNS),
+      })
+      let result: AgentResult | undefined
+      for (;;) {
+        const step = await sub.next()
+        if (step.done) {
+          result = step.value
+          break
+        }
+      }
+      return result.messages
+    }
+    ctx.subAgents.setRunChild(runChild)
+  }
 
   while (true) {
     // Layer 2: microcompact every turn (clear old tool-result content, keep the recent 5) — cheap,
