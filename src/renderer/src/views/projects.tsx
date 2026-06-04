@@ -289,6 +289,12 @@ function ProjectTests({ tests }: { tests: TestDto[] }): ReactElement {
 }
 
 type ConsultDto = ProjectDto['consults'][number]
+type PendingDto = Awaited<ReturnType<typeof window.api.approval.list>>[number]
+
+// The Bash command (or tool name) a deferred red-zone action would run — shown in the approval bar.
+function pendingCommand(p: PendingDto): string {
+  return (p.toolInput as { command?: string })?.command ?? p.toolName
+}
 
 // SVG overlay: a curved arrow per consult edge (from→to expert), anchored to live lane geometry. The
 // arrows sit inside .wb-lanes but are absolutely positioned + pointer-events:none; lane gutters are
@@ -356,6 +362,33 @@ function ProjectDetail({
 }): ReactElement {
   const doers = project.experts.filter((id) => id !== 'coordinator')
   const [lanesEl, setLanesEl] = useState<HTMLDivElement | null>(null)
+  const [pending, setPending] = useState<PendingDto[]>([])
+
+  // phase 5c-C: red-zone actions an expert deferred (doc 19 §8) for this project. Pending records are bound
+  // to the conversation, so find the project's conversation then list its pending. Reloads on a new red-zone
+  // record (coordinator:approval push) so the bar appears live.
+  useEffect(() => {
+    let live = true
+    const load = async (): Promise<void> => {
+      const convs = await window.api.conversations.list()
+      const conv = convs.find((c) => c.projectId === project.id)
+      const ps = conv ? await window.api.approval.list(conv.id) : []
+      if (live) setPending(ps)
+    }
+    void load()
+    const off = window.api.coordinator.onApproval(() => void load())
+    return () => {
+      live = false
+      off()
+    }
+  }, [project.id])
+
+  const resolve = async (id: string, ok: boolean): Promise<void> => {
+    if (ok) await window.api.approval.approve(id)
+    else await window.api.approval.reject(id)
+    setPending((ps) => ps.filter((p) => p.id !== id))
+  }
+
   return (
     <div className="main-col wb-col">
       <div className="conv-header">
@@ -379,6 +412,25 @@ function ProjectDetail({
             <AvatarStack ids={project.experts} size={22} />
           </span>
         </div>
+
+        {pending.length > 0 && (
+          <div className="wb-approval">
+            <Icons.alert size={15} />
+            <span className="wb-approval-text">
+              <strong>
+                {pending.length} approval{pending.length > 1 ? 's' : ''} needed
+              </strong>{' '}
+              — {STUDIO_DATA.EXPERT_BY_ID[pending[0].roleId]?.name ?? pending[0].roleId} wants to run a destructive command{' '}
+              <code>{pendingCommand(pending[0])}</code>.
+            </span>
+            <button className="btn ghost sm" onClick={() => void resolve(pending[0].id, false)}>
+              Reject
+            </button>
+            <button className="wb-approval-btn" onClick={() => void resolve(pending[0].id, true)}>
+              Approve
+            </button>
+          </div>
+        )}
 
         <div className="wb-orch">
           <div className="wb-orch-head">
