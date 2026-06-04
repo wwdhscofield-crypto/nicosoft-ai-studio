@@ -107,7 +107,7 @@ function ChatSegment({
   const windowed = foldable && !expanded
   useEffect(() => {
     if (windowed && bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
-  }, [msg.text, windowed])
+  }, [msg.text, msg.tools?.length, msg.servers?.length, msg.streaming, windowed])
   return (
     <div className={'segment' + (isUser ? ' user' : '')} style={{ '--seg-color': segColor } as CSSProperties}>
       <div className="seg-head">

@@ -70,7 +70,7 @@
 }
 .seg-head .fold-toggle:hover { color: var(--text-2); border-color: var(--text-4); }
 .seg-body.fold-window {
-  max-height: 160px; overflow-y: auto; padding-right: 10px;
+  max-height: 160px; overflow-y: auto; padding-right: 10px; padding-bottom: 22px;
   mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent);
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent);
 }
