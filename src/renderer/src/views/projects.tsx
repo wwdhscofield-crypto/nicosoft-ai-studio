@@ -7,7 +7,7 @@
    (services / approvals / consult arrows / Danny dock) wire up in
    phase 5c.
    ============================================================ */
-import { Fragment, useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useState } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
 import { Icons } from '@/components/icons'
 import { Avatar, AvatarStack } from '@/components/primitives'
@@ -227,7 +227,7 @@ function ProjectLane({
   const e = STUDIO_DATA.EXPERT_BY_ID[roleId]
   const status = isChair ? 'watching' : laneStatus(tasks)
   return (
-    <div className={'wb-lane ' + status} style={{ '--lane-color': e?.color ?? 'var(--exp-coordinator)' } as CSSProperties}>
+    <div className={'wb-lane ' + status} data-role={roleId} style={{ '--lane-color': e?.color ?? 'var(--exp-coordinator)' } as CSSProperties}>
       <div className="wb-gutter" onClick={() => onOpenExpert(roleId)}>
         {e ? <Avatar expert={e} size={26} /> : <span className="wb-avatar-fallback">{roleId[0]?.toUpperCase()}</span>}
         <div className="wb-who">
@@ -288,6 +288,62 @@ function ProjectTests({ tests }: { tests: TestDto[] }): ReactElement {
   )
 }
 
+type ConsultDto = ProjectDto['consults'][number]
+
+// SVG overlay: a curved arrow per consult edge (from→to expert), anchored to live lane geometry. The
+// arrows sit inside .wb-lanes but are absolutely positioned + pointer-events:none; lane gutters are
+// measured from .wb-lanes itself (never the SVG) so the SVG's own box can't feed back into the
+// measurement (doc 19 §13 pitfall). Re-measures on any size change via ResizeObserver.
+function ConsultArrows({ consults, lanesEl }: { consults: ConsultDto[]; lanesEl: HTMLDivElement | null }): ReactElement | null {
+  const [edges, setEdges] = useState<{ x: number; y1: number; y2: number; label: string }[]>([])
+  useLayoutEffect(() => {
+    if (!lanesEl || consults.length === 0) {
+      setEdges([])
+      return
+    }
+    const measure = (): void => {
+      const box = lanesEl.getBoundingClientRect()
+      const center = new Map<string, { x: number; y: number }>()
+      lanesEl.querySelectorAll('.wb-lane[data-role]').forEach((el) => {
+        const rid = el.getAttribute('data-role')
+        const g = el.querySelector('.wb-gutter')
+        if (!rid || !g) return
+        const r = g.getBoundingClientRect()
+        center.set(rid, { x: r.right - box.left, y: r.top + r.height / 2 - box.top })
+      })
+      const next: { x: number; y1: number; y2: number; label: string }[] = []
+      for (const c of consults) {
+        const a = center.get(c.from)
+        const b = center.get(c.to)
+        if (!a || !b) continue
+        next.push({ x: a.x, y1: a.y, y2: b.y, label: c.text ?? '' })
+      }
+      setEdges(next)
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(lanesEl)
+    return () => ro.disconnect()
+  }, [consults, lanesEl])
+
+  if (edges.length === 0) return null
+  return (
+    <svg className="wb-consult" aria-hidden>
+      {edges.map((e, i) => (
+        <Fragment key={i}>
+          <path className="wb-consult-path" d={`M ${e.x} ${e.y1} C ${e.x + 30} ${e.y1}, ${e.x + 30} ${e.y2}, ${e.x} ${e.y2}`} />
+          <circle className="wb-consult-dot" cx={e.x} cy={e.y1} r={3} />
+          {e.label ? (
+            <text className="wb-consult-label" x={e.x + 36} y={(e.y1 + e.y2) / 2}>
+              {e.label.length > 22 ? e.label.slice(0, 20) + '…' : e.label}
+            </text>
+          ) : null}
+        </Fragment>
+      ))}
+    </svg>
+  )
+}
+
 /* — Project detail = live workbench (lanes + tests from the plan; live streams in phase 5c) — */
 function ProjectDetail({
   project,
@@ -299,6 +355,7 @@ function ProjectDetail({
   onOpenExpert: (id: string) => void
 }): ReactElement {
   const doers = project.experts.filter((id) => id !== 'coordinator')
+  const [lanesEl, setLanesEl] = useState<HTMLDivElement | null>(null)
   return (
     <div className="main-col wb-col">
       <div className="conv-header">
@@ -334,7 +391,7 @@ function ProjectDetail({
               <span className="wbl done">done</span>
             </span>
           </div>
-          <div className="wb-lanes">
+          <div className="wb-lanes" ref={setLanesEl}>
             <ProjectLane
               roleId="coordinator"
               tasks={project.plan}
@@ -352,6 +409,7 @@ function ProjectDetail({
                 onOpenExpert={onOpenExpert}
               />
             ))}
+            <ConsultArrows consults={project.consults} lanesEl={lanesEl} />
           </div>
         </div>
 

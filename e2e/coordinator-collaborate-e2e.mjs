@@ -112,7 +112,7 @@ const probe = await page.evaluate(async () => {
     convId: c.id,
     projectId: c.projectId,
     project: project
-      ? { title: project.title, phase: project.phase, progress: project.progress, experts: project.experts, plan: project.plan.map((t) => ({ who: t.assigneeRoleId, status: t.status })) }
+      ? { title: project.title, phase: project.phase, progress: project.progress, experts: project.experts, plan: project.plan.map((t) => ({ who: t.assigneeRoleId, status: t.status })), consults: project.consults }
       : null,
     onScreenError: document.querySelector('.inline-notice')?.textContent ?? null,
     assistants: msgs
@@ -163,6 +163,7 @@ assert.ok(probe.project.plan.every((t) => t.status === 'done'), 'every expert ta
 assert.equal(probe.project.phase, 'done', 'project phase advanced to done (all tasks complete)')
 assert.ok(probe.project.title && probe.project.title.length > 0 && probe.project.title.length <= 70, `project got a generated name, not blank (got "${probe.project.title}")`)
 assert.ok(projectUpdates > 0, `phase 5c-A: project:updated pushed during the run — live collab events drove the project (got ${projectUpdates})`)
+assert.ok(probe.project.consults.length > 0, `phase 5c-B: collab send/assign persisted as consult edges (got ${JSON.stringify(probe.project.consults)})`)
 const chain = probe.assistants.find((a) => Array.isArray(a.dispatch) && a.dispatch.length)?.dispatch
 assert.ok(chain && chain.includes('engineer') && chain.includes('shuri') && chain.includes('coordinator'), `dispatch chain spans both experts + coordinator (got ${JSON.stringify(chain)})`)
 // Collaboration experts run via runAgent (which writes no transcript file — their audit trail is the
@@ -181,6 +182,16 @@ const guess = readNum('frontend/guess.js')
 console.log('SECRET:', secret, '| GUESS:', guess)
 assert.ok(secret && guess && secret === guess, `Shuri's GUESS (${guess}) must equal Flynn's SECRET (${secret}) — proves consult delivered the number across the mailbox`)
 console.log("✓ GUESS === SECRET — consult delivered Flynn's number to Shuri (assign_task → wake → send_message → resume)")
+
+// phase 5c-B: open the project's ProjectDetail → consult arrows render from the persisted edges (DOM anchors).
+await page.evaluate((pid) => localStorage.setItem('nicosoft-studio-state-v1', JSON.stringify({ view: 'projects', activeProject: pid })), probe.projectId)
+await page.reload()
+await page.waitForTimeout(1500)
+const arrowPaths = await page.$$eval('.wb-consult-path', (els) => els.length)
+await page.screenshot({ path: '/tmp/coordinator-collaborate-detail.png', fullPage: true })
+console.log('consults:', JSON.stringify(probe.project.consults), '| arrow paths drawn:', arrowPaths)
+assert.ok(arrowPaths > 0, `phase 5c-B: ProjectDetail drew consult arrow(s) from the persisted edges (got ${arrowPaths})`)
+console.log('✓ phase 5c-B — consult edges persisted + ProjectDetail rendered consult arrows')
 
 await app.close()
 console.log('✓ coordinator collaborate e2e OK — concurrent multi-expert session ran to quiescence + synthesized')

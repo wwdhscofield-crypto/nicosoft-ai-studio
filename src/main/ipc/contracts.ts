@@ -557,6 +557,14 @@ export interface ProjectTestDto {
   title: string
   status: ProjectTestStatus
 }
+// A consult relationship surfaced from collab events (send/assign), deduped by from→to: which expert
+// reached out to which, the latest message, and how many times. Drives the ProjectDetail consult arrows.
+export interface ProjectConsultDto {
+  from: string
+  to: string
+  text: string | null
+  count: number
+}
 export interface ProjectDto {
   id: string
   title: string
@@ -567,6 +575,7 @@ export interface ProjectDto {
   experts: string[] // derived: distinct task assignees, coordinator first
   plan: ProjectTaskDto[]
   tests: ProjectTestDto[]
+  consults: ProjectConsultDto[] // derived from collab send/assign events, deduped by from→to
   createdAt: string
   updatedAt: string
 }

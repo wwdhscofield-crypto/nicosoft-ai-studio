@@ -202,3 +202,40 @@ export function listTests(projectId: string): ProjectTestRow[] {
 export function updateTestStatus(id: string, status: ProjectTestStatus): void {
   getDb().prepare('UPDATE project_tests SET status = ? WHERE id = ?').run(status, id)
 }
+
+// ---------- project_consults ----------
+export interface ProjectConsultRow {
+  id: string
+  projectId: string
+  fromRole: string
+  toRole: string
+  kind: string
+  text: string | null
+  createdAt: string
+}
+interface ConsultRaw {
+  id: string
+  project_id: string
+  from_role: string
+  to_role: string
+  kind: string
+  text: string | null
+  created_at: string
+}
+export function insertConsult(projectId: string, fromRole: string, toRole: string, kind: string, text: string | null): void {
+  getDb()
+    .prepare(`INSERT INTO project_consults (id, project_id, from_role, to_role, kind, text, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(ulid(), projectId, fromRole, toRole, kind, text, new Date().toISOString())
+}
+export function listConsults(projectId: string): ProjectConsultRow[] {
+  const rows = getDb().prepare('SELECT * FROM project_consults WHERE project_id = ? ORDER BY created_at ASC').all(projectId)
+  return (rows as unknown as ConsultRaw[]).map((r) => ({
+    id: r.id,
+    projectId: r.project_id,
+    fromRole: r.from_role,
+    toRole: r.to_role,
+    kind: r.kind,
+    text: r.text,
+    createdAt: r.created_at,
+  }))
+}

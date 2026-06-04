@@ -58,6 +58,12 @@ export function completeCollabTasks(project: CollabProject, completedRoles: stri
 // project:updated just for those (send/assign/wait/wake don't move tasks — they drive the consult arrows
 // in 5c-B). Idempotent: completeCollabTasks still does the final sweep + phase advance.
 export function applyCollabEvent(project: CollabProject, e: CollabEvent): boolean {
+  // consult relationships (5c-B): an expert sending/assigning to a peer → persist the from→to edge so the
+  // ProjectDetail draws an arrow. roleId is the sender, e.to the recipient.
+  if ((e.kind === 'send' || e.kind === 'assign') && e.to) {
+    projectService.addConsult(project.projectId, e.roleId, e.to, e.kind, e.text ?? null)
+    return true
+  }
   const taskId = project.taskByRole[e.roleId]
   if (!taskId) return false
   if (e.kind === 'turn') {
