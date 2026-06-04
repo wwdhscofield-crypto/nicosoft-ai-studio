@@ -25,10 +25,16 @@ const PROVIDER = 'openai'
 // are dropped — Responses function_call_output is text-only.
 function toolResultText(tr: ToolResultBlock): string {
   if (typeof tr.content === 'string') return tr.content
-  return tr.content
+  const text = tr.content
     .filter((b): b is TextBlock => b.type === 'text')
     .map((b) => b.text)
     .join('\n')
+  if (text) return text
+  // Image-only result (e.g. view_image): Responses function_call_output is text-only, so surface a note
+  // rather than an empty output — the model knows an image came back but this provider can't show it here.
+  return tr.content.some((b) => b.type === 'image')
+    ? '(an image was returned; this model cannot view it via a tool result)'
+    : ''
 }
 
 // AgentMessage[] (Anthropic content blocks) → Responses `input` items. Anthropic packs many blocks per

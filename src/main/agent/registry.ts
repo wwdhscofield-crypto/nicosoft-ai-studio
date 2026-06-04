@@ -13,12 +13,14 @@ import { multiEditTool } from './tools/multiedit'
 import { readTool } from './tools/read'
 import { taskTool } from './tools/task'
 import { todoTool } from './tools/todo'
+import { viewImageTool } from './tools/view-image'
 import { webFetchTool } from './tools/web-fetch'
 import { webSearchTool } from './tools/web-search'
 import { writeTool } from './tools/write'
 
 export const CORE_TOOLS: readonly Tool[] = [
   readTool,
+  viewImageTool,
   writeTool,
   editTool,
   multiEditTool,
