@@ -584,3 +584,10 @@ export interface ProjectTaskInput {
 export interface ProjectTestInput {
   title: string
 }
+
+// Pushed on project:updated — a live collab event changed the project's tasks/phase; the renderer
+// refetches so an open ProjectDetail updates in real time (phase 5c).
+export interface ProjectUpdatedEvent {
+  streamId: string
+  projectId: string
+}

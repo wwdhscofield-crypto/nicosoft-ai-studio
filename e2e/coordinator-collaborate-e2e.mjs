@@ -68,6 +68,13 @@ const prompt =
   'number using the consult tools. Shuri: you do NOT know the number and must NOT invent one. Ask Flynn for ' +
   'it (assign_task), wait for his reply, then write frontend/guess.js as `export const GUESS = <the exact ' +
   'number Flynn told you>`.'
+// phase 5c-A: count project:updated pushes during the run — proves live collab events drive the project.
+await page.evaluate(() => {
+  window.__projectUpdates = 0
+  window.api.project.onUpdated(() => {
+    window.__projectUpdates++
+  })
+})
 await page.fill('textarea.cmp-textarea', prompt)
 await page.waitForTimeout(300)
 await page.keyboard.press('Enter')
@@ -91,6 +98,7 @@ const scrolledToBottom = await page.evaluate(() => {
   const el = document.querySelector('.msg-list')
   return el ? el.scrollHeight - el.scrollTop - el.clientHeight < 220 : false
 })
+const projectUpdates = await page.evaluate(() => window.__projectUpdates || 0)
 
 // 5. Inspect DB messages + the per-expert transcripts on disk (collab writes to <convId>/<roleId>/).
 const probe = await page.evaluate(async () => {
@@ -139,7 +147,7 @@ const files = existsSync(CWD) ? readdirSync(CWD, { recursive: true }) : []
 console.log('finished:', finished, '| experts:', JSON.stringify(expertIds), '| consult:', JSON.stringify(consultTools))
 console.log('files:', JSON.stringify(files), '| onScreenError:', probe.onScreenError)
 console.log('page errors:', errors.length ? JSON.stringify(errors) : 'none')
-console.log('project:', JSON.stringify({ projectId: probe.projectId, ...probe.project }))
+console.log('project:', JSON.stringify({ projectId: probe.projectId, ...probe.project }), '| pushes:', projectUpdates)
 
 assert.equal(errors.length, 0, 'no JS errors:\n' + errors.join('\n'))
 assert.equal(probe.onScreenError, null, 'no on-screen error notice')
@@ -154,6 +162,7 @@ assert.deepEqual(taskRoles, ['engineer', 'shuri'], `project seeded a task per ex
 assert.ok(probe.project.plan.every((t) => t.status === 'done'), 'every expert task marked done after the run')
 assert.equal(probe.project.phase, 'done', 'project phase advanced to done (all tasks complete)')
 assert.ok(probe.project.title && probe.project.title.length > 0 && probe.project.title.length <= 70, `project got a generated name, not blank (got "${probe.project.title}")`)
+assert.ok(projectUpdates > 0, `phase 5c-A: project:updated pushed during the run — live collab events drove the project (got ${projectUpdates})`)
 const chain = probe.assistants.find((a) => Array.isArray(a.dispatch) && a.dispatch.length)?.dispatch
 assert.ok(chain && chain.includes('engineer') && chain.includes('shuri') && chain.includes('coordinator'), `dispatch chain spans both experts + coordinator (got ${JSON.stringify(chain)})`)
 // Collaboration experts run via runAgent (which writes no transcript file — their audit trail is the

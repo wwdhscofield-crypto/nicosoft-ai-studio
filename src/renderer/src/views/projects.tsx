@@ -407,6 +407,15 @@ export function ProjectsView({
     }
   }, [activeProject])
 
+  // phase 5c: a live collab event changed a project (tasks doing→done, phase) — refetch the list + an
+  // open detail so the workbench updates in real time.
+  useEffect(() => {
+    return window.api.project.onUpdated(({ projectId }) => {
+      void reload()
+      if (projectId === activeProject) void window.api.project.get(projectId).then((p) => setDetail(p))
+    })
+  }, [activeProject, reload])
+
   if (activeProject && detail) {
     return <ProjectDetail project={detail} onBack={() => onSelect(null)} onOpenExpert={onOpenExpert} />
   }

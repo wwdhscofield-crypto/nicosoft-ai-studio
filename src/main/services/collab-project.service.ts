@@ -1,6 +1,7 @@
 import * as projectService from './project.service'
 import * as convRepo from '../repos/conversation.repo'
 import type { ProjectTaskDto } from '../ipc/contracts'
+import type { CollabEvent } from '../agent/collab'
 
 // Bridges a coordinator COLLABORATE turn to a Project (doc 19 §1, phase 5b). A collaboration IS project
 // work, so one always backs it: created fresh from the prompt, or reused when the user opened the chat
@@ -49,6 +50,25 @@ export function completeCollabTasks(project: CollabProject, completedRoles: stri
   if (fresh && fresh.plan.length > 0 && fresh.plan.every((t) => t.status === 'done')) {
     projectService.setPhase(project.projectId, 'done')
   }
+}
+
+// Reflect a LIVE collab event on the project's tasks: an expert taking a turn → its task is doing, an
+// expert finishing → done. Called from runCollaboration's onEvent (phase 5c) so an open ProjectDetail
+// shows lanes change in real time. Returns true only when it actually moved a task, so the caller pushes
+// project:updated just for those (send/assign/wait/wake don't move tasks — they drive the consult arrows
+// in 5c-B). Idempotent: completeCollabTasks still does the final sweep + phase advance.
+export function applyCollabEvent(project: CollabProject, e: CollabEvent): boolean {
+  const taskId = project.taskByRole[e.roleId]
+  if (!taskId) return false
+  if (e.kind === 'turn') {
+    projectService.setTaskStatus(project.projectId, taskId, 'doing')
+    return true
+  }
+  if (e.kind === 'done') {
+    projectService.setTaskStatus(project.projectId, taskId, 'done')
+    return true
+  }
+  return false
 }
 
 // Existing-project path: map roles to the project's current tasks by assignee, seeding a task for any

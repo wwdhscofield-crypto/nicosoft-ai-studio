@@ -23,6 +23,7 @@ import type {
   CoordinatorToolResults,
   CoordinatorPermissionRequest,
   CoordinatorApprovalEvent,
+  ProjectUpdatedEvent,
   AgentBlockDto,
   AgentResultDto,
   AgentPermissionResponse
@@ -147,6 +148,11 @@ export function registerCoordinatorHandlers(): void {
           onApproval: (e) => {
             const ev: CoordinatorApprovalEvent = { streamId, ...e }
             send('coordinator:approval', ev)
+          },
+          // phase 5c: a live collab event changed the backing project — push so an open ProjectDetail refetches.
+          onProjectUpdated: (projectId) => {
+            const ev: ProjectUpdatedEvent = { streamId, projectId }
+            send('project:updated', ev)
           }
         },
         controller.signal

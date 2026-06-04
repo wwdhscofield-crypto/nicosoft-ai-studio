@@ -85,6 +85,9 @@ export interface CoordinatorCallbacks {
   // recorded, surface a pending card (pendingId) the user can approve later. green is silent (frequent
   // reads/writes — logging each would drown the chat).
   onApproval?: (e: { roleId: string; zone: 'yellow' | 'red'; toolName: string; reason: string; pendingId?: string }) => void
+  // phase 5c: a live collab event mutated the backing project's tasks — tells the renderer to refetch so
+  // an open ProjectDetail reflects lanes changing in real time.
+  onProjectUpdated?: (projectId: string) => void
 }
 
 const ROUTER_HISTORY_LIMIT = 4 // last N messages handed to the router for context
@@ -235,7 +238,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
     // reused when the chat was opened inside one), with a task per collaborating expert + the conversation
     // linked. Each expert that produces output marks its task done; the phase advances to done when all are.
     const project = await collabProject.ensureProjectForCollab(input.convId, input.prompt, decision.roles!, input.cwdByRole)
-    const outputs = await runCollaboration(input, decision.roles!, fullChain, cb, signal)
+    const outputs = await runCollaboration(input, decision.roles!, fullChain, cb, signal, project)
     if (signal.aborted) throw new LlmError('network', 'aborted mid-collaboration')
     if (outputs.length === 0) throw new LlmError('upstream', 'collaboration produced no output')
     collabProject.completeCollabTasks(project, outputs.map((o) => o.role))
@@ -681,6 +684,7 @@ async function runCollaboration(
   fullChain: string[],
   cb: CoordinatorCallbacks,
   signal: AbortSignal,
+  project?: collabProject.CollabProject,
 ): Promise<{ role: string; text: string }[]> {
   const experts: agentService.CollabExpertInput[] = []
   const models = new Map<string, string>()
@@ -709,7 +713,11 @@ async function runCollaboration(
   if (experts.length < 2) throw new LlmError('bad_request', 'collaboration needs at least 2 bound agent experts')
 
   const hooks: agentService.CollabHooks = {
-    onEvent: () => {}, // orchestration-tree stream → UI in phase 5; consult CALLS already show as tool cards
+    onEvent: (e) => {
+      // phase 5c: a collab event that moves task state (turn/done) refetches an open ProjectDetail so lanes
+      // change in real time. send/assign/wait/wake don't move tasks → no push (consult arrows in phase 5c-B).
+      if (project && collabProject.applyCollabEvent(project, e)) cb.onProjectUpdated?.(project.projectId)
+    },
     onExpertStream: (roleId, ev) => {
       if (ev.type === 'text') cb.onDelta(roleId, ev.delta)
       else if (ev.type === 'tool_use_start') cb.onToolStart?.(roleId, ev.id, ev.name)
