@@ -98,7 +98,11 @@ export default function App(): ReactElement {
 
   const selectExpert = (id: string): void => {
     setActiveExpert(id)
-    chat.newConversation()
+    // Returning to the expert that owns the active conversation (e.g. collab → Projects → back to Danny)?
+    // Keep it. Only start a fresh conversation when actually switching to a DIFFERENT expert — the old
+    // unconditional newConversation() reset activeConv=null and lost the running collaboration.
+    const cur = chat.conversations.find((c) => c.id === chat.activeConv)
+    if (cur?.primaryRoleId !== id) chat.newConversation()
     setView('app')
     setCmdk(false)
   }
