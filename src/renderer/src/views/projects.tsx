@@ -7,7 +7,7 @@
    (services / approvals / consult arrows / Danny dock) wire up in
    phase 5c.
    ============================================================ */
-import { Fragment, useCallback, useEffect, useLayoutEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
 import { Icons } from '@/components/icons'
 import { Avatar, AvatarStack } from '@/components/primitives'
@@ -208,10 +208,25 @@ function ProjectTaskCard({ task }: { task: TaskDto }): ReactElement {
   )
 }
 
-/* — One swimlane per expert: coordinator is a compact ribbon, doers show their task cards. — */
+/* — An inline consult chip on the source expert's lane (→ target · what they asked). Rendered in the
+     timeline track so it scrolls with the cards — replaces the old floating SVG label that overlapped the
+     cards (doc 19 §13). — */
+function ConsultChip({ consult }: { consult: ConsultDto }): ReactElement {
+  const to = STUDIO_DATA.EXPERT_BY_ID[consult.to]?.name ?? consult.to
+  return (
+    <div className="wb-consult-chip" title={`Consulted ${to}${consult.text ? ` — ${consult.text}` : ''}`}>
+      <Icons.link size={11} />
+      <span className="wb-consult-to">→ {to}</span>
+      {consult.text ? <span className="wb-consult-text">{consult.text}</span> : null}
+    </div>
+  )
+}
+
+/* — One swimlane per expert: coordinator is a compact ribbon, doers show their task cards + consults. — */
 function ProjectLane({
   roleId,
   tasks,
+  consults,
   isChair,
   planCount,
   phase,
@@ -219,12 +234,14 @@ function ProjectLane({
 }: {
   roleId: string
   tasks: TaskDto[]
+  consults?: ConsultDto[]
   isChair?: boolean
   planCount?: number
   phase?: string
   onOpenExpert: (id: string) => void
 }): ReactElement {
   const e = STUDIO_DATA.EXPERT_BY_ID[roleId]
+  const mine = (consults ?? []).filter((c) => c.from === roleId)
   const status = isChair ? 'watching' : laneStatus(tasks)
   return (
     <div className={'wb-lane ' + status} data-role={roleId} style={{ '--lane-color': e?.color ?? 'var(--exp-coordinator)' } as CSSProperties}>
@@ -246,10 +263,13 @@ function ProjectLane({
               </Fragment>
             ))}
           </div>
-        ) : tasks.length === 0 ? (
-          <span className="wb-lane-empty">no tasks yet</span>
+        ) : tasks.length === 0 && mine.length === 0 ? (
+          <span className="wb-lane-empty">no activity yet</span>
         ) : (
-          tasks.map((t) => <ProjectTaskCard key={t.id} task={t} />)
+          <>
+            {tasks.map((t) => <ProjectTaskCard key={t.id} task={t} />)}
+            {mine.map((c, i) => <ConsultChip key={'c' + i} consult={c} />)}
+          </>
         )}
       </div>
     </div>
@@ -296,60 +316,6 @@ function pendingCommand(p: PendingDto): string {
   return (p.toolInput as { command?: string })?.command ?? p.toolName
 }
 
-// SVG overlay: a curved arrow per consult edge (from→to expert), anchored to live lane geometry. The
-// arrows sit inside .wb-lanes but are absolutely positioned + pointer-events:none; lane gutters are
-// measured from .wb-lanes itself (never the SVG) so the SVG's own box can't feed back into the
-// measurement (doc 19 §13 pitfall). Re-measures on any size change via ResizeObserver.
-function ConsultArrows({ consults, lanesEl }: { consults: ConsultDto[]; lanesEl: HTMLDivElement | null }): ReactElement | null {
-  const [edges, setEdges] = useState<{ x: number; y1: number; y2: number; label: string }[]>([])
-  useLayoutEffect(() => {
-    if (!lanesEl || consults.length === 0) {
-      setEdges([])
-      return
-    }
-    const measure = (): void => {
-      const box = lanesEl.getBoundingClientRect()
-      const center = new Map<string, { x: number; y: number }>()
-      lanesEl.querySelectorAll('.wb-lane[data-role]').forEach((el) => {
-        const rid = el.getAttribute('data-role')
-        const g = el.querySelector('.wb-gutter')
-        if (!rid || !g) return
-        const r = g.getBoundingClientRect()
-        center.set(rid, { x: r.right - box.left, y: r.top + r.height / 2 - box.top })
-      })
-      const next: { x: number; y1: number; y2: number; label: string }[] = []
-      for (const c of consults) {
-        const a = center.get(c.from)
-        const b = center.get(c.to)
-        if (!a || !b) continue
-        next.push({ x: a.x, y1: a.y, y2: b.y, label: c.text ?? '' })
-      }
-      setEdges(next)
-    }
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(lanesEl)
-    return () => ro.disconnect()
-  }, [consults, lanesEl])
-
-  if (edges.length === 0) return null
-  return (
-    <svg className="wb-consult" aria-hidden>
-      {edges.map((e, i) => (
-        <Fragment key={i}>
-          <path className="wb-consult-path" d={`M ${e.x} ${e.y1} C ${e.x + 30} ${e.y1}, ${e.x + 30} ${e.y2}, ${e.x} ${e.y2}`} />
-          <circle className="wb-consult-dot" cx={e.x} cy={e.y1} r={3} />
-          {e.label ? (
-            <text className="wb-consult-label" x={e.x + 36} y={(e.y1 + e.y2) / 2}>
-              {e.label.length > 22 ? e.label.slice(0, 20) + '…' : e.label}
-            </text>
-          ) : null}
-        </Fragment>
-      ))}
-    </svg>
-  )
-}
-
 /* — Project detail = live workbench (lanes + tests from the plan; live streams in phase 5c) — */
 function ProjectDetail({
   project,
@@ -361,7 +327,6 @@ function ProjectDetail({
   onOpenExpert: (id: string) => void
 }): ReactElement {
   const doers = project.experts.filter((id) => id !== 'coordinator')
-  const [lanesEl, setLanesEl] = useState<HTMLDivElement | null>(null)
   const [pending, setPending] = useState<PendingDto[]>([])
   const [convId, setConvId] = useState<string | null>(null)
   const [dannyReply, setDannyReply] = useState('')
@@ -494,7 +459,7 @@ function ProjectDetail({
               <span className="wbl done">done</span>
             </span>
           </div>
-          <div className="wb-lanes" ref={setLanesEl}>
+          <div className="wb-lanes">
             <ProjectLane
               roleId="coordinator"
               tasks={project.plan}
@@ -508,11 +473,11 @@ function ProjectDetail({
                 key={rid}
                 roleId={rid}
                 tasks={project.plan.filter((t) => t.assigneeRoleId === rid)}
+                consults={project.consults}
                 phase={project.phase}
                 onOpenExpert={onOpenExpert}
               />
             ))}
-            <ConsultArrows consults={project.consults} lanesEl={lanesEl} />
           </div>
         </div>
 

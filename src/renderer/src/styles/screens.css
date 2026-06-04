@@ -1395,7 +1395,7 @@
 .wb-lanes { position: relative; flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px; }
 
 /* one swimlane */
-.wb-lane { display: flex; border-left: 2px solid var(--lane-color); background: var(--bg-2); border-radius: var(--r-md); overflow: hidden; }
+.wb-lane { display: flex; min-height: 66px; border-left: 2px solid var(--lane-color); background: var(--bg-2); border-radius: var(--r-md); overflow: hidden; }
 .wb-gutter { flex: 0 0 158px; display: flex; align-items: center; gap: 8px; padding: 10px 12px; cursor: pointer; border-right: 1px solid var(--border-1); }
 .wb-who { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .wb-name { font-size: 12.5px; font-weight: 600; color: var(--text-1); }
@@ -1428,10 +1428,11 @@
 .wb-live-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--success); }
 
 /* consult arrow overlay (mock fixed anchors) */
-.wb-consult { position: absolute; inset: 0; pointer-events: none; width: 100%; height: 100%; overflow: visible; }
-.wb-consult-path { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 3; opacity: 0.7; }
-.wb-consult-dot { fill: var(--accent); }
-.wb-consult-label { fill: var(--accent); font-size: 10px; font-family: var(--mono); }
+/* inline consult chip — lives in the source expert's timeline track (→ target · what they asked) */
+.wb-consult-chip { flex: 0 0 auto; align-self: center; display: inline-flex; align-items: center; gap: 6px; max-width: 240px; padding: 5px 9px; font-size: 11px; border-radius: 6px; color: var(--accent); background: color-mix(in oklab, var(--accent) 12%, transparent); border: 1px solid color-mix(in oklab, var(--accent) 40%, transparent); }
+.wb-consult-chip svg { flex: 0 0 auto; }
+.wb-consult-to { font-weight: 600; white-space: nowrap; }
+.wb-consult-text { color: color-mix(in oklab, var(--accent) 75%, var(--text-2)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* tests strip */
 .wb-tests { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border-1); }
