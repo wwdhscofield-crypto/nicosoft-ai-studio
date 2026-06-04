@@ -8,6 +8,7 @@ import { Icons } from '@/components/icons'
 import { AttachmentStrip } from '@/components/attachment-strip'
 import { ImageViewer, type ViewerImage } from '@/components/image-viewer'
 import { ModelPicker, ThinkingPicker, ImageModelPicker, ModePicker } from '@/components/composer-controls'
+import { CommandPalette, matchCommands, type SlashCommand } from '@/components/command-palette'
 import { EmptyState } from '@/components/empty-state'
 import { PathBar } from '@/components/path-bar'
 import { useWorkspace } from '@/stores/workspace'
@@ -222,6 +223,7 @@ function Composer({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
   const [attach, setAttach] = useState<ImageAttachment[]>([])
+  const [cmdIndex, setCmdIndex] = useState(0)
 
   // A Refine action (from the image viewer) bumps focusNonce → pull focus into the composer.
   useEffect(() => {
@@ -303,6 +305,23 @@ function Composer({
     })
   }
 
+  // Slash-command palette (optimization E): `/` at the start (no space yet) opens a quick-action menu.
+  const cmdQuery = value.startsWith('/') && !/\s/.test(value) ? value : ''
+  const cmdMatches = cmdQuery ? matchCommands(cmdQuery) : []
+  const cmdOpen = cmdMatches.length > 0
+  const runCommand = (cmd: SlashCommand): void => {
+    cmd.run({
+      newConversation: chat.newConversation,
+      compact: () => {
+        if (activeConv) void window.api.agent.compact(activeConv)
+      },
+      setPlanMode: (on) => setMode(expert.id, on ? 'plan' : 'default')
+    })
+    setValue('')
+    setCmdIndex(0)
+    setTimeout(grow, 0)
+  }
+
   return (
     <div className="input-dock">
       <div className="input-dock-inner">
@@ -338,6 +357,7 @@ function Composer({
             ) : null}
           </div>
           <AttachmentStrip items={attach} onRemove={(id) => setAttach((p) => p.filter((a) => a.id !== id))} />
+          {cmdOpen ? <CommandPalette matches={cmdMatches} index={cmdIndex} onPick={runCommand} /> : null}
           <textarea
             ref={taRef}
             className="cmp-textarea"
@@ -350,13 +370,37 @@ function Composer({
             }
             onChange={(e) => {
               setValue(e.target.value)
+              setCmdIndex(0)
               grow()
             }}
             onPaste={onPaste}
             onKeyDown={(e) => {
+              const native = e.nativeEvent as KeyboardEvent
+              // Command palette open: arrows navigate, Enter/Tab run the selected command, Esc closes.
+              if (cmdOpen) {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault()
+                  setCmdIndex((i) => Math.min(i + 1, cmdMatches.length - 1))
+                  return
+                }
+                if (e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  setCmdIndex((i) => Math.max(i - 1, 0))
+                  return
+                }
+                if ((e.key === 'Enter' || e.key === 'Tab') && !native.isComposing) {
+                  e.preventDefault()
+                  runCommand(cmdMatches[cmdIndex])
+                  return
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setValue('')
+                  return
+                }
+              }
               // Enter sends, Shift+Enter newlines; never submit mid-IME-composition (CJK candidate
               // selection) — nativeEvent.isComposing / keyCode 229 (older Firefox) flag it.
-              const native = e.nativeEvent as KeyboardEvent
               if (e.key === 'Enter' && !e.shiftKey && !native.isComposing && native.keyCode !== 229) {
                 e.preventDefault()
                 send()

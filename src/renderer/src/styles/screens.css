@@ -235,6 +235,17 @@
 .composer2.focused { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .composer2.disabled { opacity: 0.7; }
 
+/* slash-command palette (optimization E) — floats just above the composer */
+.cmd-palette {
+  position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); z-index: 30;
+  background: var(--bg-2); border: 1px solid var(--border-2); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-float); padding: 4px; max-height: 260px; overflow-y: auto;
+}
+.cmd-item { display: flex; align-items: baseline; gap: 10px; padding: 7px 11px; border-radius: 7px; cursor: pointer; }
+.cmd-item.active { background: var(--bg-3); }
+.cmd-name { color: var(--text-1); font-weight: 600; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 13px; }
+.cmd-desc { color: var(--text-3); font-size: 12px; }
+
 /* top toolbar */
 .cmp-toolbar { display: flex; align-items: center; gap: 10px; padding: 9px 11px 4px; }
 .cmp-model {
