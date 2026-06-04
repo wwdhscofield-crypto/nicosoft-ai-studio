@@ -59,6 +59,7 @@ const setup = await page.evaluate(async (cwd) => {
     if (!b?.endpointId || !b?.model) await window.api.roles.setBinding(r, { endpointId: anthropic.id, model: 'nicosoft/claude-opus-4-8' })
   }
   localStorage.setItem('nicosoft-studio-cwd-by-expert', JSON.stringify({ engineer: cwd, shuri: cwd }))
+  localStorage.setItem('nicosoft-studio-mode-by-expert', JSON.stringify({ engineer: 'bypass', shuri: 'bypass' })) // UI "Auto" = no approval dialog
   localStorage.setItem('nicosoft-studio-state-v1', JSON.stringify({ view: 'app', activeExpert: 'coordinator' }))
   return { ok: true }
 }, CWD)

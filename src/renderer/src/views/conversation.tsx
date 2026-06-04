@@ -475,17 +475,20 @@ export function ChatView({ expert, onOpenSettings }: { expert: Expert; onOpenSet
     return () => ro.disconnect()
   }, [activeConv])
 
-  // An approval surfacing should pin to the bottom too. The permission dialog is an OVERLAY, so the
-  // ResizeObserver above never fires for it (it adds no msg-list height) — without this the list stays
-  // put and the latest activity + the action being approved can sit off-screen.
+  // Re-pin to the bottom when an approval APPEARS and when it's RESOLVED. The dialog is an overlay (the
+  // ResizeObserver above won't fire for it). On resolve the agent resumes streaming, and the user has
+  // usually scrolled up to read the approval (so stickRef is false) — without re-pinning on BOTH edges
+  // the resumed output scrolls past unseen (the "after I approve it doesn't scroll" bug, which looked
+  // intermittent because it only bit when the user had scrolled). Keyed on the boolean so it fires on
+  // appear (→true) AND resolve (→false), not on every render.
+  const hasApproval = !!permission || !!(approvals && approvals.length)
   useEffect(() => {
-    if (!permission && !(approvals && approvals.length)) return
     const list = listRef.current
     if (list) {
       stickRef.current = true
       list.scrollTop = list.scrollHeight
     }
-  }, [permission, approvals])
+  }, [hasApproval])
 
   const openImage = (items: ViewerImage[], index: number): void => setViewer({ items, index })
   const downloadImage = (img: ViewerImage): void => void window.api.media.save(img.url, img.name)

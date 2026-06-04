@@ -25,7 +25,7 @@ const setup = await page.evaluate(async (cwd) => {
   for (const c of (await window.api.conversations.list()).filter((c) => c.primaryRoleId === 'engineer'))
     await window.api.conversations.remove(c.id)
   localStorage.setItem('nicosoft-studio-cwd-by-expert', JSON.stringify({ engineer: cwd }))
-  localStorage.setItem('nicosoft-studio-mode-by-expert', JSON.stringify({ engineer: 'default' })) // auto-approve, no dialog
+  localStorage.setItem('nicosoft-studio-mode-by-expert', JSON.stringify({ engineer: 'bypass' })) // 'bypass' = UI "Auto", no approval dialog
   localStorage.setItem('nicosoft-studio-state-v1', JSON.stringify({ view: 'app', activeExpert: 'engineer' }))
   return { ok: true }
 }, CWD)
