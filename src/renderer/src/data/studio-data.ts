@@ -26,7 +26,7 @@ const EXPERTS: Expert[] = [
   { id: 'translator', name: 'Louise', color: 'var(--exp-translator)', specialty: 'Translator — any language pair', personality: 'Precise, culturally aware', model: 'gemini-flash-latest', family: 'gemini' },
   { id: 'editor', name: 'Miranda', color: 'var(--exp-editor)', specialty: 'Editor — summarize & condense', personality: 'Structured, no padding', model: 'gemini-pro-latest', family: 'gemini' },
   { id: 'analyst', name: 'Turing', color: 'var(--exp-analyst)', specialty: 'Data analyst — stats & charts', personality: 'Rigorous, honest about uncertainty', model: 'nicosoft/gpt-5.5', family: 'openai' },
-  { id: 'scheduler', name: 'Joan', color: 'var(--exp-scheduler)', specialty: 'Email & scheduling', personality: 'Efficient, situationally appropriate', model: 'nicosoft/gpt-5-mini', family: 'openai' }
+  { id: 'scheduler', name: 'Joan', color: 'var(--exp-scheduler)', specialty: 'Email & scheduling', personality: 'Efficient, situationally appropriate', model: 'nicosoft/gpt-5.4-mini', family: 'openai' }
 ]
 
 const EXPERT_BY_ID: Record<string, Expert> = Object.fromEntries(EXPERTS.map((e) => [e.id, e]))
@@ -155,7 +155,7 @@ const STUDIO: StudioModule = {
         { label: 'claude-sonnet-4.6', v: 12.6, family: 'anthropic' },
         { label: 'claude-haiku-4', v: 9.2, family: 'anthropic' },
         { label: 'gemini-2.5-flash', v: 9.6, family: 'gemini' },
-        { label: 'gpt-5-mini', v: 7.7, family: 'openai' },
+        { label: 'gpt-5.4-mini', v: 7.7, family: 'openai' },
         { label: 'gpt-5', v: 6.3, family: 'openai' },
         { label: 'imagen-4', v: 2.9, family: 'gemini' }
       ],
@@ -201,7 +201,7 @@ const ENDPOINT_HEALTH: EndpointHealth[] = [
 // The real key lives in the OS keychain (Batch 2), never in source; this masked tail is display-only.
 const ENDPOINTS: EndpointRow[] = [
   { name: 'Anthropic', proto: 'anthropic', status: 'healthy', models: ['nicosoft/claude-sonnet-4-6', 'nicosoft/claude-haiku-4-5-20251001'], key: '••••••8lHs', baseURL: 'https://api.nicosoft.ai' },
-  { name: 'OpenAI', proto: 'openai', status: 'healthy', models: ['nicosoft/gpt-5.5', 'nicosoft/gpt-5-mini'], key: '••••••8lHs', baseURL: 'https://api.nicosoft.ai' },
+  { name: 'OpenAI', proto: 'openai', status: 'healthy', models: ['nicosoft/gpt-5.5', 'nicosoft/gpt-5.4-mini'], key: '••••••8lHs', baseURL: 'https://api.nicosoft.ai' },
   { name: 'Google Gemini', proto: 'gemini', status: 'healthy', models: ['gemini-2.5-flash', 'gemini-2.5-pro', 'imagen-4'], key: '••••••8lHs', baseURL: 'https://api.nicosoft.ai' }
 ]
 
@@ -213,7 +213,7 @@ const ROLE_BINDINGS: RoleBinding[] = [
   { id: 'translator', family: 'gemini', model: 'gemini-flash-latest' },
   { id: 'editor', family: 'gemini', model: 'gemini-pro-latest' },
   { id: 'analyst', family: 'openai', model: 'nicosoft/gpt-5.5' },
-  { id: 'scheduler', family: 'openai', model: 'nicosoft/gpt-5-mini' }
+  { id: 'scheduler', family: 'openai', model: 'nicosoft/gpt-5.4-mini' }
 ]
 
 const GREETINGS: Record<string, Greeting> = {
@@ -310,7 +310,7 @@ const CONVERSATIONS: Record<string, Conversation> = {
     expert: 'scheduler',
     segments: [
       { who: 'user', ts: 'Mon 11:30 AM', blocks: [{ type: 'para', html: 'Draft a warm but brief reply to Dana thanking her for the intro and proposing three times next week.' }] },
-      { who: 'scheduler', model: 'nicosoft/gpt-5-mini', ts: 'Mon 11:30 AM', blocks: [{ type: 'para', html: '<strong>Subject:</strong> Thanks for the intro — a few times next week' }, { type: 'para', html: "Hi Dana, thank you for connecting us — I really appreciate it. I'd love to find time next week. Would any of these work: <strong>Tue 2pm</strong>, <strong>Wed 10am</strong>, or <strong>Thu 4pm</strong> (all PT)? Happy to adjust to your calendar. Looking forward to it." }] }
+      { who: 'scheduler', model: 'nicosoft/gpt-5.4-mini', ts: 'Mon 11:30 AM', blocks: [{ type: 'para', html: '<strong>Subject:</strong> Thanks for the intro — a few times next week' }, { type: 'para', html: "Hi Dana, thank you for connecting us — I really appreciate it. I'd love to find time next week. Would any of these work: <strong>Tue 2pm</strong>, <strong>Wed 10am</strong>, or <strong>Thu 4pm</strong> (all PT)? Happy to adjust to your calendar. Looking forward to it." }] }
     ]
   },
   standup: {
