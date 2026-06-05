@@ -65,10 +65,6 @@ const SUBAGENT_SYSTEM =
   'You are a sub-agent spawned to complete a focused subtask. Use the tools to do it, then give a ' +
   'concise summary of what you found or did as your final message — that summary is all the parent sees.'
 
-// Sub-agents get a lower turn cap than the parent to bound the fan-out blast radius (a runaway child
-// can't burn the parent's full budget).
-const SUBAGENT_MAX_TURNS = 20
-
 // tool_search variant used when tools opt into deferral. Regex flavour (the model builds a Python
 // regex over tool names/descriptions); bm25 is the alternative.
 const TOOL_SEARCH_TYPE = 'tool_search_tool_regex_20251119'
@@ -129,7 +125,10 @@ export async function* runAgent(
     llm: params.ctx.llm ?? { baseUrl, apiKey, smallModel, searchModel },
     setPermissionMode: setPlanMode,
   }
-  const maxTurns = params.maxTurns ?? 50
+  // No fixed turn cap (aligned with claude-code / codex): the loop is bounded by autocompact + microcompact
+  // (token blow-up), the model ending its turn, and the abort/retry budgets — not a hardcoded count. A caller
+  // MAY still pass maxTurns to bound a run explicitly; sub-agents inherit it (usually undefined → unbounded).
+  const maxTurns = params.maxTurns
   const contextWindow = params.contextWindow ?? 200_000
   let messages: AgentMessage[] = [...params.messages] // let — compaction replaces it
   const toolSchemas = buildToolsParam(tools, model, params.serverTools)
@@ -167,7 +166,7 @@ export async function* runAgent(
         tools: subAgentTools,
         ctx: { ...ctx, signal, readFileState: new Map(), todos: [], spawnSubAgent: undefined },
         maxTokens,
-        maxTurns: Math.min(maxTurns, SUBAGENT_MAX_TURNS),
+        maxTurns,
       })
       let last = ''
       let result: AgentResult | undefined
@@ -207,7 +206,7 @@ export async function* runAgent(
         tools: asyncChildTools,
         ctx: { ...ctx, signal, readFileState, todos, spawnSubAgent: undefined, subAgents: undefined },
         maxTokens,
-        maxTurns: Math.min(maxTurns, SUBAGENT_MAX_TURNS),
+        maxTurns,
       })
       let result: AgentResult | undefined
       for (;;) {
@@ -324,6 +323,6 @@ export async function* runAgent(
 
     turns += 1
     if (ctx.signal.aborted) return { reason: 'aborted', messages, turns }
-    if (turns >= maxTurns) return { reason: 'max_turns', messages, turns }
+    if (maxTurns !== undefined && turns >= maxTurns) return { reason: 'max_turns', messages, turns }
   }
 }
