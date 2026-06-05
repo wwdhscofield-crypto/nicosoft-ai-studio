@@ -691,3 +691,10 @@ export interface CreateTaskInput {
   cwd?: string
   durable?: boolean
 }
+
+// Pushed on scheduled:fired — the engine just ran a task in the background. The Scheduled page reloads so its
+// Next/Last times reflect the run live (the page loads on mount and otherwise wouldn't see a background fire).
+export interface ScheduledFiredEvent {
+  taskId: string
+  convId: string
+}

@@ -76,7 +76,8 @@ import type {
   ProjectUpdatedEvent,
   ProjectServiceEvent,
   ScheduledTask,
-  CreateTaskInput
+  CreateTaskInput,
+  ScheduledFiredEvent
 } from '../main/ipc/contracts'
 
 // Typed bridge exposed to the renderer as `window.api`. Window controls (Batch 0) + Batch 1
@@ -219,7 +220,8 @@ const api = {
       ipcRenderer.invoke('scheduled:update', id, input),
     setEnabled: (id: string, enabled: boolean): Promise<boolean> =>
       ipcRenderer.invoke('scheduled:setEnabled', id, enabled),
-    remove: (id: string): Promise<boolean> => ipcRenderer.invoke('scheduled:delete', id)
+    remove: (id: string): Promise<boolean> => ipcRenderer.invoke('scheduled:delete', id),
+    onFired: (cb: (d: ScheduledFiredEvent) => void): (() => void) => agentListen('scheduled:fired', cb)
   },
 
   roles: {

@@ -413,6 +413,8 @@ export function ScheduledView(): ReactElement {
   }, [])
   useEffect(() => {
     void reload()
+    // Live-refresh when the engine fires a task in the background — Next/Last update without a re-open.
+    return window.api.scheduled.onFired(() => void reload())
   }, [reload])
 
   const toggle = async (t: TaskDto): Promise<void> => {

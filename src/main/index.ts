@@ -71,7 +71,11 @@ app.whenReady().then(() => {
   // Idle memory-extraction sweep: every minute, extract for conversations whose idle timer elapsed.
   setInterval(() => void runIdleSweep().catch(() => {}), 60_000)
   // Scheduled-task engine (doc 28): scan enabled tasks every second, fire due ones as cross-role step chains.
-  schedulerEngine.start()
+  // On each fire, notify the renderer so the Scheduled page refreshes its Next/Last times live.
+  schedulerEngine.start((info) => {
+    for (const w of BrowserWindow.getAllWindows())
+      w.webContents.send('scheduled:fired', { taskId: info.task.id, convId: info.convId })
+  })
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
