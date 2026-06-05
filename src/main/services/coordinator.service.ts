@@ -32,7 +32,7 @@ import { classifyApproval } from '../agent/approval'
 import * as pendingRepo from '../repos/pending-approval.repo'
 import type { AgentEvent } from '../agent/loop'
 import { isContentBlock } from '../agent/types'
-import type { PermissionRequest, PermissionDecision } from '../agent/context'
+import type { PermissionRequest, PermissionDecision, PermissionMode } from '../agent/context'
 import type { MemoryRow } from '../repos/memory.repo'
 import { countContext } from './token-count.service'
 import { pickSmallModel } from './model-select'
@@ -68,6 +68,10 @@ export interface CoordinatorRunInput {
   // as its loop cwd; unset → it runs cwd-less (Read dropped for non-dev roles; web/think still work — doc
   // 19 §14). Real project-scoped cwd lands in stage 5.
   cwdByRole?: Record<string, string>
+  // Per-role permission mode (the renderer's modeByExpert), mirroring cwdByRole. A dispatched / collab
+  // expert honors modeByRole[roleId] (bypass = full auto, skipping coordinator self-approval); unset →
+  // 'default'. Without this the coordinator path silently forced every dispatched expert to 'default'.
+  modeByRole?: Record<string, PermissionMode>
 }
 
 export interface CoordinatorCallbacks {
@@ -135,6 +139,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
       dispatch: null,
       includeHistory: true,
       cwd: input.cwdByRole?.[decision.role!],
+      permissionMode: input.modeByRole?.[decision.role!],
       cb,
       signal
     })
@@ -152,7 +157,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
     if (decision.intro) emitCoordinatorIntro(input.convId, decision.intro, cb)
     const settled = await Promise.all(
       decision.roles!.map((roleId) =>
-        runRoleStep({ convId: input.convId, roleId, prompt: buildPanelPrompt(input.prompt, roleId), dispatch: fullChain, includeHistory: false, cwd: input.cwdByRole?.[roleId], cb, signal })
+        runRoleStep({ convId: input.convId, roleId, prompt: buildPanelPrompt(input.prompt, roleId), dispatch: fullChain, includeHistory: false, cwd: input.cwdByRole?.[roleId], permissionMode: input.modeByRole?.[roleId], cb, signal })
           .then((out) => ({ role: roleId, ...out }))
           .catch(() => null)
       )
@@ -195,7 +200,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
         roles.map((roleId) => {
           const prompt = seen.has(roleId) ? buildCritiquePrompt(input.prompt, prev, roleId) : buildPanelPrompt(input.prompt, roleId)
           seen.add(roleId)
-          return runRoleStep({ convId: input.convId, roleId, prompt, dispatch: fullChain, includeHistory: false, cwd: input.cwdByRole?.[roleId], cb, signal })
+          return runRoleStep({ convId: input.convId, roleId, prompt, dispatch: fullChain, includeHistory: false, cwd: input.cwdByRole?.[roleId], permissionMode: input.modeByRole?.[roleId], cb, signal })
             .then((out) => ({ role: roleId, text: out.text }))
             .catch(() => null)
         })
@@ -285,6 +290,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
       dispatch: fullChain,
       includeHistory: i === 0,
       cwd: input.cwdByRole?.[roleId],
+      permissionMode: input.modeByRole?.[roleId],
       cb,
       signal
     })
@@ -476,6 +482,9 @@ interface RunStepOptions {
   signal: AbortSignal
   // Working dir for an agent-dispatched expert (cwdByRole[roleId]). Ignored by tool-less llmChat roles.
   cwd?: string
+  // The user's permission mode for this role (modeByRole[roleId]); threaded to runDispatchedAgent so a
+  // dispatched expert honors bypass. Unset → 'default'.
+  permissionMode?: PermissionMode
   // includeHistory=true → seed messages with prior conversation turns (after the latest summary's
   // covered_up_to boundary). Used for single-mode and the FIRST step of a pipeline so the dispatched
   // role can answer multi-turn requests with continuity. False for pipeline step 2+ and synthesis —
@@ -557,7 +566,8 @@ async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputT
         model: binding.model,
         includeHistory,
         memories,
-        summary: summaryContent
+        summary: summaryContent,
+        permissionMode: opts.permissionMode
       },
       agentCb,
       signal
@@ -710,7 +720,8 @@ async function runCollaboration(
       protocol,
       baseUrl: ep.baseUrl,
       apiKey,
-      model: binding.model
+      model: binding.model,
+      permissionMode: input.modeByRole?.[roleId]
     })
   }
   if (experts.length < 2) throw new LlmError('bad_request', 'collaboration needs at least 2 bound agent experts')

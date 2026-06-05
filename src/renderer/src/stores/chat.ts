@@ -759,7 +759,11 @@ export const useChat = create<ChatState>((set, get) => {
           })
           // cwdByRole = every expert's working dir (the workspace store's cwdByExpert). A dispatched agent
           // expert runs in cwdByRole[its roleId]; coordinator's own cwd is irrelevant (it never runs tools).
-          const { streamId } = await window.api.coordinator.run({ convId: cid, prompt: text, cwdByRole: useWorkspace.getState().cwdByExpert })
+          // cwdByRole + modeByRole = every expert's working dir + permission mode (workspace store). A
+          // dispatched / collab expert honors its own mode (bypass = full auto) instead of being forced to
+          // 'default' — previously omitted, so coordinator-routed work ignored the user's bypass selection.
+          const ws = useWorkspace.getState()
+          const { streamId } = await window.api.coordinator.run({ convId: cid, prompt: text, cwdByRole: ws.cwdByExpert, modeByRole: ws.modeByExpert })
           coordinatorMeta.set(streamId, { convId: cid, endpointId, model })
         } catch (e) {
           finishWithError(cid, e instanceof Error ? e.message : String(e))

@@ -376,6 +376,9 @@ export interface DispatchedAgentInput {
   model: string
   contextWindow?: number
   thinking?: AgentRunInput['thinking']
+  // The user's per-expert permission mode, threaded from the renderer so a coordinator-dispatched expert
+  // honors the same mode as a direct chat (bypass = full auto). Unset → 'default' (writes gated).
+  permissionMode?: AgentContext['permissionMode']
   // Mirrors runRoleStep: true for single / first-pipeline-step (replay history; the trailing user turn IS
   // the request) — false for pipeline step 2+ / panel (seed = the constructed `prompt`, not a user turn).
   includeHistory: boolean
@@ -422,7 +425,7 @@ export async function runDispatchedAgent(
       runId: ulid(),
       thinking: d.thinking,
       contextWindow: d.contextWindow,
-      permissionMode: 'default',
+      permissionMode: d.permissionMode ?? 'default',
     },
     cb,
     signal,
@@ -442,6 +445,9 @@ export interface CollabExpertInput {
   baseUrl: string
   apiKey: string
   model: string
+  // The user's permission mode for this expert (bypass = full auto, skipping coordinator self-approval).
+  // Unset → 'default' (coordinator's safety classifier gates each mutating tool).
+  permissionMode?: AgentContext['permissionMode']
   contextWindow?: number
 }
 
@@ -537,7 +543,7 @@ export async function runCollabSession(
           cwd: x.cwd,
           signal: sig,
           readFileState,
-          permissionMode: 'default',
+          permissionMode: x.permissionMode ?? 'default',
           requestPermission: (req, s) => hooks.requestPermission(x.roleId, req, s),
           todos,
           sessionDir,

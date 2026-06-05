@@ -203,6 +203,9 @@ export interface CoordinatorRunInputDto {
   // Per-role working dirs (the renderer's cwdByExpert). An agent-dispatched expert uses cwdByRole[roleId]
   // as its loop cwd; unset → it runs cwd-less (doc 19 §14 — real project cwd lands in stage 5).
   cwdByRole?: Record<string, string>
+  // Per-role permission mode (the renderer's modeByExpert), mirroring cwdByRole. A dispatched / collab
+  // expert honors modeByRole[roleId] (bypass = full auto); unset → 'default'.
+  modeByRole?: Record<string, AgentPermissionMode>
 }
 // Fired once per turn, after the route decision, before any text streams. `chain` lists the steps
 // the badge should render. Length 1 for single mode (no badge needed); for a pipeline = `[...experts,
