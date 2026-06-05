@@ -214,10 +214,10 @@ type LaneStatus = { state: string; label: string }
 type LaneEvent = { id: string; toolName: string; target: string | null; zone?: string; createdAt?: string }
 
 /* — one event card on a lane's timeline (READ / WRITE / BASH …); head(icon+tool) / target / foot(ts+tag) — */
-function EventCard({ ev, running }: { ev: LaneEvent; running?: boolean }): ReactElement {
+function EventCard({ ev, running, onClick }: { ev: LaneEvent; running?: boolean; onClick?: () => void }): ReactElement {
   const Ico = Icons[TOOL_ICON[ev.toolName] ?? 'file']
   return (
-    <div className={'wb-card' + (running ? ' running' : '')}>
+    <div className={'wb-card' + (running ? ' running' : '') + (onClick ? ' clickable' : '')} onClick={onClick}>
       <div className="wb-card-head">
         <span className="wb-card-ic"><Ico size={13} /></span>
         <span className="wb-tool">{ev.toolName}</span>
@@ -228,6 +228,26 @@ function EventCard({ ev, running }: { ev: LaneEvent; running?: boolean }): React
         {ev.createdAt ? <span className="wb-ts">{fmtClock(ev.createdAt)}</span> : null}
         {ev.zone === 'yellow' ? <span className="wb-tag auto"><Icons.shield size={9} /> auto-approved</span> : null}
         {ev.zone === 'red' ? <span className="wb-tag danger"><Icons.alert size={9} /> needs approval</span> : null}
+      </div>
+    </div>
+  )
+}
+
+// Detail popover for one orchestration event — the full target (long commands/paths aren't truncated here)
+// plus its tool + timestamp + zone. (We persist the call's target, not its full output, so that's what shows.)
+function EventDetailModal({ ev, onClose }: { ev: LaneEvent; onClose: () => void }): ReactElement {
+  const Ico = Icons[TOOL_ICON[ev.toolName] ?? 'file']
+  return (
+    <div className="overlay" onMouseDown={onClose}>
+      <div className="dialog ev-detail" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="dialog-head">
+          <span className="dh-title"><Ico size={15} /> {ev.toolName}</span>
+          {ev.createdAt ? <span className="ev-detail-ts">{fmtClock(ev.createdAt)}</span> : null}
+          <button className="icon-btn" onClick={onClose}><Icons.x size={16} /></button>
+        </div>
+        {ev.target ? <pre className="ev-detail-target">{ev.target}</pre> : <div className="ev-detail-empty">No target recorded for this step.</div>}
+        {ev.zone === 'yellow' ? <div className="ev-detail-zone auto"><Icons.shield size={11} /> auto-approved</div> : null}
+        {ev.zone === 'red' ? <div className="ev-detail-zone danger"><Icons.alert size={11} /> needed approval</div> : null}
       </div>
     </div>
   )
@@ -258,7 +278,8 @@ function Lane({
   status,
   events,
   consults,
-  onOpenExpert
+  onOpenExpert,
+  onSelectEvent
 }: {
   roleId: string
   conductor?: boolean
@@ -266,6 +287,7 @@ function Lane({
   events: LaneEvent[]
   consults: (ConsultDto & { __idx: number })[]
   onOpenExpert: (id: string) => void
+  onSelectEvent?: (ev: LaneEvent) => void
 }): ReactElement {
   const e = STUDIO_DATA.EXPERT_BY_ID[roleId]
   const lastRunning = !conductor && status.state === 'running' ? events.length - 1 : -1
@@ -292,7 +314,7 @@ function Lane({
             {events.map((ev, i) => (
               <Fragment key={ev.id}>
                 {i > 0 && <span className="wb-conn" />}
-                <EventCard ev={ev} running={i === lastRunning} />
+                <EventCard ev={ev} running={i === lastRunning} onClick={onSelectEvent ? () => onSelectEvent(ev) : undefined} />
               </Fragment>
             ))}
             {consults.map((c, i) => (
@@ -458,6 +480,7 @@ function ProjectDetail({
   const [dannyReply, setDannyReply] = useState('')
   const [dockExpanded, setDockExpanded] = useState(false)
   const [goalExpanded, setGoalExpanded] = useState(false)
+  const [eventDetail, setEventDetail] = useState<LaneEvent | null>(null)
   const [running, setRunning] = useState(false)
   const [draft, setDraft] = useState('')
   const [services, setServices] = useState<{ name: string; port: number | null; status: string }[]>([])
@@ -586,7 +609,7 @@ function ProjectDetail({
           <div className="wb-block-head">
             <span className="wb-bh-ic"><Icons.kanban size={14} /></span>
             Orchestration
-            <span className="wb-bh-sub">— live, parallel work across the team</span>
+            <span className="wb-bh-sub">{project.phase === 'done' ? '— wrapped up' : '— live, parallel work across the team'}</span>
             <span className="wb-bh-spacer" />
             <span className="wb-legend">
               <span><i style={{ background: 'var(--accent)' }} /> running</span>
@@ -600,10 +623,11 @@ function ProjectDetail({
                 <Lane
                   roleId="coordinator"
                   conductor
-                  status={{ state: 'watching', label: 'watching' }}
+                  status={project.phase === 'done' ? { state: 'done', label: 'done' } : { state: 'watching', label: 'watching' }}
                   events={conductorEvents}
                   consults={[]}
                   onOpenExpert={onOpenExpert}
+                  onSelectEvent={setEventDetail}
                 />
                 {doers.map((rid) => (
                   <Lane
@@ -613,6 +637,7 @@ function ProjectDetail({
                     events={eventsOf(rid)}
                     consults={consultsIdx.filter((c) => c.from === rid)}
                     onOpenExpert={onOpenExpert}
+                    onSelectEvent={setEventDetail}
                   />
                 ))}
               </div>
@@ -660,6 +685,7 @@ function ProjectDetail({
           </button>
         </div>
       </div>
+      {eventDetail && <EventDetailModal ev={eventDetail} onClose={() => setEventDetail(null)} />}
     </div>
   )
 }

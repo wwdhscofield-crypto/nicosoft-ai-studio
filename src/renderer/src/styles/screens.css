@@ -14,6 +14,11 @@
 .conv-header .conv-title { font-size: 16px; color: var(--text-1); font-weight: 500; letter-spacing: -0.015em; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .conv-header .conv-sub { font-size: 12px; color: var(--text-4); white-space: nowrap; }
 
+/* back-to-project breadcrumb (shown when an expert chat was opened from a project lane) */
+.chat-crumb-bar { flex: 0 0 auto; padding: 8px 14px 0; }
+.chat-crumb { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--text-3); background: none; border: none; cursor: pointer; padding: 4px 8px; border-radius: 6px; }
+.chat-crumb:hover { color: var(--text-1); background: var(--bg-2); }
+
 /* message list */
 .msg-list { flex: 1; overflow-y: auto; overflow-x: hidden; }
 .msg-inner { max-width: min(1200px, 90%); margin: 0 auto; padding: 24px 0 28px; }
@@ -1449,6 +1454,16 @@
 
 /* event card */
 .wb-card { flex: 0 0 auto; position: relative; z-index: 2; min-width: 132px; max-width: 210px; display: flex; flex-direction: column; gap: 5px; padding: 8px 10px 7px; border-radius: 8px; background: var(--bg-2); border: 1px solid var(--border-1); }
+.wb-card.clickable { cursor: pointer; transition: border-color .12s ease, background .12s ease; }
+.wb-card.clickable:hover { border-color: var(--lane, var(--accent)); background: var(--bg-1); }
+/* event-detail popover */
+.dialog.ev-detail { max-width: 560px; }
+.ev-detail-ts { margin-left: auto; font-size: 12px; color: var(--text-4); font-variant-numeric: tabular-nums; }
+.ev-detail-target { margin: 14px 16px; padding: 12px 14px; background: var(--bg-0, var(--bg-1)); border: 1px solid var(--border-1); border-radius: 8px; font-family: var(--font-mono, ui-monospace, monospace); font-size: 12.5px; line-height: 1.5; color: var(--text-2); white-space: pre-wrap; word-break: break-word; max-height: 50vh; overflow: auto; }
+.ev-detail-empty { margin: 14px 16px; color: var(--text-4); font-size: 13px; }
+.ev-detail-zone { margin: 0 16px 14px; display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
+.ev-detail-zone.auto { color: var(--success); }
+.ev-detail-zone.danger { color: var(--error); }
 .wb-card-head { display: flex; align-items: center; gap: 6px; }
 .wb-card-ic { color: var(--text-4); display: grid; place-items: center; flex: 0 0 auto; }
 .wb-tool { font-family: var(--mono); font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-3); font-weight: 500; }

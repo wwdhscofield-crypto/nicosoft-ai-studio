@@ -415,7 +415,7 @@ function Composer({
 }
 
 /* — The full conversation view for a non-Engineer role — */
-export function ChatView({ expert, onOpenSettings }: { expert: Expert; onOpenSettings?: () => void }): ReactElement {
+export function ChatView({ expert, onOpenSettings, onBackToProject }: { expert: Expert; onOpenSettings?: () => void; onBackToProject?: () => void }): ReactElement {
   const chat = useChat()
   const { byId: expertById } = useAllExperts()
   const activeConv = chat.activeConv
@@ -495,6 +495,13 @@ export function ChatView({ expert, onOpenSettings }: { expert: Expert; onOpenSet
 
   return (
     <div className="main-col">
+      {onBackToProject && (
+        <div className="chat-crumb-bar">
+          <button className="chat-crumb" onClick={onBackToProject}>
+            <Icons.chevronLeft size={14} /> Back to project
+          </button>
+        </div>
+      )}
       <div className="msg-list" ref={listRef} onScroll={onListScroll} onWheel={onListWheel}>
         <div className="msg-inner">
           {messages.length === 0 ? (

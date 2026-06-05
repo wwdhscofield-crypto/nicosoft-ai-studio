@@ -58,6 +58,7 @@ export default function App(): ReactElement {
   const [roleDialog, setRoleDialog] = useState<null | { initialRole?: { id: string; name: string; color: string | null; systemPrompt: string | null; greeting: string | null; tools: string[] } }>(null)
   const [drawerOpen, setDrawerOpen] = useState<boolean>(persisted.drawerOpen || false)
   const [activeProject, setActiveProject] = useState<string | null>(persisted.activeProject || null)
+  const [fromProject, setFromProject] = useState<string | null>(null) // project an expert chat was opened FROM (back-breadcrumb)
 
   useEffect(() => {
     saveState({ view, activeExpert, settingsTab, drawerOpen, activeProject })
@@ -96,7 +97,8 @@ export default function App(): ReactElement {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const selectExpert = (id: string): void => {
+  const selectExpert = (id: string, from: string | null = null): void => {
+    setFromProject(from) // set only when coming from a project lane; cleared otherwise
     setActiveExpert(id)
     // Returning to the expert that owns the active conversation (e.g. collab → Projects → back to Danny)?
     // Keep it. Only start a fresh conversation when actually switching to a DIFFERENT expert — the old
@@ -117,6 +119,7 @@ export default function App(): ReactElement {
     const conv = chat.conversations.find((c) => c.id === id)
     void chat.openConversation(id)
     if (conv?.primaryRoleId) setActiveExpert(conv.primaryRoleId)
+    setFromProject(null)
     setView('app')
     setCmdk(false)
   }
@@ -140,6 +143,7 @@ export default function App(): ReactElement {
   }
   const openProject = (id: string): void => {
     setActiveProject(id)
+    setFromProject(null)
     setView('projects')
     setCmdk(false)
   }
@@ -222,7 +226,7 @@ export default function App(): ReactElement {
             <ProjectsView
               activeProject={activeProject}
               onSelect={(id: string | null) => setActiveProject(id)}
-              onOpenExpert={openProfile}
+              onOpenExpert={(id: string) => selectExpert(id, activeProject)}
             />
           ) : view === 'scheduled' ? (
             <ScheduledView />
@@ -236,7 +240,7 @@ export default function App(): ReactElement {
               onDeleted={openStudio}
             />
           ) : (
-            <ChatView expert={expert} onOpenSettings={openEndpointsSettings} />
+            <ChatView expert={expert} onOpenSettings={openEndpointsSettings} onBackToProject={fromProject ? () => openProject(fromProject) : undefined} />
           )}
             {view === 'app' && drawerOpen && <WorkspaceDrawer onClose={() => setDrawerOpen(false)} />}
           </div>
