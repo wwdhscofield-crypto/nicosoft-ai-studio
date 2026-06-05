@@ -454,9 +454,17 @@ export function ChatView({ expert, onOpenSettings }: { expert: Expert; onOpenSet
   const [viewer, setViewer] = useState<{ items: ViewerImage[]; index: number } | null>(null)
   const [focusNonce, setFocusNonce] = useState(0)
 
+  // The user scrolling UP (onListWheel) is the ONLY thing that unsticks. onScroll then only RE-sticks when
+  // they return to the bottom — it must NEVER unstick: during fast streaming our own scroll-to-bottom fires
+  // onScroll a frame late, by which point the content grew again so the distance reads > threshold;
+  // recomputing "stuck" from that falsely concludes the user scrolled up and stops following (the symptom:
+  // streaming output stalling a few rows short of the bottom).
   const onListScroll = (): void => {
     const el = listRef.current
-    if (el) stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 80) stickRef.current = true
+  }
+  const onListWheel = (e: React.WheelEvent): void => {
+    if (e.deltaY < 0) stickRef.current = false // a deliberate upward scroll = "let me read back" → stop following
   }
 
   // Auto-scroll via a ResizeObserver on the inner content: ANY height growth (tool cards, deltas, approval
@@ -504,7 +512,7 @@ export function ChatView({ expert, onOpenSettings }: { expert: Expert; onOpenSet
 
   return (
     <div className="main-col">
-      <div className="msg-list" ref={listRef} onScroll={onListScroll}>
+      <div className="msg-list" ref={listRef} onScroll={onListScroll} onWheel={onListWheel}>
         <div className="msg-inner">
           {messages.length === 0 ? (
             <EmptyState expert={expert} onChip={setValue} />
