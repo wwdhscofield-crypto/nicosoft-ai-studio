@@ -6,6 +6,7 @@ import { registerMediaProtocol, MEDIA_PRIVILEGED_SCHEME } from './media/protocol
 import { runIdleSweep } from './services/memory.service'
 import { connectEnabled as connectMcpServers } from './services/mcp.service'
 import { loadEnabled as loadSkills } from './services/skill.service'
+import { schedulerEngine } from './agent/scheduler/engine'
 
 // Privileged schemes MUST be declared before app.whenReady. nsai-media:// serves local image files
 // (media/storage.ts) so attachments load by reference instead of base64-inlining into the DB/DOM.
@@ -69,6 +70,8 @@ app.whenReady().then(() => {
   createWindow()
   // Idle memory-extraction sweep: every minute, extract for conversations whose idle timer elapsed.
   setInterval(() => void runIdleSweep().catch(() => {}), 60_000)
+  // Scheduled-task engine (doc 28): scan enabled tasks every second, fire due ones as cross-role step chains.
+  schedulerEngine.start()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

@@ -1,7 +1,8 @@
-// schedule_create / schedule_list / schedule_delete (batch 1 / doc 28) — the role's interface to the
-// scheduled-task store (ported from ccb's CronCreate/List/Delete). Batch 1 is create/list/delete only; the
-// engine that actually fires tasks is batch 2. cwd defaults to the creating agent's cwd, which becomes the
-// task's pre-authorized working dir (full perms inside it when fired — doc 28 §5.1).
+// schedule_create / schedule_list / schedule_delete (doc 28) — the role's interface to the scheduled-task
+// store (ported from ccb's CronCreate/List/Delete). A task is a STEP CHAIN: an ordered list of steps, each an
+// agent run by its own role; the scheduler engine (engine.ts) fires due tasks and runs the steps in sequence,
+// piping each step's output into the next. cwd defaults to the creating agent's cwd, which becomes the task's
+// pre-authorized working dir (full perms inside it when fired — doc 28 §5.1).
 
 import { z } from 'zod'
 import { buildTool } from '../tool'
@@ -11,8 +12,9 @@ import { scheduledTaskStore, type ScheduledTask } from '../scheduler/store'
 function fmtTask(t: ScheduledTask): string {
   const when = new Date(t.nextRunAt).toLocaleString()
   const kind = t.recurring ? `recurring (${t.cron})` : 'one-shot'
-  const role = t.roleId ? ` · role=${t.roleId}` : ''
-  return `${t.id}  next=${when}  ${kind}${role}${t.durable ? ' · durable' : ''} — ${t.prompt.slice(0, 60)}`
+  const chain = t.steps.map((s) => s.roleId).join(' → ')
+  const flags = `${t.durable ? ' · durable' : ''}${t.enabled ? '' : ' · disabled'}`
+  return `${t.id}  "${t.name}"  next=${when}  ${kind}${flags}  [${chain}] — ${t.steps[0]?.prompt.slice(0, 50) ?? ''}`
 }
 
 function stringResult(out: string, toolUseId: string): ToolResultBlock {
@@ -22,17 +24,35 @@ function stringResult(out: string, toolUseId: string): ToolResultBlock {
 export const scheduleCreateTool = buildTool({
   name: 'schedule_create',
   inputSchema: z.strictObject({
+    name: z.string().describe('Short human label for the task, shown in the Scheduled page (e.g. "Weekly report")'),
     schedule: z
       .string()
       .describe(
         'When to run: an interval ("5m" / "2h" / "1d"), a one-shot datetime ("2026-06-05T15:00", local), or a 5-field cron ("0 9 * * 1-5", local time)'
       ),
-    prompt: z.string().describe('What to do when it fires — the instruction run as an agent turn'),
-    role: z.string().optional().describe('Executor role id (any role, e.g. "engineer"); defaults to the scheduler'),
+    steps: z
+      .array(
+        z.object({
+          role: z
+            .string()
+            .describe('Executor role id for this step (any role, e.g. "engineer", "analyst", "scheduler")'),
+          prompt: z
+            .string()
+            .describe(
+              "What this step does. Each step also receives the previous step's output, so later steps build on earlier ones."
+            ),
+        })
+      )
+      .min(1)
+      .describe(
+        'Ordered step chain. One step for a simple task; multiple steps hand work across roles (e.g. analyst computes the numbers → scheduler drafts the email). Each step runs as an agent turn and its reply feeds the next step.'
+      ),
     cwd: z
       .string()
       .optional()
-      .describe('Working dir the task is pre-authorized to act in (full permission inside it when fired); defaults to your current cwd'),
+      .describe(
+        'Working dir every step is pre-authorized to act in (full permission inside it when fired); defaults to your current cwd'
+      ),
     durable: z
       .boolean()
       .optional()
@@ -41,27 +61,31 @@ export const scheduleCreateTool = buildTool({
       ),
   }),
   prompt: () =>
-    'Create a scheduled task that fires later. "schedule" is an interval (5m/2h/1d), a one-shot datetime, ' +
-    'or a 5-field cron (local time). When it fires, "prompt" runs as an agent turn by "role" (default ' +
-    'scheduler) inside "cwd" (where it has full permission). Keep it session-only (durable:false) unless ' +
-    'the user wants it to survive restarts. Use for "remind me / run X every / at <time> do Y".',
+    'Create a scheduled task that fires later. "schedule" is an interval (5m/2h/1d), a one-shot datetime, or ' +
+    'a 5-field cron (local time). "steps" is an ordered chain: each step runs as an agent turn by its "role" ' +
+    'inside "cwd" (full permission there), and its output is piped into the next step — so one task can hand ' +
+    'work across roles. Keep it session-only (durable:false) unless the user wants it to survive restarts. ' +
+    'Email/send is NOT built in: a step that should email must go through an email MCP tool or leave a draft. ' +
+    'Use for "remind me / run X every / at <time> do Y".',
   isReadOnly: () => false,
   isConcurrencySafe: () => false,
   async call(input, ctx) {
     const task = scheduledTaskStore.create(
       {
+        name: input.name,
         schedule: input.schedule,
-        prompt: input.prompt,
-        roleId: input.role,
+        steps: input.steps.map((s) => ({ roleId: s.role, prompt: s.prompt })),
         cwd: input.cwd ?? ctx.cwd,
         durable: input.durable,
       },
       Date.now()
     )
+    const chain = task.steps.map((s) => s.roleId).join(' → ')
     return {
       data:
-        `Scheduled ${task.id} — next run ${new Date(task.nextRunAt).toLocaleString()} ` +
-        `(${task.recurring ? `recurring ${task.cron}` : 'one-shot'}${task.durable ? ', durable' : ', session-only'}).`,
+        `Scheduled "${task.name}" (${task.id}) — next run ${new Date(task.nextRunAt).toLocaleString()} ` +
+        `(${task.recurring ? `recurring ${task.cron}` : 'one-shot'}${task.durable ? ', durable' : ', session-only'}). ` +
+        `Steps: ${chain}.`,
     }
   },
   mapResult: stringResult,
@@ -70,7 +94,7 @@ export const scheduleCreateTool = buildTool({
 export const scheduleListTool = buildTool({
   name: 'schedule_list',
   inputSchema: z.strictObject({}),
-  prompt: () => 'List the scheduled tasks (id, next run time, recurring/one-shot, role, prompt).',
+  prompt: () => 'List the scheduled tasks (id, name, next run time, recurring/one-shot, step chain).',
   isReadOnly: () => true,
   isConcurrencySafe: () => true,
   async call() {

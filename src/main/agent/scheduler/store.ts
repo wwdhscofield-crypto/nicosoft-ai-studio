@@ -8,28 +8,35 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { parseSchedule } from './cron'
+import { parseSchedule, nextCronRun } from './cron'
+
+// One step in a task's chain — an agent run by roleId. Its output is injected into the next step's input, so
+// steps form a cross-role pipeline (Turing computes → Joan drafts → …). doc 28 §5.3.
+export interface TaskStep {
+  roleId: string // executor role for this step (any role)
+  prompt: string // what this step does; it also receives the previous step's output as context
+}
 
 export interface ScheduledTask {
-  id: string // 8-hex, like ccb
+  id: string // 8-hex
+  name: string // human label, e.g. "Weekly report" (shown in the Scheduled page)
   cron: string | null // recurring cron expr; null for a one-shot
-  prompt: string // injected when it fires
-  createdAt: number
-  lastFiredAt?: number
   nextRunAt: number // epoch ms — the only field the engine schedules on
   recurring: boolean
   permanent?: boolean // exempt from auto-expiry (ccb)
   durable: boolean // true → disk; false → session-only
-  roleId?: string // executor role (any role; defaults to scheduler at fire time)
-  convId?: string // target conversation to inject into
-  cwd?: string // pre-authorized working dir (full perms inside it when fired — doc 28 §5.1)
-  status: 'active' | 'paused' | 'done' | 'expired'
+  enabled: boolean // UI toggle; a disabled task is kept but never fired
+  steps: TaskStep[] // ordered chain; each step's output feeds the next (cross-role pipeline)
+  cwd?: string // pre-authorized working dir for every step (full perms inside it — §5.1)
+  convId?: string // target conversation to inject into (else a new one per fire)
+  createdAt: number
+  lastFiredAt?: number
 }
 
 export interface CreateTaskInput {
+  name: string
   schedule: string // interval (5m/2h/1d) | one-shot ISO | 5-field cron
-  prompt: string
-  roleId?: string
+  steps: TaskStep[] // at least one
   cwd?: string
   durable?: boolean
 }
@@ -65,17 +72,18 @@ export class ScheduledTaskStore {
           `(2026-06-05T15:00), or a 5-field cron (0 9 * * 1-5).`
       )
     }
+    if (!input.steps?.length) throw new Error('A scheduled task needs at least one step.')
     const task: ScheduledTask = {
       id: randomUUID().slice(0, 8),
+      name: input.name,
       cron: parsed.cron,
-      prompt: input.prompt,
-      createdAt: nowMs,
       nextRunAt: parsed.nextRunAt,
       recurring: parsed.recurring,
       durable: input.durable ?? false,
-      roleId: input.roleId,
+      enabled: true,
+      steps: input.steps,
       cwd: input.cwd,
-      status: 'active',
+      createdAt: nowMs,
     }
     if (task.durable) {
       const tasks = readDurable()
@@ -109,6 +117,48 @@ export class ScheduledTaskStore {
       return true
     }
     return false
+  }
+
+  // Active tasks due to be scheduled, sorted by nextRunAt. The engine reads this each tick.
+  loadActive(): ScheduledTask[] {
+    return this.list()
+      .filter((t) => t.enabled)
+      .sort((a, b) => a.nextRunAt - b.nextRunAt)
+  }
+
+  // Flip a task's enable toggle (Scheduled page switch). A disabled task stays in the store but loadActive
+  // skips it, so the engine never fires it. Returns false if the id isn't found.
+  setEnabled(id: string, enabled: boolean): boolean {
+    const apply = (tasks: ScheduledTask[], persist: () => void): boolean => {
+      const t = tasks.find((x) => x.id === id)
+      if (!t) return false
+      t.enabled = enabled
+      persist()
+      return true
+    }
+    const durable = readDurable()
+    if (apply(durable, () => writeDurable(durable))) return true
+    return apply(sessionTasks, () => {})
+  }
+
+  // Mark a task fired: bump lastFiredAt; recurring → recompute nextRunAt from its cron; one-shot (or a
+  // recurring task whose cron can no longer schedule) → remove. Updates whichever store (disk/session) holds
+  // it. The engine calls this right after dispatching.
+  markFired(id: string, nowMs: number): void {
+    const apply = (tasks: ScheduledTask[], persist: () => void): boolean => {
+      const i = tasks.findIndex((t) => t.id === id)
+      if (i < 0) return false
+      const t = tasks[i]
+      t.lastFiredAt = nowMs
+      const next = t.recurring && t.cron ? nextCronRun(t.cron, nowMs) : null
+      if (next) t.nextRunAt = next
+      else tasks.splice(i, 1) // one-shot done, or can't reschedule → drop
+      persist()
+      return true
+    }
+    const durable = readDurable()
+    if (apply(durable, () => writeDurable(durable))) return
+    apply(sessionTasks, () => {})
   }
 }
 

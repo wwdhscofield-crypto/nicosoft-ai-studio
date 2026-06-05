@@ -1,7 +1,8 @@
-// Batch 1 verify for the scheduler role (doc 28): Joan uses schedule_create / schedule_list to create + list
-// scheduled tasks, and a DURABLE one must land in ~/.nsai/scheduled_tasks.json with the right fields (cron,
-// recurring, nextRunAt in the future). Cleans up any E2E task afterwards so the user's real schedule is
-// untouched. (Batch 1 is CRUD only — nothing actually fires yet; that's batch 2.)
+// Batch 1 verify for the schedule_* TOOLS (doc 28): the scheduler role uses schedule_create / schedule_list
+// to create + list scheduled tasks, and a DURABLE one must land in ~/.nsai/scheduled_tasks.json with the
+// right fields (name, cron, recurring, steps[], nextRunAt in the future). Cleans up any E2E task afterwards so
+// the user's real schedule is untouched. (This is the tool surface; the engine that FIRES tasks is verified
+// separately by verify-scheduler-engine.mjs.)
 //   node e2e/verify-scheduler.mjs
 import { _electron } from 'playwright'
 import { join, dirname } from 'node:path'
@@ -12,7 +13,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 const PROJECT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const TASKS_FILE = join(homedir(), '.nsai', 'scheduled_tasks.json')
 const readTasks = () => { try { return JSON.parse(readFileSync(TASKS_FILE, 'utf8')).tasks ?? [] } catch { return [] } }
-const cleanup = () => { try { if (!existsSync(TASKS_FILE)) return; const t = readTasks().filter((x) => !/E2E/i.test(x.prompt || '')); writeFileSync(TASKS_FILE, JSON.stringify({ tasks: t }, null, 2)) } catch { /**/ } }
+const cleanup = () => { try { if (!existsSync(TASKS_FILE)) return; const t = readTasks().filter((x) => !/E2E/i.test(x.name || '')); writeFileSync(TASKS_FILE, JSON.stringify({ tasks: t }, null, 2)) } catch { /**/ } }
 cleanup() // start clean
 
 const events = []
@@ -40,8 +41,8 @@ await page.reload()
 await page.waitForTimeout(1500)
 const prompt = [
   'Use your schedule tools to do exactly this:',
-  '1. schedule_create a DURABLE recurring task — schedule: "0 9 * * 1-5", prompt: "E2E morning standup reminder", durable: true.',
-  '2. schedule_create a one-shot task — schedule: "2030-01-15T15:00", prompt: "E2E one-shot test".',
+  '1. schedule_create a DURABLE recurring task — name "E2E standup", schedule "0 9 * * 1-5", durable true, and a single step whose role is "scheduler" and prompt is "morning standup reminder".',
+  '2. schedule_create a one-shot task — name "E2E oneshot", schedule "2030-01-15T15:00", and a single step whose role is "scheduler" and prompt is "one-shot test".',
   '3. schedule_list to list all tasks.',
   'Report the two task ids you created.',
 ].join('\n')
@@ -63,12 +64,12 @@ const reply = await page.evaluate(async () => {
 await app.close()
 
 const tasks = readTasks()
-const durable = tasks.find((t) => /E2E morning standup/i.test(t.prompt || ''))
+const durable = tasks.find((t) => /E2E standup/i.test(t.name || ''))
 const used = (n) => events.some((e) => e.type === 'tool:pre' && e.tool === n)
-console.log('\n===== SCHEDULER BATCH 1 VERIFY =====')
+console.log('\n===== SCHEDULER TOOLS (BATCH 1) VERIFY =====')
 console.log('ended:', ended, '| model:', setup.model, '| thinking:', setup.thinkingDepth)
 console.log('used schedule_create:', used('schedule_create'), '| schedule_list:', used('schedule_list'))
-console.log('durable task in JSON:', durable ? JSON.stringify({ id: durable.id, cron: durable.cron, recurring: durable.recurring, durable: durable.durable, nextRunAt: durable.nextRunAt, future: durable.nextRunAt > Date.now() }) : '(none)')
+console.log('durable task in JSON:', durable ? JSON.stringify({ id: durable.id, name: durable.name, cron: durable.cron, recurring: durable.recurring, steps: durable.steps?.length, enabled: durable.enabled, future: durable.nextRunAt > Date.now() }) : '(none)')
 console.log('reply:', JSON.stringify((reply || '').slice(0, 160)))
 const fails = []
 if (!ended) fails.push('scheduler did not reach session:end')
@@ -78,8 +79,10 @@ if (!durable) fails.push('durable task did NOT land in ~/.nsai/scheduled_tasks.j
 else {
   if (durable.cron !== '0 9 * * 1-5') fails.push(`durable cron wrong: ${durable.cron}`)
   if (durable.recurring !== true) fails.push('durable task not marked recurring')
+  if (!durable.steps?.length) fails.push('durable task has no steps[]')
+  if (durable.enabled !== true) fails.push('durable task not enabled by default')
   if (!(durable.nextRunAt > Date.now())) fails.push('nextRunAt not in the future (cron parse failed)')
 }
 cleanup()
-console.log(fails.length ? '\n✗ FAIL:\n  - ' + fails.join('\n  - ') : '\n✓ PASS — schedule_create/list work; durable task persisted to JSON with correct cron + future nextRunAt')
+console.log(fails.length ? '\n✗ FAIL:\n  - ' + fails.join('\n  - ') : '\n✓ PASS — schedule_create/list work; durable task persisted with name + steps[] + correct cron + future nextRunAt')
 process.exit(fails.length ? 1 : 0)
