@@ -52,6 +52,10 @@ await openOverview()
 await page.screenshot({ path: join(SHOTS, 'empty.png') })
 const empty = await readInProgress()
 console.log('A/empty:', JSON.stringify(empty))
+// Collaboration project rows should show "N of M steps" (derived from the plan), like the prototype —
+// not the raw phase word. Captured here since projects render under the same Overview.
+const projStatuses = await page.evaluate(() => [...document.querySelectorAll('.tl-project .tl-status')].map((e) => e.textContent ?? ''))
+console.log('A/projects:', JSON.stringify(projStatuses.slice(0, 3)), `(${projStatuses.length} total)`)
 
 // ---- (B) populated (real LLM) ----
 const setup = await page.evaluate(async (cwd) => {
@@ -102,6 +106,9 @@ if (!empty.present) fails.push('(A) In progress section is HIDDEN when empty —
 if (empty.count !== '0') fails.push(`(A) empty count should be "0", got "${empty.count}"`)
 if (!empty.hasEmpty) fails.push('(A) no empty state rendered inside In progress')
 if (empty.liveRows !== 0) fails.push(`(A) empty state should have 0 live rows, got ${empty.liveRows}`)
+// if any collaboration projects exist, their status must be the "N of M steps" progress (or a phase word
+// only when a project has no plan yet) — never every row showing a bare phase
+if (projStatuses.length > 0 && !projStatuses.some((s) => /\d+ of \d+ steps/.test(s))) fails.push(`(A) project rows show no "N of M steps" progress — got ${JSON.stringify(projStatuses.slice(0, 3))}`)
 if (!populated.skipped) {
   if (!populated.present) fails.push('(B) In progress section missing during a live stream')
   if (populated.liveRows < 1) fails.push('(B) no live in-progress row appeared while a conversation was streaming')

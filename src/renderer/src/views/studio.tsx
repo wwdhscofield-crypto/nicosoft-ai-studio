@@ -59,6 +59,11 @@ function InProgressRow({ conv, now, onOpenConv }: { conv: ConversationDto; now: 
 
 /* — A real collaboration project — opens the Project detail — */
 function ProjectRow({ project, onOpenProject }: { project: ProjectDto; onOpenProject: (id: string) => void }): ReactElement {
+  // Prototype shows "2 of 4 steps". Derive from the plan's done tasks; fall back to the phase word
+  // for a project that has no plan yet (still planning).
+  const total = project.plan.length
+  const done = project.plan.filter((t) => t.status === 'done').length
+  const status = total > 0 ? `${done} of ${total} steps` : project.phase
   return (
     <div className="tl-project">
       <div className="tl-row project" onClick={() => onOpenProject(project.id)}>
@@ -78,7 +83,7 @@ function ProjectRow({ project, onOpenProject }: { project: ProjectDto; onOpenPro
           </div>
         </div>
         <div className="tl-meta">
-          <span className="tl-status">{project.phase}</span>
+          <span className="tl-status">{status}</span>
           <span className="tl-chevron"><Icons.chevronRight size={15} /></span>
         </div>
       </div>
