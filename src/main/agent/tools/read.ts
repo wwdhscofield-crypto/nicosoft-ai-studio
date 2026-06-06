@@ -2,6 +2,7 @@
 // Records content + mtime into readFileState so Edit/Write can detect a stale write later.
 
 import { readFile, stat } from 'node:fs/promises'
+import { PDFParse } from 'pdf-parse'
 import { z } from 'zod'
 import { confineReal } from '../confine'
 import { buildTool } from '../tool'
@@ -14,6 +15,7 @@ const inputSchema = z.object({
 })
 
 const MAX_BYTES = 256 * 1024
+const PDF_MAX_BYTES = 20 * 1024 * 1024 // PDFs are binary + larger than text; cap higher than the utf-8 cap
 
 export const readTool = buildTool<typeof inputSchema, string>({
   name: 'Read',
@@ -28,6 +30,18 @@ export const readTool = buildTool<typeof inputSchema, string>({
     const abs = await confineReal(ctx.cwd, input.file_path)
     const st = await stat(abs)
     if (!st.isFile()) throw new Error(`Not a regular file: ${input.file_path}`) // block device/FIFO hangs
+    // PDF: extract text via pdf-parse (the raw bytes aren't utf-8). No line-number framing or stale-write
+    // tracking — a PDF is read-only translation source, never edited in place by Write.
+    if (input.file_path.toLowerCase().endsWith('.pdf')) {
+      if (st.size > PDF_MAX_BYTES) throw new Error(`PDF is ${st.size} bytes; cap is ${PDF_MAX_BYTES}.`)
+      const parser = new PDFParse({ data: new Uint8Array(await readFile(abs)) })
+      try {
+        const { text } = await parser.getText()
+        return { data: text?.trim() || '(no extractable text in this PDF)' }
+      } finally {
+        await parser.destroy()
+      }
+    }
     if (st.size > MAX_BYTES && !input.limit) {
       throw new Error(`File is ${st.size} bytes; pass a limit to read a slice (cap ${MAX_BYTES}).`)
     }

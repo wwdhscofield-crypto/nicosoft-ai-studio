@@ -10,6 +10,7 @@ import type { PermissionDecision } from '../agent/context'
 import { isContentBlock } from '../agent/types'
 import * as coordinatorService from '../services/coordinator.service'
 import { LlmError } from '../llm/types'
+import { broadcastConvImage, broadcastUsage } from './usage-broadcast'
 import type {
   CoordinatorRunInputDto,
   CoordinatorDispatchEvent,
@@ -80,10 +81,12 @@ export function registerCoordinatorHandlers(): void {
             const ev: CoordinatorStepDelta = { streamId, roleId, text }
             send('coordinator:delta', ev)
           },
-          onStepDone: (roleId, text, inputTokens) => {
-            const ev: CoordinatorStepDone = { streamId, roleId, text, inputTokens }
+          onStepDone: (roleId, text, inputTokens, outputTokens) => {
+            const ev: CoordinatorStepDone = { streamId, roleId, text, inputTokens, outputTokens }
             send('coordinator:step:done', ev)
           },
+          onUsage: (inputTokens, outputTokens) => broadcastUsage(sender, input.convId, inputTokens, outputTokens),
+          onToolImage: (attachment) => broadcastConvImage(sender, input.convId, attachment),
           // Agent-dispatched experts run a tool-using loop — forward their tool activity + approvals,
           // tagged with roleId, to the coordinator UI (doc 19 §11 phase 2). Mirrors agent.handler's bridge.
           onToolStart: (roleId, id, name) => {
@@ -166,7 +169,7 @@ export function registerCoordinatorHandlers(): void {
         controller.signal
       )
       .then((r) => {
-        const ev: CoordinatorDoneDto = { streamId, inputTokens: r.inputTokens }
+        const ev: CoordinatorDoneDto = { streamId, inputTokens: r.inputTokens, outputTokens: r.outputTokens }
         send('coordinator:done', ev)
       })
       .catch((err: unknown) => {

@@ -18,7 +18,7 @@ import { resolveToDataUrl } from '../media/storage'
 // persisted, so it's simply the last message read back from the DB. Streams + records usage.
 export async function send(
   input: ChatSendInput,
-  onDelta: (text: string) => void,
+  cb: { onDelta: (text: string) => void; onUsage?: (inputTokens: number, outputTokens?: number) => void },
   signal?: AbortSignal
 ): Promise<ChatResult & { promptTokens: number }> {
   const ep = endpointRepo.getById(input.endpointId)
@@ -40,6 +40,8 @@ export async function send(
     thinkingBudget: input.thinking?.budgetTokens,
     smallModel: pickSmallModel(ep.protocol, ep.availableModels, input.model)
   })
+  // Live ↑ readout before the stream starts — the prompt size is known now (count_tokens above).
+  cb.onUsage?.(promptTokens)
 
   const result = await llmChat(
     {
@@ -51,7 +53,10 @@ export async function send(
       thinking: input.thinking,
       signal
     },
-    (d) => onDelta(d.text)
+    (d) => {
+      if (d.text) cb.onDelta(d.text)
+      if (d.usage) cb.onUsage?.(d.usage.inTokens, d.usage.outTokens)
+    }
   )
 
   usageRepo.record({

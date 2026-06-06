@@ -6,6 +6,7 @@ import type { Tool } from './tool'
 import { bashTool } from './tools/bash'
 import { codeExecutionTool } from './tools/code-execution'
 import { editTool } from './tools/edit'
+import { generateImageTool } from './tools/generate-image'
 import { globTool } from './tools/glob'
 import { grepTool } from './tools/grep'
 import { lsTool } from './tools/ls'
@@ -17,12 +18,14 @@ import { viewImageTool } from './tools/view-image'
 import { webFetchTool } from './tools/web-fetch'
 import { webSearchTool } from './tools/web-search'
 import { writeTool } from './tools/write'
+import { writePdfTool } from './tools/write-pdf'
 import { scheduleCreateTool, scheduleListTool, scheduleDeleteTool } from './tools/schedule'
 
 export const CORE_TOOLS: readonly Tool[] = [
   readTool,
   viewImageTool,
   writeTool,
+  writePdfTool,
   editTool,
   multiEditTool,
   lsTool,
@@ -30,6 +33,7 @@ export const CORE_TOOLS: readonly Tool[] = [
   grepTool,
   bashTool,
   codeExecutionTool,
+  generateImageTool,
   webFetchTool,
   webSearchTool,
   todoTool,

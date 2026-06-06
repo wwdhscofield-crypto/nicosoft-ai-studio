@@ -34,6 +34,7 @@ import type { AgentEvent } from '../agent/loop'
 import { isContentBlock } from '../agent/types'
 import type { PermissionRequest, PermissionDecision, PermissionMode } from '../agent/context'
 import type { MemoryRow } from '../repos/memory.repo'
+import type { MessageAttachmentDto } from '../ipc/contracts'
 import { countContext } from './token-count.service'
 import { pickSmallModel } from './model-select'
 import { LlmError, type ChatAttachment, type ChatMessage } from '../llm/types'
@@ -78,12 +79,16 @@ export interface CoordinatorCallbacks {
   onDispatch: (chain: string[], reason: string) => void
   onStepStart: (roleId: string, dispatch: string[] | null, model: string) => void
   onDelta: (roleId: string, text: string) => void
-  onStepDone: (roleId: string, text: string, inputTokens: number) => void
-  // Agent-dispatched experts (engineer/shuri/generalist/analyst/scheduler) run a full tool-using loop —
-  // these surface its tool activity + approval prompts to the coordinator UI. Tool-less steps (designer/
-  // translator/editor + every coordinator-self synthesis turn) never fire them, so they're optional.
+  onStepDone: (roleId: string, text: string, inputTokens: number, outputTokens?: number) => void
+  onUsage?: (inputTokens: number, outputTokens?: number) => void // live ↑in + ↓out, streamed per chunk
+  // Agent-dispatched experts (engineer/shuri/generalist/analyst/scheduler/translator/editor/designer) run a
+  // full tool-using loop — these surface its tool activity + approval prompts to the coordinator UI. Only the
+  // coordinator-self synthesis/direct turn is tool-less and never fires them, so they're optional.
   onToolStart?: (roleId: string, id: string, name: string) => void
   onToolEvent?: (roleId: string, ev: AgentEvent) => void
+  // A dispatched expert's tool generated an image (Georgia's ns_generate_image) — surface it live, the same
+  // nsai-media:// ref the loop persisted on the step message. Only image-capable agent roles fire it.
+  onToolImage?: (attachment: MessageAttachmentDto) => void
   // Tagged with roleId so a parallel/council turn's approval dialog can name the expert that's asking.
   requestPermission?: (roleId: string, req: PermissionRequest, signal?: AbortSignal) => Promise<PermissionDecision>
   // Unattended-approval audit (doc 19 §8): yellow = auto-approved, surface a chat note; red = hard-denied +
@@ -102,7 +107,7 @@ const ROUTER_HISTORY_LIMIT = 4 // last N messages handed to the router for conte
 // Top-level entrypoint. Always called from coordinator.handler; the user turn is already persisted by the
 // renderer (chat-path style — see chat store `send`). Throws on configuration errors so the handler
 // turns them into a single `coordinator:error` event.
-export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, signal: AbortSignal): Promise<{ inputTokens: number }> {
+export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, signal: AbortSignal): Promise<{ inputTokens: number; outputTokens: number }> {
   const history = convRepo.listByConversation(input.convId)
   const decision = await route(input.prompt, history, signal)
   if (signal.aborted) throw new LlmError('network', 'aborted before dispatch')
@@ -123,7 +128,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
       signal
     })
     fireSideEffects(input.convId, 'coordinator', out.endpointId, out.model, out.inputTokens)
-    return { inputTokens: out.inputTokens }
+    return { inputTokens: out.inputTokens, outputTokens: out.outputTokens }
   }
 
   if (decision.mode === 'single') {
@@ -144,7 +149,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
       signal
     })
     fireSideEffects(input.convId, decision.role!, out.endpointId, out.model, out.inputTokens)
-    return { inputTokens: out.inputTokens }
+    return { inputTokens: out.inputTokens, outputTokens: out.outputTokens }
   }
 
   if (decision.mode === 'parallel') {
@@ -178,7 +183,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
     })
     const last = outputs[outputs.length - 1]
     fireSideEffects(input.convId, last.role, last.endpointId, last.model, last.inputTokens)
-    return { inputTokens: synth.inputTokens }
+    return { inputTokens: synth.inputTokens, outputTokens: synth.outputTokens }
   }
 
   if (decision.mode === 'council') {
@@ -231,7 +236,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
       signal
     })
     fireSideEffects(input.convId, 'coordinator', synth.endpointId, synth.model, synth.inputTokens)
-    return { inputTokens: synth.inputTokens }
+    return { inputTokens: synth.inputTokens, outputTokens: synth.outputTokens }
   }
 
   if (decision.mode === 'collaborate') {
@@ -262,7 +267,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
       signal
     })
     fireSideEffects(input.convId, 'coordinator', synth.endpointId, synth.model, synth.inputTokens)
-    return { inputTokens: synth.inputTokens }
+    return { inputTokens: synth.inputTokens, outputTokens: synth.outputTokens }
   }
 
   // Pipeline: chain stored on each step = [...experts, 'coordinator']. The renderer's DispatchBadge prefixes
@@ -321,7 +326,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
     signal
   })
   fireSideEffects(input.convId, lastRoleId, lastEndpointId || synth.endpointId, lastModel || synth.model, lastTokens || synth.inputTokens)
-  return { inputTokens: synth.inputTokens }
+  return { inputTokens: synth.inputTokens, outputTokens: synth.outputTokens }
 }
 
 // ------- Route -------
@@ -504,7 +509,7 @@ interface RunStepOptions {
   isCouncilSynthesis?: boolean
 }
 
-async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputTokens: number; endpointId: string; model: string }> {
+async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputTokens: number; outputTokens: number; endpointId: string; model: string }> {
   const { convId, roleId, prompt, dispatch, cb, signal, cwd, includeHistory = false, isSynthesis = false, isDirect = false, isParallelSynthesis = false, isCouncilSynthesis = false } = opts
   const binding = rolesService.getBinding(roleId)
   if (!binding?.endpointId || !binding.model) {
@@ -534,10 +539,10 @@ async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputT
   // loop — the dispatch upgrade (doc 19 §11 phase 2), not a single llmChat turn. runDispatchedAgent owns
   // the loop + transcript but NOT persistence: we persist the step here (tagged with the dispatch chain)
   // so the renderer draws one badge spanning the run, exactly like the llmChat path below.
-  // The loop speaks Anthropic Messages or OpenAI Responses; a Gemini-backed expert can't run it yet, so it
-  // falls through to the single-turn llmChat path below (mirrors agent.service.run's protocol gate).
-  const agentProtocol: 'anthropic' | 'openai' | null =
-    ep.protocol === 'anthropic' ? 'anthropic' : ep.protocol === 'openai' || ep.protocol === 'custom' ? 'openai' : null
+  // The loop speaks Anthropic Messages, OpenAI Responses, or Gemini generateContent — a dispatched expert on
+  // any of the three runs the full tool loop (mirrors agent.service.run's protocol gate).
+  const agentProtocol: 'anthropic' | 'openai' | 'gemini' | null =
+    ep.protocol === 'anthropic' ? 'anthropic' : ep.protocol === 'openai' || ep.protocol === 'custom' ? 'openai' : ep.protocol === 'gemini' ? 'gemini' : null
   if (agentProtocol && agentService.AGENT_ROLE_IDS.has(roleId) && !isCoordinatorSelf) {
     let text = ''
     const agentCb: agentService.AgentCallbacks = {
@@ -547,9 +552,13 @@ async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputT
           cb.onDelta(roleId, ev.delta)
         } else if (ev.type === 'tool_use_start') {
           cb.onToolStart?.(roleId, ev.id, ev.name)
+        } else if (ev.type === 'usage') {
+          cb.onUsage?.(ev.inputTokens, ev.outputTokens) // forward the agent loop's live ↑in+↓out to the conv readout
         }
       },
       onEvent: (ev) => cb.onToolEvent?.(roleId, ev),
+      onUsage: (inputTokens) => cb.onUsage?.(inputTokens), // bridge the agent loop's live ↑ to the conv readout
+      onToolImage: (att) => cb.onToolImage?.(att), // a dispatched Georgia generated an image → surface it live
       // phase 4: coordinator self-approves via the safety classifier instead of popping the user (doc §8) —
       // green/yellow auto-run, red hard-denied + recorded for deferred approval.
       requestPermission: (req) => Promise.resolve(coordinatorApproval(convId, roleId, cwd ?? '', req, cb))
@@ -567,25 +576,30 @@ async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputT
         includeHistory,
         memories,
         summary: summaryContent,
-        permissionMode: opts.permissionMode
+        permissionMode: opts.permissionMode,
+        imageModel: binding.imageModel ?? undefined
       },
       agentCb,
       signal
     )
     text = res.text
-    if (text) {
+    // Persist the step + any images its tools generated (Georgia) — text OR an attachment lands the message,
+    // so a reopened conversation re-reads the image from the DB. Empty + image-only turns still persist.
+    if (text || res.attachments.length) {
       convService.append(convId, {
         author: 'expert',
         expertId: roleId,
         model: binding.model,
         content: text,
+        attachments: res.attachments,
         dispatch: dispatch ?? undefined,
-        inputTokens: res.inTokens
+        inputTokens: res.inTokens,
+        outputTokens: res.outTokens
       })
     }
     usageRepo.record({ model: binding.model, provider: ep.protocol, inTokens: res.inTokens, outTokens: res.outTokens })
-    cb.onStepDone(roleId, text, res.inTokens)
-    return { text, inputTokens: res.inTokens, endpointId: binding.endpointId, model: binding.model }
+    cb.onStepDone(roleId, text, res.inTokens, res.outTokens)
+    return { text, inputTokens: res.inTokens, outputTokens: res.outTokens, endpointId: binding.endpointId, model: binding.model }
   }
 
   // --- Tool-less path: coordinator-self synthesis/direct + designer/translator/editor → one llmChat turn ---
@@ -637,13 +651,17 @@ async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputT
     messages: messages.filter((m) => m.role !== 'system').map((m) => ({ role: m.role, content: m.content })),
     smallModel: pickSmallModel(ep.protocol, ep.availableModels, binding.model)
   })
+  cb.onUsage?.(inputTokens) // live ↑ readout before the step's stream starts
 
   let text = ''
   const result = await llmChat(
     { protocol: ep.protocol, baseUrl: ep.baseUrl, apiKey, model: binding.model, messages, signal },
     (d) => {
-      text += d.text
-      cb.onDelta(roleId, d.text)
+      if (d.text) {
+        text += d.text
+        cb.onDelta(roleId, d.text)
+      }
+      if (d.usage) cb.onUsage?.(d.usage.inTokens, d.usage.outTokens) // live ↑in+↓out for tool-less steps too
     }
   )
   // result.text is authoritative — onDelta accumulator is a partial preview.
@@ -659,13 +677,14 @@ async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputT
       model: binding.model,
       content: text,
       dispatch: dispatch ?? undefined,
-      inputTokens
+      inputTokens,
+      outputTokens: result.usage.outTokens
     })
   }
   usageRepo.record({ model: binding.model, provider: ep.protocol, inTokens: result.usage.inTokens, outTokens: result.usage.outTokens })
-  cb.onStepDone(roleId, text, inputTokens)
+  cb.onStepDone(roleId, text, inputTokens, result.usage.outTokens)
 
-  return { text, inputTokens, endpointId: binding.endpointId, model: binding.model }
+  return { text, inputTokens, outputTokens: result.usage.outTokens, endpointId: binding.endpointId, model: binding.model }
 }
 
 // Coordinator's unattended approval (doc 19 §8). Safety policy = the rule classifier (red is a hard floor:
@@ -761,7 +780,7 @@ async function runCollaboration(
   const results = await agentService.runCollabSession(input.convId, experts, hooks, signal, () => Date.now())
 
   const outputs: { role: string; text: string }[] = []
-  for (const [roleId, { text, inTokens }] of results) {
+  for (const [roleId, { text, inTokens, outTokens }] of results) {
     if (text) {
       convService.append(input.convId, {
         author: 'expert',
@@ -769,11 +788,12 @@ async function runCollaboration(
         model: models.get(roleId) ?? '',
         content: text,
         inputTokens: inTokens,
+        outputTokens: outTokens,
         dispatch: fullChain
       })
       outputs.push({ role: roleId, text })
     }
-    cb.onStepDone(roleId, text, inTokens)
+    cb.onStepDone(roleId, text, inTokens, outTokens)
   }
   return outputs
 }

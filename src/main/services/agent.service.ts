@@ -15,7 +15,7 @@ import type { AgentLlmEvent } from '../agent/llm'
 import { runAgent, buildToolsParam, type AgentEvent, type AgentResult } from '../agent/loop'
 import { promptTokensFromUsage } from '../agent/compact'
 import { isContentBlock } from '../agent/types'
-import type { AgentMessage, AnyBlock, ServerToolSchema } from '../agent/types'
+import type { AgentMessage, AnyBlock, ImageBlock, ServerToolSchema, ToolResultBlock } from '../agent/types'
 import { CORE_TOOLS } from '../agent/registry'
 import { ENGINEER_SYSTEM_PROMPT, SHURI_SYSTEM_PROMPT } from '../agent/system-prompt'
 import { buildRolePrompt, displayName } from '../agent/roles/prompts'
@@ -31,10 +31,10 @@ import { startServiceTool, stopServiceTool, serviceLogsTool, listServicesTool } 
 import { agentSpawnTool, agentSendTool, agentWaitTool, agentCloseTool, agentBatchTool } from '../agent/tools/async-subagent'
 import { lspTool } from '../agent/tools/lsp'
 import type { Tool } from '../agent/tool'
-import type { AgentRunInput, ToolCallDto, RunTranscript } from '../ipc/contracts'
+import type { AgentRunInput, MessageAttachmentDto, ToolCallDto, RunTranscript } from '../ipc/contracts'
 import * as keychain from '../keychain/keychain'
 import { LlmError } from '../llm/types'
-import { resolveToDataUrl } from '../media/storage'
+import { persistBase64, resolveToDataUrl } from '../media/storage'
 import * as endpointRepo from '../repos/endpoint.repo'
 import * as convRepo from '../repos/conversation.repo'
 import * as summaryRepo from '../repos/summary.repo'
@@ -43,6 +43,7 @@ import type { MemoryRow } from '../repos/memory.repo'
 import * as convService from './conversation.service'
 import * as memoryService from './memory.service'
 import * as compressionService from './compression.service'
+import * as settingsService from './settings.service'
 import { agentEvents } from './event-bus'
 import { pickSmallModel } from './model-select'
 import { countContext } from './token-count.service'
@@ -55,10 +56,11 @@ const ENGINEER_ROLE_ID = 'engineer'
 const DEV_ROLES = new Set([ENGINEER_ROLE_ID, 'shuri'])
 const DEV_PROMPT: Record<string, string> = { engineer: ENGINEER_SYSTEM_PROMPT, shuri: SHURI_SYSTEM_PROMPT }
 
-// CORE tool subset per agent role (doc 16 §5). Engineer = full set; OpenAI roles get a read-only +
-// fetch baseline. Writes / exec / orchestration (Write/Edit/MultiEdit/Bash/Task/TodoWrite) stay
-// Engineer-only. The local WebSearch tool is Anthropic-server-backed (Engineer only); OpenAI roles get
-// web search via OpenAI's server-side web_search (a serverTool added in run(), not in this list).
+// CORE tool subset per agent role (doc 16 §5). Engineer = full set; other roles get a tailored baseline.
+// Writes / exec / orchestration (Edit/MultiEdit/Bash/Task/TodoWrite) stay Engineer-only. WebSearch now works
+// on ANY family — anthropic AND gemini delegate to an isolated server search (web-search.ts: anthropic
+// web_search_20250305 / gemini google_search grounding), and OpenAI roles instead get the hosted web_search
+// as a serverTool in run(). So translator/scheduler list WebSearch directly here.
 // MCP + Skill are layered on by scope for every agent role.
 const ROLE_CORE_TOOLS: Record<string, readonly string[]> = {
   // doc 28: any "doer" role can author/list/cancel its own scheduled tasks (schedule_*). generalist/analyst
@@ -66,6 +68,13 @@ const ROLE_CORE_TOOLS: Record<string, readonly string[]> = {
   // Joan is a small model, so the heavy planning stays with Danny.
   generalist: ['Read', 'WebFetch', 'code_execution', 'schedule_create', 'schedule_list', 'schedule_delete'],
   analyst: ['Read', 'WebFetch', 'code_execution', 'schedule_create', 'schedule_list', 'schedule_delete'],
+  // doc 29: Louise (Gemini agent loop) — read i18n/md/txt → translate → write back; Grep/Glob to find strings.
+  translator: ['Read', 'Write', 'WritePdf', 'Grep', 'Glob', 'WebFetch', 'WebSearch'],
+  // Miranda (Gemini agent loop) — read docs/transcripts/posts → distill → write the summary; same tool kit.
+  editor: ['Read', 'Write', 'WritePdf', 'Grep', 'Glob', 'WebFetch', 'WebSearch'],
+  // Georgia (Gemini agent loop) — generate images + the file/web kit so she can read a brief, research
+  // references (WebSearch/WebFetch), produce visuals (ns_generate_image), and write specs/exports.
+  designer: ['ns_generate_image', 'Read', 'Write', 'WritePdf', 'Grep', 'Glob', 'WebFetch', 'WebSearch'],
   // scheduler (Joan): Read context, Write drafts/output, WebSearch for background, code_execution for
   // time/cron math, schedule_* to create/list/delete tasks. Real email/calendar send (MCP) is v2.
   scheduler: ['Read', 'Write', 'WebFetch', 'WebSearch', 'code_execution', 'schedule_create', 'schedule_list', 'schedule_delete']
@@ -84,10 +93,15 @@ const SERVICE_TOOLS = [startServiceTool, stopServiceTool, serviceLogsTool, listS
 const SUBAGENT_TOOLS = [agentSpawnTool, agentSendTool, agentWaitTool, agentCloseTool, agentBatchTool] as unknown as Tool[]
 
 function toolsForAgentRole(roleId: string): Tool[] {
-  const core =
+  let core =
     DEV_ROLES.has(roleId)
       ? [...CORE_TOOLS]
       : CORE_TOOLS.filter((t) => (ROLE_CORE_TOOLS[roleId] ?? []).includes(t.name))
+  // ns_generate_image is opt-out in Extensions → Tools (default on). When disabled, drop it from the kit so
+  // designer becomes a text-only design consultant (research + specs) instead of generating images.
+  if (settingsService.get<boolean>('tools.generate_image.enabled') === false) {
+    core = core.filter((t) => t.name !== 'ns_generate_image')
+  }
   const skill = skillManager.skillTool(roleId)
   return [...core, ...PLAN_TOOLS, askUserQuestionTool as unknown as Tool, ...mcpManager.toolsForRole(roleId), ...(skill ? [skill] : [])]
 }
@@ -95,6 +109,8 @@ function toolsForAgentRole(roleId: string): Tool[] {
 export interface AgentCallbacks {
   onStream: (e: AgentLlmEvent) => void // fine-grained deltas (text + tool_use input) for streaming UI
   onEvent: (e: AgentEvent) => void // completed assistant turns + tool_results
+  onUsage?: (inputTokens: number) => void // live ↑ input-token readout: initial count up front, then per turn
+  onToolImage?: (attachment: MessageAttachmentDto) => void // a tool produced an image (persisted nsai-media:// ref) → surface it live
   requestPermission: RequestPermission // bridged to the renderer (req, optional cancel signal)
   askUser?: AskUser // AskUserQuestion: bridged to the renderer; undefined headless (the tool then errors)
 }
@@ -103,19 +119,21 @@ export async function run(
   input: AgentRunInput,
   cb: AgentCallbacks,
   signal: AbortSignal,
-): Promise<{ reason: string; turns: number; convId: string; runId: string; promptTokens: number }> {
+): Promise<{ reason: string; turns: number; convId: string; runId: string; promptTokens: number; outputTokens: number }> {
   const ep = endpointRepo.getById(input.endpointId)
   if (!ep) throw new LlmError('bad_request', 'endpoint not found')
-  // The agent loop speaks Anthropic Messages (/v1/messages) or OpenAI Responses (/v1/responses) tool
-  // use; Gemini agent loop isn't wired yet.
-  const protocol: 'anthropic' | 'openai' =
+  // The agent loop speaks Anthropic Messages (/v1/messages), OpenAI Responses (/v1/responses), or Gemini
+  // generateContent (/v1beta/models/*:streamGenerateContent) tool use.
+  const protocol: 'anthropic' | 'openai' | 'gemini' =
     ep.protocol === 'anthropic'
       ? 'anthropic'
       : ep.protocol === 'openai' || ep.protocol === 'custom'
         ? 'openai'
-        : (() => {
-            throw new LlmError('bad_request', `agent does not support ${ep.protocol} endpoints yet`)
-          })()
+        : ep.protocol === 'gemini'
+          ? 'gemini'
+          : (() => {
+              throw new LlmError('bad_request', `agent does not support ${ep.protocol} endpoints yet`)
+            })()
   const key = keychain.getApiKey(input.endpointId)
   if (!key) throw new LlmError('bad_key', 'no API key configured for this endpoint')
 
@@ -128,9 +146,10 @@ export async function run(
   // Read needs a folder boundary; without a cwd, drop it for non-dev roles so the model can't read the
   // process working dir. Dev roles (Flynn/Shuri) always have a cwd (required in the composer).
   if (!input.cwd && !DEV_ROLES.has(roleId)) tools = tools.filter((t) => t.name !== 'Read')
-  // OpenAI server-side web_search (doc 16 §4) for every OpenAI agent role — the API runs it; results
-  // come back as a web_search_call carried as a server block. (Engineer/Anthropic uses the local
-  // WebSearch tool instead.) Future: a configured local search backend takes priority over server-side.
+  // Server-side web search via OpenAI's hosted web_search (doc 16 §4) — results return as a web_search_call
+  // server block. Gemini is NOT added here: its google_search grounding 400s when combined with
+  // functionDeclarations, and the agent loop always sends tools — so Gemini (and Anthropic, which has no
+  // hosted search) use the local WebSearch tool instead, which fires an ISOLATED search request free of tools.
   const serverTools: ServerToolSchema[] = protocol === 'openai' ? [{ type: 'web_search', name: 'web_search' }] : []
 
   // ① Persist the user turn (tagged with run_id) so context assembly + extraction read it from the DB.
@@ -174,6 +193,9 @@ export async function run(
     thinkingBudget: input.thinking?.budgetTokens,
     smallModel: pickSmallModel(protocol, ep.availableModels, input.model)
   })
+  // Surface the prompt size to the UI BEFORE the loop's first turn streams — so the live readout shows
+  // ↑ tokens during the initial thinking phase (and every between-turns gap), not only after onDone.
+  cb.onUsage?.(promptTokens)
 
   const loopRes = await runAgentLoop(
     {
@@ -192,21 +214,26 @@ export async function run(
       thinking: input.thinking,
       contextWindow: input.contextWindow,
       permissionMode: input.permissionMode ?? 'default',
+      imageModel: input.imageModel,
     },
     cb,
     signal,
   )
 
-  // ⑤ Persist the assistant's FINAL reply (same run_id). Tool steps stay in the transcript only.
-  //    Skip an empty reply — an empty assistant text block would make the NEXT run's seed 400 on Anthropic.
-  if (loopRes.text) {
+  // ⑤ Persist the assistant's FINAL reply (same run_id) + any images its tools generated as attachments,
+  //    so reopening the conversation shows them. Tool steps stay in the transcript only. Persist when there's
+  //    text OR an attachment — a designer turn may produce only an image with no closing text. (An empty-text
+  //    assistant turn is skipped from the NEXT run's seed by conversationToAgentMessages, so no Anthropic 400.)
+  if (loopRes.text || loopRes.attachments.length) {
     convService.append(convId, {
       author: 'expert',
       expertId: roleId,
       model: input.model,
       content: loopRes.text,
+      attachments: loopRes.attachments,
       runId,
       inputTokens: promptTokens,
+      outputTokens: loopRes.outTokens,
     })
   }
 
@@ -235,7 +262,7 @@ export async function run(
     })
     .catch(() => {})
 
-  return { reason: loopRes.reason, turns: loopRes.turns, convId, runId, promptTokens }
+  return { reason: loopRes.reason, turns: loopRes.turns, convId, runId, promptTokens, outputTokens: loopRes.outTokens }
 }
 
 // One agent loop: writes the transcript, drives runAgent, streams events via cb, returns the final
@@ -243,7 +270,7 @@ export async function run(
 // those (run() for direct chat; coordinator dispatch for delegated steps with their own persistence +
 // dispatch-chain tagging). This is the shared core both entry points build their own seed/system for.
 export interface AgentLoopInput {
-  protocol: 'anthropic' | 'openai'
+  protocol: 'anthropic' | 'openai' | 'gemini'
   baseUrl: string
   apiKey: string
   model: string
@@ -258,13 +285,40 @@ export interface AgentLoopInput {
   thinking?: AgentRunInput['thinking']
   contextWindow?: number
   permissionMode: AgentContext['permissionMode']
+  imageModel?: string // image backend slug for ns_generate_image (designer); Gemini only
+}
+
+// Generic tool→image surfacing. A tool that produces an image (ns_generate_image, code_execution charts,
+// view_image) returns base64 ImageBlock(s) in its tool_result — the model needs those to SEE the result.
+// But the renderer + the transcript log must NOT carry raw base64 (huge IPC payload + a bloated jsonl), so
+// here we persist each ImageBlock to the media store (→ an nsai-media:// attachment for display + DB) and
+// hand back a REDACTED copy of the block with the base64 swapped for a short marker. The model's own
+// message array (inside runAgent) keeps the original block untouched, so its vision is unaffected.
+async function persistToolResultImages(
+  convId: string,
+  block: ToolResultBlock,
+): Promise<{ attachments: MessageAttachmentDto[]; redacted: ToolResultBlock }> {
+  if (typeof block.content === 'string') return { attachments: [], redacted: block }
+  const attachments: MessageAttachmentDto[] = []
+  const redacted: Array<{ type: 'text'; text: string } | ImageBlock> = []
+  for (const c of block.content) {
+    if (c.type === 'image' && c.source?.type === 'base64' && c.source.data) {
+      const att = await persistBase64(convId, c.source.data, c.source.media_type || 'image/png')
+      attachments.push(att)
+      redacted.push({ type: 'text', text: '[image displayed to the user]' })
+    } else {
+      redacted.push(c)
+    }
+  }
+  if (!attachments.length) return { attachments: [], redacted: block }
+  return { attachments, redacted: { ...block, content: redacted } }
 }
 
 export async function runAgentLoop(
   loop: AgentLoopInput,
   cb: AgentCallbacks,
   signal: AbortSignal,
-): Promise<{ text: string; inTokens: number; outTokens: number; reason: string; turns: number }> {
+): Promise<{ text: string; inTokens: number; outTokens: number; reason: string; turns: number; attachments: MessageAttachmentDto[] }> {
   const sessionDir = join(homedir(), '.nsai', 'sessions', loop.convId)
   await mkdir(join(sessionDir, 'tool-results'), { recursive: true })
   const transcript = createWriteStream(join(sessionDir, 'transcript.jsonl'), { flags: 'a' })
@@ -308,12 +362,14 @@ export async function runAgentLoop(
     ctx,
     contextWindow: loop.contextWindow ?? 200_000,
     thinking: loop.thinking,
+    imageModel: loop.imageModel,
     onStream: cb.onStream,
   })
 
   let result!: AgentResult
   let inTokens = 0
   let outTokens = 0
+  const toolImages: MessageAttachmentDto[] = [] // images any tool produced this run → assistant-message attachments
   const toolNames = new Map<string, string>() // tool_use id → name, to pair tool:post with its tool
   agentEvents.emit({ type: 'session:start', convId: loop.convId, roleId: loop.roleId, ts: Date.now() })
   try {
@@ -325,9 +381,11 @@ export async function runAgentLoop(
         result = value
         break
       }
+      let emitted: AgentEvent = value
       if (value.type === 'assistant') {
         inTokens += promptTokensFromUsage(value.usage) // include cache read/creation — see compact.ts
         outTokens += value.usage.outTokens
+        cb.onUsage?.(promptTokensFromUsage(value.usage)) // live ↑ readout: this turn's prompt size
         for (const b of value.message.content) {
           if (isContentBlock(b) && b.type === 'tool_use') {
             toolNames.set(b.id, b.name)
@@ -335,14 +393,27 @@ export async function runAgentLoop(
           }
         }
       } else if (value.type === 'tool_results') {
+        // Persist any image a tool returned (→ nsai-media:// attachment) and surface it live, then emit a
+        // REDACTED copy (base64 swapped for a marker) so the transcript jsonl + the renderer IPC stay lean.
+        // The model's own message array inside runAgent keeps the untouched base64 block for its vision.
+        const content: AnyBlock[] = []
         for (const b of value.message.content) {
           if (isContentBlock(b) && b.type === 'tool_result') {
             agentEvents.emit({ type: 'tool:post', convId: loop.convId, roleId: loop.roleId, tool: toolNames.get(b.tool_use_id) ?? 'unknown', isError: b.is_error ?? false, ts: Date.now() })
+            const { attachments, redacted } = await persistToolResultImages(loop.convId, b)
+            for (const att of attachments) {
+              toolImages.push(att)
+              cb.onToolImage?.(att)
+            }
+            content.push(redacted)
+          } else {
+            content.push(b)
           }
         }
+        emitted = { type: 'tool_results', message: { role: 'user', content } }
       }
-      log({ t: 'event', runId: loop.runId, event: value })
-      cb.onEvent(value)
+      log({ t: 'event', runId: loop.runId, event: emitted })
+      cb.onEvent(emitted)
     }
   } finally {
     transcript.end()
@@ -357,14 +428,17 @@ export async function runAgentLoop(
     outTokens,
     reason: result.reason,
     turns: result.turns,
+    attachments: toolImages,
   }
 }
 
 // Roles that run a full agent loop (tools + multi-turn transcript) when dispatched by the coordinator,
 // rather than a single llmChat turn. Same set the renderer's chat store keys agent:run vs chat:send on —
 // kept in sync across the IPC boundary by hand (main can't import the renderer copy, nor the reverse).
-// designer/translator/editor stay single-turn llmChat (no tools); coordinator never dispatches to itself.
-export const AGENT_ROLE_IDS = new Set(['engineer', 'shuri', 'generalist', 'analyst', 'scheduler'])
+// coordinator never dispatches to itself. translator + editor + designer run the full gemini agent loop —
+// Louise localizes whole files, Miranda reads/distills documents, Georgia generates images + reads briefs —
+// so a dispatched Louise/Miranda/Georgia needs tools (Georgia's ns_generate_image included).
+export const AGENT_ROLE_IDS = new Set(['engineer', 'shuri', 'generalist', 'analyst', 'scheduler', 'translator', 'editor', 'designer'])
 
 // Run a coordinator-dispatched expert as a full agent loop (role coding prompt + tools + transcript),
 // instead of a single llmChat turn. The coordinator owns persistence (it tags the step with the dispatch
@@ -375,7 +449,7 @@ export interface DispatchedAgentInput {
   roleId: string
   prompt: string
   cwd: string
-  protocol: 'anthropic' | 'openai'
+  protocol: 'anthropic' | 'openai' | 'gemini'
   baseUrl: string
   apiKey: string
   model: string
@@ -389,13 +463,14 @@ export interface DispatchedAgentInput {
   includeHistory: boolean
   memories: MemoryRow[]
   summary: string | null
+  imageModel?: string // image backend slug for ns_generate_image (dispatched designer / Georgia); Gemini only
 }
 
 export async function runDispatchedAgent(
   d: DispatchedAgentInput,
   cb: AgentCallbacks,
   signal: AbortSignal,
-): Promise<{ text: string; inTokens: number; outTokens: number }> {
+): Promise<{ text: string; inTokens: number; outTokens: number; attachments: MessageAttachmentDto[] }> {
   let tools = toolsForAgentRole(d.roleId)
   if (DEV_ROLES.has(d.roleId)) tools = [...tools, ...SERVICE_TOOLS, ...SUBAGENT_TOOLS, lspTool as unknown as Tool]
   if (!d.cwd && !DEV_ROLES.has(d.roleId)) tools = tools.filter((t) => t.name !== 'Read')
@@ -431,11 +506,12 @@ export async function runDispatchedAgent(
       thinking: d.thinking,
       contextWindow: d.contextWindow,
       permissionMode: d.permissionMode ?? 'default',
+      imageModel: d.imageModel,
     },
     cb,
     signal,
   )
-  return { text: res.text, inTokens: res.inTokens, outTokens: res.outTokens }
+  return { text: res.text, inTokens: res.inTokens, outTokens: res.outTokens, attachments: res.attachments }
 }
 
 // ---- Multi-expert collaboration (consult — doc 19 §5 / §11 phase 3) ----
@@ -446,7 +522,7 @@ export interface CollabExpertInput {
   roleId: string
   initialPrompt: string
   cwd: string
-  protocol: 'anthropic' | 'openai'
+  protocol: 'anthropic' | 'openai' | 'gemini'
   baseUrl: string
   apiKey: string
   model: string
@@ -503,11 +579,12 @@ export async function runCollabSession(
   hooks: CollabHooks,
   signal: AbortSignal,
   nowMs: () => number,
-): Promise<Map<string, { text: string; inTokens: number }>> {
+): Promise<Map<string, { text: string; inTokens: number; outTokens: number }>> {
   // One service registry per collaboration, shared by all its experts (Flynn starts a backend, Shuri
   // lists + connects). Tree-killed in the finally below when the session ends — no zombie ports survive.
   const registry = new ServiceRegistry()
   const inTokensByRole = new Map<string, number>() // accumulated prompt tokens per expert → its per-message ↑ readout
+  const outTokensByRole = new Map<string, number>() // accumulated output tokens per expert → its per-message ↓ readout
   const roster = experts.map((x) => ({ id: x.roleId, name: displayName(x.roleId) ?? x.roleId }))
   const lspByExpert: LSPManager[] = [] // one per dev expert; tree-killed in the finally
   const specs: ExpertSpec[] = experts.map((x) => {
@@ -571,6 +648,7 @@ export async function runCollabSession(
         })
         let result!: AgentResult
         let turnIn = 0
+        let turnOut = 0
         for (;;) {
           const { value, done } = await gen.next()
           if (done) {
@@ -581,6 +659,7 @@ export async function runCollabSession(
           // observable too (previously a gap — collab experts don't go through runAgentLoop).
           if (value.type === 'assistant') {
             turnIn += promptTokensFromUsage(value.usage) // incl. cache read/creation
+            turnOut += value.usage.outTokens
             for (const b of value.message.content) {
               if (isContentBlock(b) && b.type === 'tool_use') {
                 toolNames.set(b.id, b.name)
@@ -597,6 +676,7 @@ export async function runCollabSession(
           hooks.onExpertEvent(x.roleId, value)
         }
         inTokensByRole.set(x.roleId, (inTokensByRole.get(x.roleId) ?? 0) + turnIn)
+        outTokensByRole.set(x.roleId, (outTokensByRole.get(x.roleId) ?? 0) + turnOut)
         return result.messages
       },
     }
@@ -610,7 +690,7 @@ export async function runCollabSession(
   try {
     const texts = await new CollabSession(specs, onEvent, nowMs).run(signal)
     return new Map(
-      [...texts].map(([roleId, text]): [string, { text: string; inTokens: number }] => [roleId, { text, inTokens: inTokensByRole.get(roleId) ?? 0 }])
+      [...texts].map(([roleId, text]): [string, { text: string; inTokens: number; outTokens: number }] => [roleId, { text, inTokens: inTokensByRole.get(roleId) ?? 0, outTokens: outTokensByRole.get(roleId) ?? 0 }])
     )
   } finally {
     hooks.onServices?.([])

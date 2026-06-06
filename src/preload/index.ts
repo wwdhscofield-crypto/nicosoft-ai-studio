@@ -10,6 +10,8 @@ import type {
   ChatErrorDto,
   AgentRunInput,
   AgentTextDelta,
+  ConvUsage,
+  ConvImage,
   AgentToolStart,
   AgentAssistant,
   AgentToolResults,
@@ -37,13 +39,6 @@ import type {
   CoordinatorPermissionCancel,
   CoordinatorApprovalEvent,
   PendingApprovalDto,
-  ImageToolRunInputDto,
-  ImageToolDeltaDto,
-  ImageToolImageStartDto,
-  ImageToolImageDto,
-  ImageToolTurnBreakDto,
-  ImageToolDoneDto,
-  ImageToolErrorDto,
   RoleBindingDto,
   RoleBindingInput,
   RoleStateDto,
@@ -94,6 +89,14 @@ const api = {
   minimizeWindow: (): void => ipcRenderer.send('app:minimize'),
   maximizeWindow: (): void => ipcRenderer.send('app:maximize'),
   closeWindow: (): void => ipcRenderer.send('app:close'),
+
+  // Live per-conversation usage (real ↑ input), broadcast by EVERY path (chat / agent / coordinator / image)
+  // so the working readout shows tokens uniformly no matter which one is running.
+  onConvUsage: (cb: (d: ConvUsage) => void): (() => void) => agentListen('conv:usage', cb),
+
+  // Live per-conversation generated images: an agent tool produced an image (persisted nsai-media:// ref),
+  // broadcast so the renderer attaches it to the in-flight assistant bubble without base64 crossing IPC.
+  onConvImage: (cb: (d: ConvImage) => void): (() => void) => agentListen('conv:image', cb),
 
   endpoints: {
     list: (): Promise<EndpointDto[]> => ipcRenderer.invoke('endpoints:list'),
@@ -178,17 +181,6 @@ const api = {
     list: (convId: string): Promise<PendingApprovalDto[]> => ipcRenderer.invoke('approval:list', convId),
     approve: (id: string): Promise<{ ok: boolean; output: string }> => ipcRenderer.invoke('approval:approve', id),
     reject: (id: string): Promise<boolean> => ipcRenderer.invoke('approval:reject', id)
-  },
-
-  imagetool: {
-    run: (input: ImageToolRunInputDto): Promise<{ streamId: string }> => ipcRenderer.invoke('imagetool:run', input),
-    stop: (streamId: string): Promise<void> => ipcRenderer.invoke('imagetool:stop', streamId),
-    onDelta: (cb: (d: ImageToolDeltaDto) => void): (() => void) => agentListen('imagetool:delta', cb),
-    onImageStart: (cb: (d: ImageToolImageStartDto) => void): (() => void) => agentListen('imagetool:imagestart', cb),
-    onImage: (cb: (d: ImageToolImageDto) => void): (() => void) => agentListen('imagetool:image', cb),
-    onTurnBreak: (cb: (d: ImageToolTurnBreakDto) => void): (() => void) => agentListen('imagetool:turnbreak', cb),
-    onDone: (cb: (d: ImageToolDoneDto) => void): (() => void) => agentListen('imagetool:done', cb),
-    onError: (cb: (d: ImageToolErrorDto) => void): (() => void) => agentListen('imagetool:error', cb)
   },
 
   project: {

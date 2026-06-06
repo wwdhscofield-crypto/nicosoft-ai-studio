@@ -22,7 +22,7 @@ const EXPERTS: Expert[] = [
   { id: 'engineer', name: 'Flynn', color: 'var(--exp-engineer)', specialty: 'Backend engineer — APIs, server, data', personality: 'Precise, direct, no pleasantries', model: 'nicosoft/claude-opus-4-8', family: 'anthropic' },
   { id: 'shuri', name: 'Shuri', color: 'var(--exp-shuri)', specialty: 'Frontend engineer — UI, React, CSS', personality: 'Inventive, detail-driven, craft-proud', model: 'nicosoft/claude-opus-4-8', family: 'anthropic' },
   { id: 'designer', name: 'Georgia', color: 'var(--exp-designer)', specialty: 'Designer — images & posters', personality: 'Creative, opinionated', model: 'gemini-pro-latest', family: 'gemini' },
-  { id: 'translator', name: 'Louise', color: 'var(--exp-translator)', specialty: 'Translator — any language pair', personality: 'Precise, culturally aware', model: 'gemini-flash-latest', family: 'gemini' },
+  { id: 'translator', name: 'Louise', color: 'var(--exp-translator)', specialty: 'Translator — any language pair', personality: 'Precise, culturally aware', model: 'nicosoft/gemini-3-flash-agent', family: 'gemini' },
   { id: 'editor', name: 'Miranda', color: 'var(--exp-editor)', specialty: 'Editor — summarize & condense', personality: 'Structured, no padding', model: 'gemini-pro-latest', family: 'gemini' },
   { id: 'analyst', name: 'Turing', color: 'var(--exp-analyst)', specialty: 'Data analyst — stats & charts', personality: 'Rigorous, honest about uncertainty', model: 'nicosoft/gpt-5.5', family: 'openai' },
   { id: 'scheduler', name: 'Joan', color: 'var(--exp-scheduler)', specialty: 'Email & scheduling', personality: 'Efficient, situationally appropriate', model: 'nicosoft/gpt-5.4-mini', family: 'openai' }
@@ -209,7 +209,7 @@ const ROLE_BINDINGS: RoleBinding[] = [
   { id: 'generalist', family: 'openai', model: 'nicosoft/gpt-5.5' },
   { id: 'engineer', family: 'anthropic', model: 'nicosoft/claude-sonnet-4-6' },
   { id: 'designer', family: 'gemini', model: 'gemini-pro-latest' },
-  { id: 'translator', family: 'gemini', model: 'gemini-flash-latest' },
+  { id: 'translator', family: 'gemini', model: 'nicosoft/gemini-3-flash-agent' },
   { id: 'editor', family: 'gemini', model: 'gemini-pro-latest' },
   { id: 'analyst', family: 'openai', model: 'nicosoft/gpt-5.5' },
   { id: 'scheduler', family: 'openai', model: 'nicosoft/gpt-5.4-mini' }
@@ -221,7 +221,7 @@ const GREETINGS: Record<string, Greeting> = {
   shuri: { greeting: 'I build the frontend — UI, components, styling, interactions. Tell me what to build, or paste a component.', chips: ['Build a login form', 'Make this responsive', 'Why is this layout broken?'] },
   coordinator: { greeting: "I coordinate the team. Tell me what you need and I'll route it to the right expert — or convene several and merge their work.", chips: ['Translate and debug this error', 'Research, then summarize', 'Draft and schedule an email'] },
   designer: { greeting: 'I make posters, illustrations, and avatars. Describe the vibe, the text, and the format.', chips: ['Poster for our game night', 'App icon, flat & minimal', 'Hero illustration, isometric'] },
-  translator: { greeting: 'I translate any language pair and localize copy. Paste text and tell me the target language.', chips: ['Translate landing page to German', 'Localize for ja-JP', 'Is this idiomatic?'] },
+  translator: { greeting: 'I translate any language pair and localize copy — paste text, or point me at files (i18n / md / txt) in a folder.', chips: ['Translate landing page to German', 'Localize a locale file', 'Is this idiomatic?'] },
   editor: { greeting: 'I summarize, condense, and take notes. Drop in a long doc or transcript.', chips: ['Summarize this thread', 'Turn notes into action items', 'Condense to 100 words'] },
   analyst: { greeting: 'I run the numbers — stats, math, and chart recommendations. Bring your data.', chips: ['Analyze Q1 churn', 'Is this difference significant?', 'Recommend a chart'] },
   scheduler: { greeting: 'I draft emails, replies, and agendas. Tell me the recipient and the gist.', chips: ['Reply to this investor', 'Draft a meeting agenda', 'Polish this cold email'] }

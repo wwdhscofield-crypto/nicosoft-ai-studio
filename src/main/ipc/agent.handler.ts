@@ -3,6 +3,7 @@ import { ulid } from 'ulid'
 import type { PermissionDecision } from '../agent/context'
 import { isContentBlock } from '../agent/types'
 import { LlmError } from '../llm/types'
+import { broadcastConvImage, broadcastUsage } from './usage-broadcast'
 import * as agentService from '../services/agent.service'
 import * as compressionService from '../services/compression.service'
 import type { AgentBlockDto, AgentPermissionResponse, AgentQuestionResponse, AgentResultDto, AgentRunInput } from './contracts'
@@ -65,6 +66,7 @@ export function registerAgentHandlers(): void {
           onStream: (ev) => {
             if (ev.type === 'text') send('agent:delta', { streamId, text: ev.delta })
             else if (ev.type === 'tool_use_start') send('agent:tool:start', { streamId, id: ev.id, name: ev.name })
+            else if (ev.type === 'usage') broadcastUsage(sender, input.convId, ev.inputTokens, ev.outputTokens)
           },
           onEvent: (ev) => {
             if (ev.type === 'assistant') {
@@ -100,6 +102,8 @@ export function registerAgentHandlers(): void {
               send('agent:results', { streamId, results })
             }
           },
+          onUsage: (inputTokens) => broadcastUsage(sender, input.convId, inputTokens),
+          onToolImage: (attachment) => broadcastConvImage(sender, input.convId, attachment),
           requestPermission: (req, signal) =>
             new Promise<PermissionDecision>((resolve) => {
               const permissionId = ulid()
@@ -142,7 +146,7 @@ export function registerAgentHandlers(): void {
         },
         controller.signal,
       )
-      .then((r) => send('agent:done', { streamId, reason: r.reason, turns: r.turns, inputTokens: r.promptTokens }))
+      .then((r) => send('agent:done', { streamId, reason: r.reason, turns: r.turns, inputTokens: r.promptTokens, outputTokens: r.outputTokens }))
       .catch((err: unknown) => {
         const code = err instanceof LlmError ? err.code : 'unknown'
         const message = err instanceof Error ? err.message : String(err)

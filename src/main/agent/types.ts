@@ -15,6 +15,10 @@ export interface ToolUseBlock {
   id: string
   name: string
   input: Record<string, unknown>
+  // Gemini 3 only: the encrypted thought state carried on this functionCall part. Multi-turn function
+  // calling REQUIRES echoing it back unchanged on the next request, or Gemini 400s with
+  // "Function call is missing a thought_signature". Other providers leave it unset and ignore it.
+  thoughtSignature?: string
 }
 
 export interface ImageSource {

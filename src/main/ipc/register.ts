@@ -7,7 +7,6 @@ import { registerRoleHandlers } from './roles.handler'
 import { registerSettingsHandlers } from './settings.handler'
 import { registerChatHandlers } from './chat.handler'
 import { registerMemoryHandlers } from './memory.handler'
-import { registerImageToolHandlers } from './image-tool.handler'
 import { registerMediaHandlers } from './media.handler'
 import { registerMcpHandlers } from './mcp.handler'
 import { registerSkillHandlers } from './skill.handler'
@@ -22,7 +21,6 @@ export function registerIpc(): void {
   registerChatHandlers()
   registerAgentHandlers()
   registerCoordinatorHandlers()
-  registerImageToolHandlers()
   registerProjectHandlers()
   registerRoleHandlers()
   registerConversationHandlers()

@@ -6,6 +6,7 @@
 import { iterSSE, openStream, parseJSON, toLlmError } from '../llm/_shared'
 import { streamIdleGuard, LLM_STREAM_IDLE_MS } from './stream-timeout'
 import { callWithToolsOpenAI } from './llm-openai'
+import { callWithToolsGemini } from './llm-gemini'
 import type { ThinkingParam } from '../llm/types'
 import type {
   AgentMessage,
@@ -21,7 +22,7 @@ const PROVIDER = 'anthropic'
 const ANTHROPIC_VERSION = '2023-06-01'
 
 export interface AgentLlmRequest {
-  protocol: 'anthropic' | 'openai'
+  protocol: 'anthropic' | 'openai' | 'gemini'
   baseUrl: string
   apiKey: string
   model: string
@@ -50,6 +51,7 @@ export type AgentLlmEvent =
   | { type: 'text'; delta: string }
   | { type: 'tool_use_start'; id: string; name: string }
   | { type: 'tool_use_input'; id: string; delta: string }
+  | { type: 'usage'; inputTokens: number; outputTokens: number } // cumulative REAL usage, streamed live per chunk
 
 interface StreamEvent {
   type: string
@@ -123,6 +125,7 @@ async function* callWithToolsAnthropic(
           inTokens = ev.message?.usage?.input_tokens ?? 0
           cacheReadTokens = ev.message?.usage?.cache_read_input_tokens ?? 0
           cacheCreationTokens = ev.message?.usage?.cache_creation_input_tokens ?? 0
+          onEvent?.({ type: 'usage', inputTokens: inTokens + cacheReadTokens + cacheCreationTokens, outputTokens: 0 })
           break
         case 'content_block_start': {
           const cb = ev.content_block
@@ -181,7 +184,10 @@ async function* callWithToolsAnthropic(
         }
         case 'message_delta':
           if (ev.delta?.stop_reason) stopReason = ev.delta.stop_reason as StopReason
-          if (typeof ev.usage?.output_tokens === 'number') outTokens = ev.usage.output_tokens
+          if (typeof ev.usage?.output_tokens === 'number') {
+            outTokens = ev.usage.output_tokens
+            onEvent?.({ type: 'usage', inputTokens: inTokens + cacheReadTokens + cacheCreationTokens, outputTokens: outTokens })
+          }
           break
         default:
           break
@@ -205,13 +211,14 @@ async function* callWithToolsAnthropic(
   return { content, stopReason, usage: { inTokens, outTokens, cacheReadTokens, cacheCreationTokens } }
 }
 
-// Protocol dispatcher: the loop calls this; it routes to the Anthropic or OpenAI tool-use adapter by
-// req.protocol. Both yield ToolUseBlock + return AssistantTurn, so the loop stays protocol-agnostic.
+// Protocol dispatcher: the loop calls this; it routes to the Anthropic / OpenAI / Gemini tool-use adapter by
+// req.protocol. All yield ToolUseBlock + return AssistantTurn, so the loop stays protocol-agnostic.
 export async function* callWithTools(
   req: AgentLlmRequest,
   onEvent?: (e: AgentLlmEvent) => void,
 ): AsyncGenerator<ToolUseBlock, AssistantTurn, void> {
   if (req.protocol === 'openai') return yield* callWithToolsOpenAI(req, onEvent)
+  if (req.protocol === 'gemini') return yield* callWithToolsGemini(req, onEvent)
   return yield* callWithToolsAnthropic(req, onEvent)
 }
 

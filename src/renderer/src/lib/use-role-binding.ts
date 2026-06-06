@@ -11,6 +11,18 @@ import { DEFAULT_IMAGE_MODEL, imageModelOptions } from '@/lib/image-models'
 
 export const FAMILY_LABEL: Record<string, string> = { anthropic: 'Anthropic', openai: 'OpenAI', gemini: 'Gemini' }
 
+// Context window for a model, resolved from the endpoint's catalog. An OAuth-routed slug (nicosoft/*) is
+// often ABSENT from nsai's /models list, so an exact lookup returns nothing (contextLength 0 → the composer
+// hides the readout). Fall back to the endpoint's other TEXT models: same endpoint ⇒ same family ⇒ same
+// context ballpark (gemini ~1M, claude 200K, …). Media models (an image backend's tiny ctx like 480) are
+// filtered out so they can't drag the estimate down. Returns 0 only when the endpoint exposes no text model.
+function resolveContextLength(models: EndpointDto['availableModels'], model: string): number {
+  const exact = models.find((m) => m.slug === model)?.contextLength
+  if (exact && exact > 0) return exact
+  const textCtxs = models.map((m) => m.contextLength).filter((c) => c >= 8192)
+  return textCtxs.length ? Math.max(...textCtxs) : 0
+}
+
 export interface RoleBindingControls {
   loaded: boolean
   endpoints: EndpointDto[]
@@ -74,7 +86,7 @@ export function useRoleBinding(expert: Expert): RoleBindingControls {
   const family: Family = selectedEp ? protocolToFamily(selectedEp.protocol) : expert.family
   const models = (selectedEp?.availableModels ?? []).map((m) => m.slug)
   const imageModels = imageModelOptions(models)
-  const contextLength = selectedEp?.availableModels.find((m) => m.slug === model)?.contextLength ?? 0
+  const contextLength = resolveContextLength(selectedEp?.availableModels ?? [], model)
   const depths = supportedDepths(getThinkingCapability(family, model))
 
   const persist = (eId: string, m: string, d: ThinkingDepth | '', im: string): void => {

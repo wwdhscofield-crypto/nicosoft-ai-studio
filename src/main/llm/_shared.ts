@@ -135,3 +135,36 @@ export function parseJSON(payload: string): unknown {
     return null
   }
 }
+
+// Encode a model slug into the Gemini URL path WITHOUT collapsing the provider slash. Our slugs can carry a
+// routing prefix (e.g. `nicosoft/gemini-3-flash-agent`) that nsai needs intact: ParseGeminiModelFromPath splits
+// the path on `:` and keeps everything before it as the full slug — prefix included. encodeURIComponent over the
+// whole string turns `/` into `%2F` and breaks that route, so encode each segment and rejoin with the slash.
+export function geminiModelPath(model: string): string {
+  return model.split('/').map(encodeURIComponent).join('/')
+}
+
+// Gemini's functionDeclarations.parameters is an OpenAPI 3.0 Schema subset — it 400s on the JSON-Schema-isms
+// that zod's toJSONSchema emits (`$schema`, `additionalProperties`, `exclusiveMinimum`, `const`, …) with
+// "Unknown name … Cannot find field". Recursively keep only the keys Gemini's Schema accepts. Dropped numeric
+// bounds don't matter for correctness — each tool's own zod safeParse still validates arguments locally.
+const GEMINI_SCHEMA_KEYS = new Set([
+  'type', 'format', 'title', 'description', 'nullable', 'enum', 'items', 'properties', 'required',
+  'minimum', 'maximum', 'minItems', 'maxItems', 'minLength', 'maxLength', 'minProperties', 'maxProperties',
+  'pattern', 'default', 'example', 'anyOf', 'propertyOrdering',
+])
+export function sanitizeGeminiSchema(schema: unknown): Record<string, unknown> {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return {}
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(schema as Record<string, unknown>)) {
+    if (!GEMINI_SCHEMA_KEYS.has(k)) continue
+    if (k === 'properties' && v && typeof v === 'object' && !Array.isArray(v)) {
+      const props: Record<string, unknown> = {}
+      for (const [pk, pv] of Object.entries(v as Record<string, unknown>)) props[pk] = sanitizeGeminiSchema(pv)
+      out[k] = props
+    } else if (k === 'items') out[k] = sanitizeGeminiSchema(v)
+    else if (k === 'anyOf' && Array.isArray(v)) out[k] = v.map((m) => sanitizeGeminiSchema(m))
+    else out[k] = v
+  }
+  return out
+}

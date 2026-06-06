@@ -120,6 +120,7 @@ export const chatOpenAI: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Pr
         if (u) {
           inTokens = u.input_tokens ?? 0
           outTokens = u.output_tokens ?? 0
+          onDelta({ usage: { inTokens, outTokens } }) // OpenAI reports usage only at the end — one correction
         }
       }
     }

@@ -98,10 +98,15 @@ export interface AgentContext {
   lsp?: LspHandle
 }
 
-// What a tool needs to make its own LLM call (a content-extraction summary, a delegated search).
+// What a tool needs to make its own LLM call (a content-extraction summary, a delegated search) or run a
+// side-channel backend (image generation). All injected by runAgent from the agent's own endpoint config.
 export interface AgentLlmAccess {
+  protocol: 'anthropic' | 'openai' | 'gemini' // which family's search API the WebSearch tool delegates to
   baseUrl: string
   apiKey: string
   smallModel: string // model for content extraction (WebFetch); defaults to the agent's main model
   searchModel: string // model for the server web_search tool (WebSearch); defaults to the main model
+  // Image backend slug for the ns_generate_image tool (designer). Runs on this same endpoint (Gemini
+  // only). Undefined for roles without the image tool; the tool then falls back to DEFAULT_IMAGE_MODEL.
+  imageModel?: string
 }

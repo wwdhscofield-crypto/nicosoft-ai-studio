@@ -31,7 +31,7 @@ import type {
 } from './types'
 
 export interface RunAgentParams {
-  protocol: 'anthropic' | 'openai'
+  protocol: 'anthropic' | 'openai' | 'gemini'
   baseUrl: string
   apiKey: string
   model: string
@@ -48,6 +48,7 @@ export interface RunAgentParams {
   thinking?: ThinkingParam // extended thinking (budgetTokens), forwarded to every model call this run
   smallModel?: string // model for WebFetch extraction; defaults to the main model
   searchModel?: string // model for WebSearch's server web_search call; defaults to the main model
+  imageModel?: string // image backend slug for ns_generate_image (designer); Gemini only
   onStream?: (e: AgentLlmEvent) => void // forwarded straight from the LLM call (text + tool deltas)
 }
 
@@ -122,7 +123,7 @@ export async function* runAgent(
   }
   const ctx: AgentContext = {
     ...params.ctx,
-    llm: params.ctx.llm ?? { baseUrl, apiKey, smallModel, searchModel },
+    llm: params.ctx.llm ?? { protocol: params.protocol, baseUrl, apiKey, smallModel, searchModel, imageModel: params.imageModel },
     setPermissionMode: setPlanMode,
   }
   // No fixed turn cap (aligned with claude-code / codex): the loop is bounded by autocompact + microcompact

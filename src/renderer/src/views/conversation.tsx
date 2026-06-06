@@ -13,7 +13,7 @@ import { EmptyState } from '@/components/empty-state'
 import { PathBar } from '@/components/path-bar'
 import { useWorkspace } from '@/stores/workspace'
 import { Avatar, DispatchBadge, NameChip } from '@/components/primitives'
-import { useChat, roleHasAgent, roleHasImageTool, type ChatMessage } from '@/stores/chat'
+import { useChat, roleHasAgent, roleHasImageGen, type ChatMessage } from '@/stores/chat'
 import { ToolBubble, ServerBubble, Sources } from '@/components/tool-bubble'
 import { Markdown } from '@/components/markdown'
 import { ApprovalDialog } from '@/components/approval-dialog'
@@ -46,7 +46,7 @@ function fmtElapsed(ms: number): string {
 // The live "thinking" readout shown while a reply streams: a steady role-colored dot (CSS breathes its
 // opacity — no spin) + elapsed · output-token estimate (chars/4, same heuristic Claude Code uses).
 // Tokens/elapsed appear once they're meaningful, so the pure-thinking phase (no text yet) is just the dot.
-function ThinkingReadout({ chars, inputTokens }: { chars: number; inputTokens: number }): ReactElement {
+function ThinkingReadout({ chars, inputTokens, outputTokens }: { chars: number; inputTokens: number; outputTokens?: number }): ReactElement {
   const startRef = useRef(Date.now())
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -54,8 +54,10 @@ function ThinkingReadout({ chars, inputTokens }: { chars: number; inputTokens: n
     return () => clearInterval(clock)
   }, [])
   const elapsed = now - startRef.current
-  const out = Math.round(chars / 4)
-  // ↑ prompt tokens sent up (last measured turn) · ↓ output tokens streaming back (chars/4 estimate).
+  // ↓ uses the REAL streamed output count when the provider reports it live (gemini/anthropic); falls back to
+  // a chars/4 estimate only until the first real usage lands (e.g. OpenAI, which reports at the end). ↑ is the
+  // real prompt size. So the readout shows BOTH ↑in and ↓out together throughout the turn.
+  const out = outputTokens && outputTokens > 0 ? outputTokens : Math.round(chars / 4)
   const parts: ReactElement[] = []
   if (elapsed >= 1000) parts.push(<span>{fmtElapsed(elapsed)}</span>)
   if (inputTokens > 0) parts.push(<span>↑ {fmtReadoutTokens(inputTokens)}</span>)
@@ -73,6 +75,18 @@ function ThinkingReadout({ chars, inputTokens }: { chars: number; inputTokens: n
   )
 }
 
+// Persistent token summary under a FINISHED assistant turn: the real ↑ input + ↓ output (upstream usage),
+// kept visible after the live readout's dot clears. The live ↓ was a chars/4 estimate; these are the
+// corrected upstream numbers from the done event. All four paths (chat/agent/coordinator/image) converge
+// on this one component, so the finalized cost reads identically no matter which produced the turn.
+function TokenSummary({ inputTokens, outputTokens }: { inputTokens?: number; outputTokens?: number }): ReactElement | null {
+  const parts: string[] = []
+  if (inputTokens) parts.push(`↑ ${fmtReadoutTokens(inputTokens)}`)
+  if (outputTokens) parts.push(`↓ ${fmtReadoutTokens(outputTokens)}`)
+  if (!parts.length) return null
+  return <span className="token-summary">{parts.join(' · ')} tokens</span>
+}
+
 // True when this assistant message represents Coordinator's synthesis step — the final pipeline message
 // where Coordinator merges the experts' outputs. Detected by being expertId='coordinator' inside a dispatch chain.
 function isSynthesis(msg: ChatMessage): boolean {
@@ -86,13 +100,15 @@ function ChatSegment({
   expert,
   expertById,
   onOpenImage,
-  inputTokens
+  inputTokens,
+  outputTokens
 }: {
   msg: ChatMessage
   expert: Expert
   expertById: Record<string, Expert>
   onOpenImage: (items: ViewerImage[], index: number) => void
   inputTokens: number
+  outputTokens: number
 }): ReactElement {
   const isUser = msg.role === 'user'
   // Lookup the per-message expert if Coordinator tagged it; fall back to the prop (the conversation's
@@ -138,27 +154,15 @@ function ChatSegment({
         ) : null}
         {msg.images && msg.images.length > 0 ? (
           <div className="msg-images">
-            {msg.images.map((img, i) =>
-              img.loading ? (
-                <div key={i} className="msg-img-thumb msg-img-loading" title="Generating image…">
-                  <span className="img-spinner" />
-                </div>
-              ) : (
-                <img
-                  key={i}
-                  className="msg-img-thumb"
-                  src={img.url}
-                  alt={img.name}
-                  onClick={() => {
-                    const ready = msg.images!.filter((x) => !x.loading)
-                    onOpenImage(
-                      ready.map((x) => ({ url: x.url, name: x.name })),
-                      ready.findIndex((x) => x.url === img.url)
-                    )
-                  }}
-                />
-              )
-            )}
+            {msg.images.map((img, i) => (
+              <img
+                key={i}
+                className="msg-img-thumb"
+                src={img.url}
+                alt={img.name}
+                onClick={() => onOpenImage(msg.images!.map((x) => ({ url: x.url, name: x.name })), i)}
+              />
+            ))}
           </div>
         ) : null}
         {msg.tools && msg.tools.length > 0 ? msg.tools.map((t) => <ToolBubble key={t.id} tool={t} />) : null}
@@ -168,8 +172,31 @@ function ChatSegment({
             or any tool still running. The moment the turn finishes / goes idle it disappears: a finished or
             inactive conversation carries no lingering token status. */}
         {msg.streaming || msg.tools?.some((t) => t.status === 'running') ? (
-          <ThinkingReadout chars={msg.text.length} inputTokens={inputTokens} />
+          <ThinkingReadout chars={msg.text.length} inputTokens={inputTokens} outputTokens={outputTokens} />
+        ) : !isUser && (msg.inputTokens || msg.outputTokens) ? (
+          <TokenSummary inputTokens={msg.inputTokens} outputTokens={msg.outputTokens} />
         ) : null}
+      </div>
+    </div>
+  )
+}
+
+// Conversation-level "working" readout for the gap BETWEEN turns: the agent has finished a step (tool done /
+// prior turn complete) and is thinking about the next one, with nothing streaming yet — so the per-message
+// readout has nowhere to live (no streaming message, no running tool). Without this a long thinking phase
+// (especially Gemini 3 high) is dead air. It renders as the same kind of segment the next turn will become
+// (same expert, pulsing avatar), then vanishes the instant that turn starts streaming or the turn ends.
+function PendingReadout({ expert, inputTokens, outputTokens }: { expert: Expert; inputTokens: number; outputTokens: number }): ReactElement {
+  return (
+    <div className="segment" style={{ '--seg-color': expert.color } as CSSProperties}>
+      <div className="seg-head">
+        <Avatar expert={expert} you={false} size={28} streaming />
+        <div className="seg-meta">
+          <NameChip expert={expert} />
+        </div>
+      </div>
+      <div className="seg-body">
+        <ThinkingReadout chars={0} inputTokens={inputTokens} outputTokens={outputTokens} />
       </div>
     </div>
   )
@@ -229,15 +256,16 @@ function Composer({
   const selectedEp = b.endpoints.find((e) => e.id === b.endpointId)
   const agent = roleHasAgent(expert.id)
   // Engineer (coding agent) needs a project folder; other agent roles run without one (folder = an
-  // optional restricted-read boundary). Agent roles need an Anthropic or OpenAI endpoint (the loop's
-  // two protocols; Gemini agent loop isn't wired yet).
+  // optional restricted-read boundary). Agent roles need an Anthropic / OpenAI / Gemini endpoint — the
+  // loop's three tool-use protocols (doc 29 wired Gemini's function-calling agent loop).
   const needsCwd = agent && (expert.id === 'engineer' || expert.id === 'shuri')
   const needAgentProto =
     agent &&
     !!selectedEp &&
     selectedEp.protocol !== 'anthropic' &&
     selectedEp.protocol !== 'openai' &&
-    selectedEp.protocol !== 'custom'
+    selectedEp.protocol !== 'custom' &&
+    selectedEp.protocol !== 'gemini'
   const noEndpoint =
     b.loaded &&
     (b.endpoints.length === 0 || !selectedEp || !selectedEp.enabled || !selectedEp.hasKey || !b.model || needAgentProto)
@@ -285,7 +313,7 @@ function Composer({
       cwd: agent ? cwd : undefined,
       contextWindow: agent ? b.contextLength || undefined : undefined,
       permissionMode: agent ? mode : undefined,
-      imageModel: roleHasImageTool(expert.id) ? b.imageModel : undefined
+      imageModel: roleHasImageGen(expert.id) ? b.imageModel : undefined
     })
   }
 
@@ -314,7 +342,7 @@ function Composer({
             <Icons.plug size={15} style={{ color: 'var(--text-3)' }} />
             <span>
               {needAgentProto
-                ? `${expert.name} is an agent — bind an Anthropic or OpenAI endpoint in its profile`
+                ? `${expert.name} is an agent — bind an Anthropic, OpenAI, or Gemini endpoint in its profile`
                 : `Bind an endpoint with a key and model to chat with ${expert.name}`}
             </span>
             <span className="db-arrow" onClick={onOpenSettings}>
@@ -329,7 +357,7 @@ function Composer({
         <div className={'composer2' + (ready ? '' : ' disabled')}>
           <div className="cmp-toolbar">
             <ModelPicker models={b.models} value={b.model} onChange={b.onModel} disabled={!ready} />
-            {roleHasImageTool(expert.id) ? (
+            {roleHasImageGen(expert.id) ? (
               <ImageModelPicker models={b.imageModels} value={b.imageModel} onChange={b.onImageModel} disabled={!ready} />
             ) : null}
             <ThinkingPicker family={b.family} model={b.model} depth={effectiveDepth} onChange={b.onDepth} disabled={!ready} />
@@ -421,6 +449,8 @@ export function ChatView({ expert, onOpenSettings, onBackToProject }: { expert: 
   const activeConv = chat.activeConv
   const messages = activeConv ? (chat.byConversation[activeConv] ?? []) : []
   const baseTokens = activeConv ? (chat.contextTokens[activeConv] ?? 0) : 0
+  const baseOut = activeConv ? (chat.liveOutput[activeConv] ?? 0) : 0
+  const convStreaming = activeConv ? (chat.streaming[activeConv] ?? false) : false
   const error = activeConv ? chat.error[activeConv] : null
   const permission = activeConv ? chat.permission[activeConv] : null
   const question = activeConv ? chat.question[activeConv] : null
@@ -520,11 +550,17 @@ export function ChatView({ expert, onOpenSettings, onBackToProject }: { expert: 
               return (
                 <Fragment key={m.id}>
                   {showBadge ? <DispatchBadge chain={m.dispatch as string[]} /> : null}
-                  <ChatSegment msg={m} expert={expert} expertById={expertById} onOpenImage={openImage} inputTokens={baseTokens} />
+                  <ChatSegment msg={m} expert={expert} expertById={expertById} onOpenImage={openImage} inputTokens={baseTokens} outputTokens={baseOut} />
                 </Fragment>
               )
             })
           )}
+          {convStreaming &&
+          messages.length > 0 &&
+          !messages[messages.length - 1].streaming &&
+          !messages[messages.length - 1].tools?.some((t) => t.status === 'running') ? (
+            <PendingReadout expert={expert} inputTokens={baseTokens} outputTokens={baseOut} />
+          ) : null}
           {error ? (
             <div className="inline-notice">
               <span className="n-icon">
@@ -562,7 +598,7 @@ export function ChatView({ expert, onOpenSettings, onBackToProject }: { expert: 
           onClose={() => setViewer(null)}
           onStep={(d) => setViewer((v) => (v ? { ...v, index: (v.index + d + v.items.length) % v.items.length } : v))}
           onDownload={downloadImage}
-          onRefine={roleHasImageTool(expert.id) ? refineImage : undefined}
+          onRefine={roleHasImageGen(expert.id) ? refineImage : undefined}
         />
       ) : null}
     </div>

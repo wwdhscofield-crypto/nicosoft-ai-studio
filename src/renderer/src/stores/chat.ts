@@ -18,13 +18,16 @@ type ConversationDto = Awaited<ReturnType<typeof window.api.conversations.list>>
 // because the coordinator.service runs each step through llmChat. Coordinator itself routes through window.api.coordinator.
 // Roles whose replies run through the agent loop (tools). Engineer (Anthropic) + the OpenAI roles
 // (generalist/analyst/scheduler) via the OpenAI Responses adapter (doc 16). Gemini roles join later.
-const AGENT_ROLES = new Set(['engineer', 'shuri', 'generalist', 'analyst', 'scheduler'])
-// Roles whose replies come from the chat + ns_generate_image loop (image_tool.service): the chat model
-// drives the conversation and calls the tool to generate images. This version: designer only.
-const IMAGE_TOOL_ROLES = new Set(['designer'])
+// designer (Georgia) now runs the full Gemini agent loop too — ns_generate_image is one of her tools, so
+// generated images flow through the same tool→attachment path as any agent image (no separate loop).
+const AGENT_ROLES = new Set(['engineer', 'shuri', 'generalist', 'analyst', 'scheduler', 'translator', 'editor', 'designer'])
+// Roles that generate images (the ns_generate_image tool is in their kit). A UI predicate only: it drives
+// the composer's image-model picker + passing imageModel to the run. Execution always goes through the
+// agent loop (these roles are in AGENT_ROLES); the tool itself is gated server-side by the Tools setting.
+const IMAGE_GEN_ROLES = new Set(['designer'])
 const COORDINATOR_ID = 'coordinator'
 export const roleHasAgent = (expertId: string): boolean => AGENT_ROLES.has(expertId)
-export const roleHasImageTool = (expertId: string): boolean => IMAGE_TOOL_ROLES.has(expertId)
+export const roleHasImageGen = (expertId: string): boolean => IMAGE_GEN_ROLES.has(expertId)
 export const roleIsCoordinator = (expertId: string): boolean => expertId === COORDINATOR_ID
 
 export interface ToolCall {
@@ -38,7 +41,7 @@ export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   text: string
-  images?: { url: string; name: string; loading?: boolean }[]
+  images?: { url: string; name: string }[]
   tools?: ToolCall[] // present on agent (tool-using) turns
   servers?: ServerNote[] // server-side tools the API ran (web_search etc.) — shown as faint status rows
   citations?: { url: string; title?: string }[] // web_search sources for the answer — shown as a Sources list
@@ -49,6 +52,7 @@ export interface ChatMessage {
   expertId?: string | null
   dispatch?: string[] | null
   inputTokens?: number // measured prompt (sent) tokens for THIS turn — per-message so collab experts each show their own; drives the finalized readout
+  outputTokens?: number // real output tokens for THIS turn (upstream usage) — finalized ↓ readout once the turn completes
 }
 // A server-side tool the API executed (e.g. OpenAI web_search) — carried as a server block, shown as a
 // faint status row (no expand / result; the API ran it, not the loop).
@@ -113,6 +117,7 @@ interface ChatState {
   question: Record<string, QuestionPrompt | null> // per-conversation AskUserQuestion prompt
   approvals: Record<string, ApprovalCard[]> // per-conversation coordinator approval cards (yellow notes + red pending)
   contextTokens: Record<string, number> // per-conversation exact prompt tokens of the last sent turn
+  liveOutput: Record<string, number> // per-conversation REAL output tokens, streamed live during a turn (↓ readout)
   loadConversations: () => Promise<void>
   openConversation: (convId: string) => Promise<void>
   newConversation: () => void
@@ -134,7 +139,6 @@ type Meta = { convId: string; expertId: string; endpointId: string; model: strin
 const streamMeta = new Map<string, Meta>() // chat (plain text) path: streamId → conversation
 const agentMeta = new Map<string, Meta>() // agent (tool use) path: streamId → conversation
 const coordinatorMeta = new Map<string, { convId: string; endpointId: string; model: string }>() // coordinator: streamId → conversation
-const imageToolMeta = new Map<string, { convId: string; endpointId: string; model: string }>() // image tool (designer): streamId → conversation
 let creating = false // sync guard: blocks a double-create when a fresh thread's first message fires twice
 let listening = false
 
@@ -155,9 +159,10 @@ export const useChat = create<ChatState>((set, get) => {
     })
   }
 
-  // Attach a generated image (nsai-media:// url) to the current streaming assistant message — the
-  // designer image-tool loop interleaves text deltas and generated images within one turn.
-  const appendImage = (convId: string, image: { url: string; name: string; loading?: boolean }): void => {
+  // Attach a generated image (nsai-media:// url) to the current streaming assistant message. An agent tool
+  // (Georgia's ns_generate_image, code_execution charts) produced it; the image is ready when this fires
+  // (the tool ran synchronously), so it lands directly on the live bubble — no loading placeholder.
+  const appendImage = (convId: string, image: { url: string; name: string }): void => {
     set((s) => {
       const msgs = (s.byConversation[convId] ?? []).map((m) => ({ ...m }))
       let cur = msgs[msgs.length - 1]
@@ -167,28 +172,6 @@ export const useChat = create<ChatState>((set, get) => {
       }
       cur.images = [...(cur.images ?? []), image]
       return { byConversation: { ...s.byConversation, [convId]: msgs } }
-    })
-  }
-
-  // Replace the most recent loading placeholder (added by onImageStart) with the finished image.
-  const fulfillImage = (convId: string, image: { url: string; name: string }): void => {
-    set((s) => {
-      const msgs = (s.byConversation[convId] ?? []).map((m) => ({ ...m }))
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        const imgs = msgs[i].images
-        if (!imgs) continue
-        let li = -1
-        for (let j = imgs.length - 1; j >= 0; j--)
-          if (imgs[j].loading) {
-            li = j
-            break
-          }
-        if (li >= 0) {
-          msgs[i] = { ...msgs[i], images: imgs.map((x, idx) => (idx === li ? { url: image.url, name: image.name } : x)) }
-          return { byConversation: { ...s.byConversation, [convId]: msgs } }
-        }
-      }
-      return s // no placeholder found (shouldn't happen) — leave state untouched
     })
   }
 
@@ -228,6 +211,7 @@ export const useChat = create<ChatState>((set, get) => {
           cur.streaming = false
           cur.text = d.text // done is authoritative
           if (typeof d.inputTokens === 'number') cur.inputTokens = d.inputTokens
+          if (typeof d.usage?.outTokens === 'number') cur.outputTokens = d.usage.outTokens
         }
         return {
           byConversation: { ...s.byConversation, [meta.convId]: msgs },
@@ -238,7 +222,7 @@ export const useChat = create<ChatState>((set, get) => {
       if (typeof ctxTok === 'number')
         set((s) => ({ contextTokens: { ...s.contextTokens, [meta.convId]: ctxTok } }))
       void window.api.conversations
-        .append(meta.convId, { author: 'expert', expertId: meta.expertId, model: meta.model, content: d.text, inputTokens: ctxTok })
+        .append(meta.convId, { author: 'expert', expertId: meta.expertId, model: meta.model, content: d.text, inputTokens: ctxTok, outputTokens: d.usage?.outTokens })
         .then(() => get().loadConversations())
       void window.api.memory.onTurn({ convId: meta.convId, roleId: meta.expertId, endpointId: meta.endpointId, model: meta.model })
       void window.api.chat.compress({ convId: meta.convId, roleId: meta.expertId, endpointId: meta.endpointId, model: meta.model, currentTokens: ctxTok })
@@ -363,6 +347,7 @@ export const useChat = create<ChatState>((set, get) => {
         if (cur && cur.role === 'assistant') {
           cur.streaming = false
           if (typeof d.inputTokens === 'number') cur.inputTokens = d.inputTokens
+          if (typeof d.outputTokens === 'number') cur.outputTokens = d.outputTokens
         }
         return {
           byConversation: { ...s.byConversation, [meta.convId]: msgs },
@@ -380,6 +365,27 @@ export const useChat = create<ChatState>((set, get) => {
       const meta = agentMeta.get(d.streamId)
       agentMeta.delete(d.streamId)
       if (meta) finishWithError(meta.convId, d.message)
+    })
+    // Unified live ↑ readout for EVERY path (chat / agent / coordinator / image): each path broadcasts its
+    // real prompt size up front and as the turn grows, keyed by convId, so the working indicator shows ↑
+    // tokens during thinking + between-turns gaps no matter which path runs. Output stays a live estimate
+    // (its real value lands on each path's done event); this channel carries only the real ↑ input.
+    window.api.onConvUsage((d) => {
+      set((s) => ({
+        contextTokens: { ...s.contextTokens, [d.convId]: d.inputTokens },
+        // Real output only rides the streaming pings; the input-only ping (start / between turns) keeps the
+        // last value, so ↓ stays visible next to ↑ across the whole turn instead of flickering to an estimate.
+        liveOutput: typeof d.outputTokens === 'number' ? { ...s.liveOutput, [d.convId]: d.outputTokens } : s.liveOutput
+      }))
+    })
+
+    // Live generated images from an in-flight agent turn (Georgia's ns_generate_image, code_execution
+    // charts): the loop persisted the image to the media store and broadcasts its nsai-media:// ref here.
+    // Attach it to the streaming assistant bubble immediately — the tool runs synchronously (the card spinner
+    // is the "generating" indicator), so the ready image lands without a placeholder. It's also persisted on
+    // the final assistant message, so a reopened conversation re-reads it from the DB (openConversation).
+    window.api.onConvImage((d) => {
+      appendImage(d.convId, { url: d.attachment.url, name: d.attachment.name ?? 'image' })
     })
 
     // ---- coordinator (router + multi-expert dispatch) path ----
@@ -426,7 +432,7 @@ export const useChat = create<ChatState>((set, get) => {
         // isn't necessarily this step's. step:done text is authoritative over the delta accumulator.
         for (let i = msgs.length - 1; i >= 0; i--) {
           if (msgs[i].role === 'assistant' && msgs[i].streaming && msgs[i].expertId === d.roleId) {
-            msgs[i] = { ...msgs[i], text: d.text, streaming: false, ...(typeof d.inputTokens === 'number' ? { inputTokens: d.inputTokens } : {}) }
+            msgs[i] = { ...msgs[i], text: d.text, streaming: false, ...(typeof d.inputTokens === 'number' ? { inputTokens: d.inputTokens } : {}), ...(typeof d.outputTokens === 'number' ? { outputTokens: d.outputTokens } : {}) }
             break
           }
         }
@@ -444,6 +450,7 @@ export const useChat = create<ChatState>((set, get) => {
         if (cur && cur.role === 'assistant') {
           cur.streaming = false
           if (cur.inputTokens === undefined && typeof d.inputTokens === 'number') cur.inputTokens = d.inputTokens
+          if (cur.outputTokens === undefined && typeof d.outputTokens === 'number') cur.outputTokens = d.outputTokens
         }
         return {
           byConversation: { ...s.byConversation, [meta.convId]: msgs },
@@ -570,72 +577,6 @@ export const useChat = create<ChatState>((set, get) => {
       }
     })
 
-    // ---- image tool (designer chat + ns_generate_image) path ----
-    // Text deltas accumulate like a normal chat reply; image events attach a generated image
-    // (nsai-media:// ref) to the same streaming assistant bubble. done/error mirror the chat path.
-    const it = window.api.imagetool
-    it.onDelta((d) => {
-      const meta = imageToolMeta.get(d.streamId)
-      if (meta) appendDelta(meta.convId, d.text)
-    })
-    it.onImageStart((d) => {
-      const meta = imageToolMeta.get(d.streamId)
-      if (meta) appendImage(meta.convId, { url: '', name: '', loading: true })
-    })
-    it.onImage((d) => {
-      const meta = imageToolMeta.get(d.streamId)
-      if (meta) fulfillImage(meta.convId, { url: d.attachment.url, name: d.attachment.name ?? 'image' })
-    })
-    it.onTurnBreak((d) => {
-      // End the current assistant message (the "generating…" text + image) and immediately open the
-      // next, empty streaming message. The fresh message keeps the thinking readout visible right after
-      // the image while the closing reply is generated — no status gap (ccb-style) — and the closing
-      // deltas fill it in, so the wrap-up still renders AFTER the image.
-      const meta = imageToolMeta.get(d.streamId)
-      if (!meta) return
-      set((s) => {
-        const msgs = (s.byConversation[meta.convId] ?? []).map((m) => ({ ...m }))
-        const cur = msgs[msgs.length - 1]
-        if (cur && cur.role === 'assistant' && cur.streaming) {
-          cur.streaming = false
-          if (cur.images) cur.images = cur.images.filter((x) => !x.loading) // drop a failed gen's placeholder
-        }
-        msgs.push({ id: uid(), role: 'assistant', text: '', streaming: true })
-        return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
-      })
-    })
-    it.onDone((d) => {
-      const meta = imageToolMeta.get(d.streamId)
-      imageToolMeta.delete(d.streamId)
-      if (!meta) return
-      set((s) => {
-        const msgs = (s.byConversation[meta.convId] ?? []).map((m) => ({ ...m }))
-        const cur = msgs[msgs.length - 1]
-        if (cur && cur.role === 'assistant') {
-          cur.streaming = false
-          // Drop any unfulfilled loading placeholder — a generation that errored never sent onImage,
-          // so its spinner would otherwise hang forever (the round-N reply explains the failure).
-          if (cur.images) cur.images = cur.images.filter((x) => !x.loading)
-        }
-        // Drop a trailing empty message — the closing turn opened on turnbreak that produced no text
-        // (closing call failed / returned nothing) would otherwise render as a blank bubble.
-        const tail = msgs[msgs.length - 1]
-        if (tail && tail.role === 'assistant' && !tail.text.trim() && !tail.images?.length && !tail.tools?.length) {
-          msgs.pop()
-        }
-        return {
-          byConversation: { ...s.byConversation, [meta.convId]: msgs },
-          streaming: { ...s.streaming, [meta.convId]: false },
-          contextTokens: { ...s.contextTokens, [meta.convId]: d.inputTokens }
-        }
-      })
-      void get().loadConversations()
-    })
-    it.onError((d) => {
-      const meta = imageToolMeta.get(d.streamId)
-      imageToolMeta.delete(d.streamId)
-      if (meta) finishWithError(meta.convId, d.message)
-    })
   }
 
   // Drop the trailing streaming placeholder + surface the error (shared by both paths).
@@ -661,6 +602,7 @@ export const useChat = create<ChatState>((set, get) => {
     question: {},
     approvals: {},
     contextTokens: {},
+    liveOutput: {},
 
     loadConversations: async () => {
       set({ conversations: await window.api.conversations.list() })
@@ -686,7 +628,8 @@ export const useChat = create<ChatState>((set, get) => {
           citations: run?.citations.length ? run.citations : undefined,
           expertId: m.author === 'user' ? null : m.expertId,
           dispatch: m.dispatch,
-          inputTokens: m.author !== 'user' && m.inputTokens > 0 ? m.inputTokens : undefined
+          inputTokens: m.author !== 'user' && m.inputTokens > 0 ? m.inputTokens : undefined,
+          outputTokens: m.author !== 'user' && m.outputTokens > 0 ? m.outputTokens : undefined
         }
       })
       // Seed the composer readout from the most recent assistant turn's measured prompt tokens.
@@ -771,29 +714,10 @@ export const useChat = create<ChatState>((set, get) => {
         return
       }
 
-      // ns_generate_image can be toggled off in Extensions → Tools; when off, the designer falls through
-      // to the plain chat path below (no image generation). Non-designer roles short-circuit the read.
-      if (roleHasImageTool(expertId) && ((await window.api.settings.get<boolean>('tools.generate_image.enabled')) ?? true)) {
-        // Designer path: persist the user turn (chat-path style), then run the chat + ns_generate_image
-        // loop. Generated images come back as nsai-media:// attachments on the assistant turn (persisted
-        // by image_tool.service). The image backend defaults server-side; B5/B7 let the user pick it.
-        try {
-          await window.api.conversations.append(cid, {
-            author: 'user',
-            expertId,
-            content: text,
-            attachments: userImages.map((i) => ({ url: i.url, name: i.name }))
-          })
-          const { streamId } = await window.api.imagetool.run({ convId: cid, endpointId, model, imageModel, thinking, prompt: text })
-          imageToolMeta.set(streamId, { convId: cid, endpointId, model })
-        } catch (e) {
-          finishWithError(cid, e instanceof Error ? e.message : String(e))
-        }
-        return
-      }
-
       if (roleHasAgent(expertId)) {
         // Agent path: the backend persists the user turn + final reply itself; we don't append here.
+        // imageModel rides along for designer (Georgia) — the backend hands it to ns_generate_image; the
+        // tool itself is gated server-side by the Tools setting, so no enabled-check is needed here.
         try {
           const { streamId } = await window.api.agent.run({
             convId: cid,
@@ -805,6 +729,7 @@ export const useChat = create<ChatState>((set, get) => {
             permissionMode,
             thinking,
             contextWindow,
+            imageModel,
             images: images?.map((i) => ({ dataUrl: i.dataUrl, mime: i.mime }))
           })
           agentMeta.set(streamId, { convId: cid, expertId, endpointId, model })
@@ -875,12 +800,6 @@ export const useChat = create<ChatState>((set, get) => {
         if (meta.convId === cid) {
           void window.api.coordinator.stop(sid)
           coordinatorMeta.delete(sid)
-        }
-      }
-      for (const [sid, meta] of imageToolMeta) {
-        if (meta.convId === cid) {
-          void window.api.imagetool.stop(sid)
-          imageToolMeta.delete(sid)
         }
       }
       // Also clear any pending approval: stop just deleted the agentMeta, so the backend's done/cancel

@@ -157,7 +157,7 @@ const COMPACT_SUFFIX =
   'summary or recap; pick up the work.'
 
 export interface CompactConfig {
-  protocol: 'anthropic' | 'openai'
+  protocol: 'anthropic' | 'openai' | 'gemini'
   baseUrl: string
   apiKey: string
   model: string

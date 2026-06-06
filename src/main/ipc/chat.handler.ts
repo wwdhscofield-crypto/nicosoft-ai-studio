@@ -3,6 +3,7 @@ import { ulid } from 'ulid'
 import * as chatService from '../services/chat.service'
 import * as compressionService from '../services/compression.service'
 import { LlmError } from '../llm/types'
+import { broadcastUsage } from './usage-broadcast'
 import type { ChatSendInput, ChatCompressInput } from './contracts'
 
 // Streaming chat over IPC: `chat:send` starts a stream and returns its streamId promptly; tokens
@@ -21,8 +22,11 @@ export function registerChatHandlers(): void {
     void chatService
       .send(
         input,
-        (text) => {
-          if (!sender.isDestroyed()) sender.send('chat:delta', { streamId, text })
+        {
+          onDelta: (text) => {
+            if (!sender.isDestroyed()) sender.send('chat:delta', { streamId, text })
+          },
+          onUsage: (inputTokens, outputTokens) => broadcastUsage(sender, input.convId, inputTokens, outputTokens)
         },
         controller.signal
       )

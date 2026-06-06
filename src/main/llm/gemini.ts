@@ -5,7 +5,7 @@
 // candidates[0].content.parts and cumulative usage in usageMetadata.
 
 import type { ChatAttachment, ChatFn, ChatMessage, ChatRequest, ChatResult, OnDelta, ToolCall } from './types'
-import { iterSSE, openStream, parseJSON, toLlmError } from './_shared'
+import { geminiModelPath, iterSSE, openStream, parseJSON, sanitizeGeminiSchema, toLlmError } from './_shared'
 import { ulid } from '../db/id'
 
 const PROVIDER = 'gemini'
@@ -108,7 +108,13 @@ function buildBody(req: ChatRequest): GeminiBody {
   }
   if (req.tools?.length) {
     body.tools = [
-      { functionDeclarations: req.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })) }
+      {
+        functionDeclarations: req.tools.map((t) => {
+          const parameters = sanitizeGeminiSchema(t.parameters)
+          if (!parameters.type) parameters.type = 'object'
+          return { name: t.name, description: t.description, parameters }
+        })
+      }
     ]
   }
   return body
@@ -142,7 +148,7 @@ export const chatGemini: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Pr
   // functionCall parts reliably over SSE — the default JSON-array stream drops them (the model replies
   // with prose like "I'm generating…" instead of calling the tool). Google supports alt=sse natively;
   // nsai's Gemini adapter forwards it upstream when the client asks.
-  const url = `${base}/v1beta/models/${encodeURIComponent(req.model)}:streamGenerateContent?alt=sse`
+  const url = `${base}/v1beta/models/${geminiModelPath(req.model)}:streamGenerateContent?alt=sse`
   const reader = await openStream(PROVIDER, url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': req.apiKey },
@@ -178,9 +184,11 @@ export const chatGemini: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Pr
       }
       const u = chunk.usageMetadata
       if (u) {
-        // Each array element reports cumulative totals; keep the latest non-zero values.
+        // Each array element reports cumulative totals; keep the latest non-zero values AND stream them so
+        // the live readout shows REAL ↑input + ↓output together during the turn.
         if (typeof u.promptTokenCount === 'number' && u.promptTokenCount > 0) inTokens = u.promptTokenCount
         if (typeof u.candidatesTokenCount === 'number' && u.candidatesTokenCount > 0) outTokens = u.candidatesTokenCount
+        onDelta({ usage: { inTokens, outTokens } })
       }
     }
   } catch (err) {

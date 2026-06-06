@@ -94,12 +94,34 @@ export interface AgentRunInput {
   thinking?: { effort?: 'minimal' | 'none' | 'low' | 'medium' | 'high' | 'xhigh'; budgetTokens?: number }
   // Pasted/attached images as data URLs (base64); sent as Anthropic image blocks in the seed user turn.
   images?: { dataUrl: string; mime: string }[]
+  // Image backend slug for the ns_generate_image tool (designer / Georgia). Gemini only; undefined for
+  // roles without the image tool (the tool then falls back to DEFAULT_IMAGE_MODEL).
+  imageModel?: string
 }
 
 // Text streamed from the assistant as it generates (before the turn completes).
 export interface AgentTextDelta {
   streamId: string
   text: string
+}
+// Unified live usage for ANY in-flight turn (chat / agent / coordinator / image), keyed by convId. Carries
+// the REAL cumulative ↑input and ↓output, streamed per chunk where the provider reports it live (gemini's
+// usageMetadata, anthropic's message_delta) so the working readout shows BOTH together during the turn — not
+// a chars/4 estimate. outputTokens is omitted on the initial / between-turns input-only ping (the renderer
+// keeps the last real output then); OpenAI, which only reports usage at the end, lands it once at done.
+export interface ConvUsage {
+  convId: string
+  inputTokens: number
+  outputTokens?: number
+}
+// A generated image surfaced live from an in-flight agent turn, keyed by convId (like ConvUsage). An agent
+// tool (ns_generate_image, code_execution charts, view_image) returned an image; the loop persisted it to
+// the media store (nsai-media:// ref) and broadcasts it here so the renderer attaches it to the streaming
+// assistant bubble immediately — without shipping base64 over IPC. It's also persisted on the final
+// assistant message, so reopening the conversation shows it from the DB.
+export interface ConvImage {
+  convId: string
+  attachment: MessageAttachmentDto
 }
 // A tool the model just started calling — streamed the moment the call begins, before the turn
 // finishes, so the renderer can show a running tool card immediately instead of waiting. The full
@@ -169,6 +191,7 @@ export interface AgentDone {
   reason: string
   turns: number
   inputTokens?: number // exact prompt context for this run (count_tokens), drives the composer readout
+  outputTokens?: number // real output tokens (upstream usage) — corrects the live chars/4 estimate at end
 }
 export interface AgentErrorDto {
   streamId: string
@@ -235,10 +258,12 @@ export interface CoordinatorStepDone {
   roleId: string
   text: string
   inputTokens: number
+  outputTokens?: number // real output tokens for this step — corrects the live ↓ estimate at step end
 }
 export interface CoordinatorDoneDto {
   streamId: string
   inputTokens?: number // tokens of the LAST step in the turn — drives the composer readout
+  outputTokens?: number // real output tokens of the last step
 }
 export interface CoordinatorErrorDto {
   streamId: string
@@ -297,39 +322,6 @@ export interface PendingApprovalDto {
   cwd: string
   reason: string
   createdAt: string
-}
-
-// === Image tool (designer chat + ns_generate_image) ===
-export interface ImageToolRunInputDto {
-  convId: string
-  endpointId: string
-  model: string // chat model (gemini-3.5-flash)
-  imageModel?: string // image backend slug; defaults to Nano Banana Pro
-  thinking?: { effort?: 'minimal' | 'none' | 'low' | 'medium' | 'high' | 'xhigh'; budgetTokens?: number }
-  prompt: string
-}
-export interface ImageToolDeltaDto {
-  streamId: string
-  text: string
-}
-export interface ImageToolImageStartDto {
-  streamId: string
-}
-export interface ImageToolImageDto {
-  streamId: string
-  attachment: MessageAttachmentDto
-}
-export interface ImageToolTurnBreakDto {
-  streamId: string
-}
-export interface ImageToolDoneDto {
-  streamId: string
-  inputTokens: number
-}
-export interface ImageToolErrorDto {
-  streamId: string
-  code: string
-  message: string
 }
 
 // === Roles (expert → endpoint/model binding + per-role state) ===
@@ -419,6 +411,7 @@ export interface MessageDto {
   attachments: MessageAttachmentDto[]
   runId: string | null // agent run id (Engineer); null for plain chat
   inputTokens: number // exact prompt context counted before this turn was sent (0 if unknown)
+  outputTokens: number // real output tokens for this turn (0 if unknown / user message)
   dispatch: string[] | null // coordinator pipeline chain; null for single-expert / direct chat / agent turns
   createdAt: string
 }
@@ -430,6 +423,7 @@ export interface MessageAppendDto {
   attachments?: MessageAttachmentDto[]
   runId?: string
   inputTokens?: number // exact prompt context for this turn (assistant messages)
+  outputTokens?: number // real output tokens for this turn (assistant messages)
   dispatch?: string[] // set by coordinator.service for pipeline steps; renderer reads it via MessageDto.dispatch
 }
 export interface ConversationTitleInput {

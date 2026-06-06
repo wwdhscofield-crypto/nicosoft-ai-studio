@@ -147,8 +147,12 @@ export const chatAnthropic: ChatFn = async (req: ChatRequest, onDelta: OnDelta):
             (u.cache_creation_input_tokens ?? 0)
         }
         if (u && typeof u.output_tokens === 'number') outTokens = u.output_tokens
+        onDelta({ usage: { inTokens, outTokens } }) // live ↑in (real, incl. cache) from the very first event
       } else if (ev.type === 'message_delta') {
-        if (ev.usage && typeof ev.usage.output_tokens === 'number') outTokens = ev.usage.output_tokens
+        if (ev.usage && typeof ev.usage.output_tokens === 'number') {
+          outTokens = ev.usage.output_tokens
+          onDelta({ usage: { inTokens, outTokens } }) // live ↓out, real, accumulating per delta
+        }
       }
     }
   } catch (err) {

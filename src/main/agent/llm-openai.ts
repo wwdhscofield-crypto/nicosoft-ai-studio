@@ -224,6 +224,9 @@ export async function* callWithToolsOpenAI(
           if (u) {
             inTokens = u.input_tokens ?? 0
             outTokens = u.output_tokens ?? 0
+            // OpenAI reports usage only at the end (no per-delta counts), so this is a single end-of-turn
+            // correction; the live readout estimates ↓ until it lands.
+            onEvent?.({ type: 'usage', inputTokens: inTokens, outputTokens: outTokens })
           }
           break
         }
