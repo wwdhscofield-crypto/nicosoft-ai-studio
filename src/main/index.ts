@@ -1,6 +1,5 @@
-import { app, shell, BrowserWindow, ipcMain, protocol, nativeImage } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, protocol } from 'electron'
 import { join } from 'path'
-import { existsSync } from 'fs'
 import { getDb } from './db/connection'
 import { registerIpc } from './ipc/register'
 import { registerMediaProtocol, MEDIA_PRIVILEGED_SCHEME } from './media/protocol'
@@ -14,12 +13,10 @@ import { scheduledTaskStore } from './agent/scheduler/store'
 // (media/storage.ts) so attachments load by reference instead of base64-inlining into the DB/DOM.
 protocol.registerSchemesAsPrivileged([MEDIA_PRIVILEGED_SCHEME])
 
-// App icon. Packaged builds use the bundled icns/ico baked in by electron-builder; in dev the window +
-// dock would otherwise show the default Electron icon, so point them at the source PNG resolved from the
-// project root. Guarded by existsSync so a missing asset never throws.
-// __dirname is out/main in dev (same base as the preload path above); out/main → ../../ = project root.
-const devIconPath = !app.isPackaged ? join(__dirname, '../../build/icon.png') : ''
-const devIcon = devIconPath && existsSync(devIconPath) ? nativeImage.createFromPath(devIconPath) : null
+// App icon: packaged builds get it baked into the bundle by electron-builder (build/icon.icns on macOS,
+// build/icon.ico on Windows, build/icon.png on Linux). In an unpackaged dev run macOS shows Electron's
+// default dock icon — that's expected and matches every electron-vite project; the real icon ships in
+// the packaged .app/.exe. No runtime icon code needed.
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -35,7 +32,6 @@ function createWindow(): void {
     trafficLightPosition: { x: 18, y: 19 },
     roundedCorners: true,
     backgroundColor: '#050507',
-    ...(devIcon ? { icon: devIcon } : {}), // dev only: window/taskbar icon on win+linux (ignored on macOS)
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: true,
@@ -77,7 +73,6 @@ app.whenReady().then(() => {
   void connectMcpServers().catch(() => {})
   // Register every enabled skill so a role's agent sees it on the first run (sync — DB read only).
   loadSkills()
-  if (process.platform === 'darwin' && devIcon) app.dock?.setIcon(devIcon) // dev only: show the N in the macOS dock
   createWindow()
   // Idle memory-extraction sweep: every minute, extract for conversations whose idle timer elapsed.
   setInterval(() => void runIdleSweep().catch(() => {}), 60_000)

@@ -1,21 +1,27 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <defs>
-    <radialGradient id="nsBg" cx="50%" cy="4%" r="125%">
-      <stop offset="0" stop-color="#1c1e26"/>
-      <stop offset="0.68" stop-color="#0c0d10"/>
+    <radialGradient id="nsDepth" cx="50%" cy="36%" r="60%">
+      <stop offset="0" stop-color="#262833"/>
+      <stop offset="0.62" stop-color="#262833" stop-opacity="0"/>
     </radialGradient>
-    <radialGradient id="nsGlow" cx="50%" cy="40%" r="60%">
-      <stop offset="0" stop-color="#6160E5" stop-opacity="0.24"/>
+    <radialGradient id="nsIndigo" cx="50%" cy="44%" r="52%">
+      <stop offset="0" stop-color="#6160E5" stop-opacity="0.16"/>
       <stop offset="0.72" stop-color="#6160E5" stop-opacity="0"/>
     </radialGradient>
   </defs>
-  <rect width="1024" height="1024" rx="240" fill="url(#nsBg)"/>
-  <rect width="1024" height="1024" rx="240" fill="url(#nsGlow)"/>
-  <g transform="translate(189.5,189.5) scale(13.4375)">
-    <path d="M6 9 L16.5 9 L42 39 L31.5 39 Z" fill="#6160E5"/>
-    <rect x="6" y="8" width="10.5" height="32" rx="4" fill="#6E9BDF"/>
-    <rect x="31.5" y="8" width="10.5" height="32" rx="4" fill="#5DB68B"/>
-    <circle cx="11.25" cy="8.4" r="3.9" fill="#CD7BBF"/>
-    <circle cx="36.75" cy="39.6" r="3.9" fill="#CD7BBF"/>
+  <!-- macOS icon grid: tile sized to margin 64 / content 896 (~87.5%) for more dock presence. A solid
+       dark base fills all the way to the rounded edge so the perimeter is uniformly dark (no light rim
+       on the dock); the depth + indigo glows stay central and fade out well before the edge. -->
+  <g transform="translate(64,64) scale(0.875)">
+    <rect width="1024" height="1024" rx="232" fill="#0b0c10"/>
+    <rect width="1024" height="1024" rx="232" fill="url(#nsDepth)"/>
+    <rect width="1024" height="1024" rx="232" fill="url(#nsIndigo)"/>
+    <g transform="translate(189.5,189.5) scale(13.4375)">
+      <path d="M6 9 L16.5 9 L42 39 L31.5 39 Z" fill="#6160E5"/>
+      <rect x="6" y="8" width="10.5" height="32" rx="4" fill="#6E9BDF"/>
+      <rect x="31.5" y="8" width="10.5" height="32" rx="4" fill="#5DB68B"/>
+      <circle cx="11.25" cy="8.4" r="3.9" fill="#CD7BBF"/>
+      <circle cx="36.75" cy="39.6" r="3.9" fill="#CD7BBF"/>
+    </g>
   </g>
 </svg>
