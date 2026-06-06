@@ -68,9 +68,21 @@ export default function App(): ReactElement {
   // once on mount. Until each store's load() completes, the sidebar shows built-ins only; customs
   // appear once the list resolves (typically one frame).
   useEffect(() => {
-    void chat.loadConversations()
+    const startupExpert = persisted.activeExpert || 'engineer'
+    void chat.loadConversations().then(() => {
+      // Land startup on the last chat's history, not the empty greeting. The persisted view restores the
+      // active expert (e.g. Georgia) but not its conversation, so the chat opened on the greeting until
+      // you re-clicked the role. Open that expert's most-recent conversation now (conversations are
+      // updated_at-DESC → first match is the latest). No-op if the user already navigated or the expert
+      // has no history. Mirrors selectExpert's in-session restore.
+      const s = useChat.getState()
+      if (s.activeConv) return
+      const restore = s.conversations.find((c) => c.primaryRoleId === startupExpert)
+      if (restore) void s.openConversation(restore.id)
+    })
     void useRoles.getState().load()
     void useCustomRoles.getState().load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chat.loadConversations])
 
   // First-run gate: when localStorage hasn't already chosen a view, honor the durable onboarded flag so
