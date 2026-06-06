@@ -21,12 +21,24 @@ const expertMeta = (id: string): { name: string; color: string } => {
   return e ? { name: e.name, color: e.color } : { name: id || '—', color: 'var(--text-3)' }
 }
 const fmtTokens = (n: number): string => (n >= 1_000_000 ? (n / 1_000_000).toFixed(1) + 'M' : n >= 1_000 ? Math.round(n / 1_000) + 'k' : String(n))
+const fmtElapsed = (ms: number): string => {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`
+}
 
-/* — A conversation streaming right now — */
-function InProgressRow({ conv, onOpenConv }: { conv: ConversationDto; onOpenConv: (convId: string) => void }): ReactElement {
+/* — A conversation streaming right now — turns so far + live elapsed, like the prototype's
+   "3 turns · 2m". `now` ticks once a second from the parent so the elapsed updates live. */
+function InProgressRow({ conv, now, onOpenConv }: { conv: ConversationDto; now: number; onOpenConv: (convId: string) => void }): ReactElement {
   const id = conv.primaryRoleId ?? ''
   const e = STUDIO_DATA.EXPERT_BY_ID[id]
   const m = expertMeta(id)
+  const turns = useChat((s) => (s.byConversation[conv.id] ?? []).filter((x) => x.role === 'user').length)
+  const startedAt = useChat((s) => s.streamStartedAt[conv.id])
+  const activity = startedAt
+    ? `${turns > 0 ? `${turns} ${turns === 1 ? 'turn' : 'turns'} · ` : ''}${fmtElapsed(now - startedAt)}`
+    : 'streaming…'
   return (
     <div className="tl-row" onClick={() => onOpenConv(conv.id)} style={{ '--ws-color': m.color } as CSSProperties}>
       <Avatar expert={e ?? null} size={30} />
@@ -38,6 +50,7 @@ function InProgressRow({ conv, onOpenConv }: { conv: ConversationDto; onOpenConv
         <div className="tl-title">{conv.title || 'Untitled'}</div>
       </div>
       <div className="tl-meta">
+        <span className="tl-activity">{activity}</span>
         <span className="tl-model">{e?.model ?? ''}</span>
       </div>
     </div>
@@ -109,9 +122,16 @@ function ActivityTimeline({
   const streaming = useChat((s) => s.streaming)
   const inProgress = conversations.filter((c) => streaming[c.id])
   const [projects, setProjects] = useState<ProjectDto[]>([])
+  const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     void window.api.project.list().then((p) => setProjects(p.filter((x) => x.phase !== 'done')))
   }, [])
+  // Live elapsed clock for in-progress rows — ticks only while something is streaming.
+  useEffect(() => {
+    if (inProgress.length === 0) return
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [inProgress.length])
 
   return (
     <div className="timeline-wrap">
@@ -124,7 +144,7 @@ function ActivityTimeline({
             <span className="tl-count">{inProgress.length}</span>
           </div>
           {inProgress.length > 0 ? (
-            <div className="tl-list">{inProgress.map((c) => <InProgressRow key={c.id} conv={c} onOpenConv={onOpenConv} />)}</div>
+            <div className="tl-list">{inProgress.map((c) => <InProgressRow key={c.id} conv={c} now={now} onOpenConv={onOpenConv} />)}</div>
           ) : (
             <div className="tl-empty">
               <div className="tl-empty-line">Nothing running right now.</div>

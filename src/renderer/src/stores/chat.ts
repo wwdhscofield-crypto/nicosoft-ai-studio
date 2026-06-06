@@ -118,6 +118,7 @@ interface ChatState {
   approvals: Record<string, ApprovalCard[]> // per-conversation coordinator approval cards (yellow notes + red pending)
   contextTokens: Record<string, number> // per-conversation exact prompt tokens of the last sent turn
   liveOutput: Record<string, number> // per-conversation REAL output tokens, streamed live during a turn (↓ readout)
+  streamStartedAt: Record<string, number> // per-conversation epoch ms when the current turn started; read only while streaming (Overview "In progress" elapsed). Overwritten each send, left stale after (never read when not streaming)
   loadConversations: () => Promise<void>
   openConversation: (convId: string) => Promise<void>
   newConversation: () => void
@@ -603,6 +604,7 @@ export const useChat = create<ChatState>((set, get) => {
     approvals: {},
     contextTokens: {},
     liveOutput: {},
+    streamStartedAt: {},
 
     loadConversations: async () => {
       set({ conversations: await window.api.conversations.list() })
@@ -677,6 +679,7 @@ export const useChat = create<ChatState>((set, get) => {
             ]
           },
           streaming: { ...s.streaming, [cid]: true },
+          streamStartedAt: { ...s.streamStartedAt, [cid]: Date.now() },
           error: { ...s.error, [cid]: null }
         }
       })

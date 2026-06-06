@@ -37,7 +37,8 @@ const readInProgress = () =>
       count: g.querySelector('.tl-count')?.textContent ?? '',
       hasEmpty: !!g.querySelector('.tl-empty'),
       emptyLine: g.querySelector('.tl-empty-line')?.textContent ?? '',
-      liveRows: g.querySelectorAll('.tl-row .tl-live').length
+      liveRows: g.querySelectorAll('.tl-row .tl-live').length,
+      activity: g.querySelector('.tl-row .tl-activity')?.textContent ?? ''
     }
   })
 
@@ -80,8 +81,11 @@ if (setup.ok) {
     if (seen.liveRows > 0) break
     await page.waitForTimeout(700)
   }
+  // let the elapsed clock tick, then re-read to prove it advances live (not frozen at 0s)
+  await page.waitForTimeout(3500)
+  const ticked = await readInProgress()
   await page.screenshot({ path: join(SHOTS, 'populated.png') })
-  populated = { skipped: false, ...seen }
+  populated = { skipped: false, ...seen, activity2: ticked.activity, stillLive: ticked.liveRows >= 1 }
   console.log('B/populated:', JSON.stringify(populated))
   // stop the run and clean up the conversation
   await page.evaluate(async () => {
@@ -102,6 +106,10 @@ if (!populated.skipped) {
   if (!populated.present) fails.push('(B) In progress section missing during a live stream')
   if (populated.liveRows < 1) fails.push('(B) no live in-progress row appeared while a conversation was streaming')
   if (populated.count === '0') fails.push('(B) count stayed 0 during a live stream')
+  // activity line should be "N turn(s) · Xs" (prototype-style turns · elapsed), not just the model name
+  if (!/turn/.test(populated.activity) && !/^\d+[smh]/.test(populated.activity)) fails.push(`(B) activity line missing turns/elapsed — got "${populated.activity}"`)
+  // elapsed must advance live (clock ticking), proven by a second sample while still streaming
+  if (populated.stillLive && populated.activity2 === populated.activity) fails.push(`(B) elapsed clock did not advance — frozen at "${populated.activity}"`)
 }
 console.log(
   fails.length
