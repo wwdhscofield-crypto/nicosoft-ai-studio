@@ -12,6 +12,7 @@ import type { CSSProperties, ReactElement } from 'react'
 import { Icons } from '@/components/icons'
 import { Avatar, AvatarStack } from '@/components/primitives'
 import { STUDIO_DATA, PHASES, PHASE_INDEX } from '@/data/studio-data'
+import { toast } from '@/stores/toast'
 
 // DTOs derived from the IPC surface — the renderer never imports main-process modules.
 type ProjectDto = Awaited<ReturnType<typeof window.api.project.list>>[number]
@@ -139,7 +140,10 @@ function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; onCreat
         goal: goal.trim() || null,
         cwd: cwd.trim() || null
       })
+      toast.success('Project created')
       onCreated(p.id)
+    } catch {
+      toast.error('Couldn’t create project')
     } finally {
       setBusy(false)
     }
@@ -541,9 +545,14 @@ function ProjectDetail({
   }
 
   const resolve = async (id: string, ok: boolean): Promise<void> => {
-    if (ok) await window.api.approval.approve(id)
-    else await window.api.approval.reject(id)
-    setPending((ps) => ps.filter((p) => p.id !== id))
+    try {
+      if (ok) await window.api.approval.approve(id)
+      else await window.api.approval.reject(id)
+      setPending((ps) => ps.filter((p) => p.id !== id))
+      toast.success(ok ? 'Approved' : 'Rejected')
+    } catch {
+      toast.error(ok ? 'Couldn’t approve' : 'Couldn’t reject')
+    }
   }
 
   return (

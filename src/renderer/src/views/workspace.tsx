@@ -9,6 +9,7 @@ import { Icons } from '@/components/icons'
 import { ImageViewer, type ViewerImage } from '@/components/image-viewer'
 import { useChat } from '@/stores/chat'
 import { useWorkspace } from '@/stores/workspace'
+import { toast } from '@/stores/toast'
 
 const basename = (p: string): string => p.split(/[\\/]/).pop() || p
 // Tools that CREATE/CHANGE a file on disk — only these count as "produced" (Read is excluded by design).
@@ -40,6 +41,15 @@ export function WorkspaceDrawer({ onClose, activeConv }: { onClose: () => void; 
   const streaming = useChat((s) => (activeConv ? !!s.streaming[activeConv] : false))
   const conv = useChat((s) => s.conversations.find((c) => c.id === activeConv))
   const cwd = useWorkspace((s) => (conv?.primaryRoleId ? s.cwdByExpert[conv.primaryRoleId] : undefined))
+
+  // media.save opens a native save dialog: a truthy path = saved, a falsy value = the user cancelled
+  // (stay silent), a thrown error = a real failure.
+  const saveImage = (img: ViewerImage): void => {
+    void window.api.media
+      .save(img.url, img.name)
+      .then((path) => { if (path) toast.success('Image saved') })
+      .catch(() => toast.error('Couldn’t save image'))
+  }
 
   useEffect(() => {
     if (!activeConv) {
@@ -150,7 +160,7 @@ export function WorkspaceDrawer({ onClose, activeConv }: { onClose: () => void; 
           index={viewer}
           onClose={() => setViewer(null)}
           onStep={(d) => setViewer((v) => (v === null ? null : Math.max(0, Math.min(images.length - 1, v + d))))}
-          onDownload={(img) => void window.api.media.save(img.url, img.name)}
+          onDownload={saveImage}
         />
       )}
     </div>

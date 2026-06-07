@@ -7,6 +7,7 @@ import type { ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import { STUDIO_DATA } from '@/data/studio-data'
 import { useMemory } from '@/stores/memory'
+import { toast } from '@/stores/toast'
 import { useChat } from '@/stores/chat'
 import { useCustomRoles } from '@/stores/custom-roles'
 import { useAllExperts } from '@/lib/all-experts'
@@ -190,15 +191,15 @@ function MemorySection({ expertId }: { expertId: string }): ReactElement {
         <span className="ds-title">Memory <span className="ds-sub">— what this expert remembers about you</span></span>
         <label className="learn-toggle">
           <span>Self-learning</span>
-          <MemToggle on={learning} onClick={() => void mem.setSelfLearning(expertId, !learning)} />
+          <MemToggle on={learning} onClick={() => void mem.setSelfLearning(expertId, !learning).catch(() => toast.error('Couldn’t update setting'))} />
         </label>
       </div>
       {empty ? (
         <div className="detail-empty">Nothing remembered yet — memories form as you chat.</div>
       ) : (
         <div className="mem-layers">
-          <MemoryLayer layer="SHARED" items={shared} onEdit={(id, t) => void mem.update(id, t)} onDelete={(id) => void mem.remove(id)} />
-          <MemoryLayer layer="ROLE" items={role} onEdit={(id, t) => void mem.update(id, t)} onDelete={(id) => void mem.remove(id)} />
+          <MemoryLayer layer="SHARED" items={shared} onEdit={(id, t) => void mem.update(id, t).then(() => toast.success('Memory updated')).catch(() => toast.error('Couldn’t update memory'))} onDelete={(id) => void mem.remove(id).then(() => toast.success('Memory removed')).catch(() => toast.error('Couldn’t remove memory'))} />
+          <MemoryLayer layer="ROLE" items={role} onEdit={(id, t) => void mem.update(id, t).then(() => toast.success('Memory updated')).catch(() => toast.error('Couldn’t update memory'))} onDelete={(id) => void mem.remove(id).then(() => toast.success('Memory removed')).catch(() => toast.error('Couldn’t remove memory'))} />
         </div>
       )}
     </div>

@@ -23,6 +23,7 @@ import { useRoleBinding } from '@/lib/use-role-binding'
 import { fileToImage, imagesFromClipboard, type ImageAttachment } from '@/lib/image'
 import { getThinkingCapability, resolveThinking, type ThinkingDepth } from '@/lib/thinking'
 import { useAllExperts } from '@/lib/all-experts'
+import { toast } from '@/stores/toast'
 import type { Expert } from '@/types'
 
 // Compact token readout: K below 1M, M at/above it (1M, 1.05M, 1.5M — trailing zeros trimmed).
@@ -514,7 +515,14 @@ export function ChatView({ expert, onOpenSettings, onBackToProject }: { expert: 
   }, [hasApproval])
 
   const openImage = (items: ViewerImage[], index: number): void => setViewer({ items, index })
-  const downloadImage = (img: ViewerImage): void => void window.api.media.save(img.url, img.name)
+  // media.save opens a native save dialog: a truthy path = saved, a falsy value = the user cancelled
+  // (stay silent), a thrown error = a real failure.
+  const downloadImage = (img: ViewerImage): void => {
+    void window.api.media
+      .save(img.url, img.name)
+      .then((path) => { if (path) toast.success('Image saved') })
+      .catch(() => toast.error('Couldn’t save image'))
+  }
   // Refine: close the viewer, seed the composer with a refine lead-in and focus it. The designer keeps
   // the prior image + its prompt in context, so the user just types the change and sends → regenerate.
   const refineImage = (): void => {

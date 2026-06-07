@@ -19,6 +19,7 @@ import { useChat } from '@/stores/chat'
 import { useRoles } from '@/stores/roles'
 import { useCustomRoles } from '@/stores/custom-roles'
 import { useAllExperts } from '@/lib/all-experts'
+import { Toaster } from '@/components/toaster'
 
 const LS_KEY = 'nicosoft-studio-state-v1'
 
@@ -188,6 +189,7 @@ export default function App(): ReactElement {
             setActiveExpert('generalist')
           }}
         />
+        <Toaster />
       </div>
     )
   }
@@ -276,6 +278,7 @@ export default function App(): ReactElement {
         />
       )}
       {roleDialog && <RoleEditorDialog initialRole={roleDialog.initialRole} onClose={() => setRoleDialog(null)} />}
+      <Toaster />
     </div>
   )
 }

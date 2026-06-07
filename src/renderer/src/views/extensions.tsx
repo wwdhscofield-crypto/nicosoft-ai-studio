@@ -17,6 +17,7 @@ import { useRoleBinding } from '@/lib/use-role-binding'
 import { STUDIO_DATA } from '@/data/studio-data'
 import type { McpServerDto, SkillDto, PluginDto } from '@/lib/api'
 import type { PluginBundle } from '@/types'
+import { toast } from '@/stores/toast'
 
 /* — small flat switch — */
 function Toggle({ on, onClick, disabled }: { on: boolean; onClick: () => void; disabled?: boolean }): ReactElement {
@@ -126,10 +127,21 @@ function MCPTab({ onCount }: { onCount: (n: number) => void }): ReactElement {
   };
   const onTest = (id: string): void => {
     setTesting(id);
-    void window.api.mcp.test(id).then(() => { setTesting(null); reload(); });
+    void window.api.mcp
+      .test(id)
+      .then((r) => {
+        setTesting(null);
+        reload();
+        if (r.ok) toast.success('Connection successful');
+        else toast.error('Connection failed');
+      })
+      .catch(() => { setTesting(null); toast.error('Connection failed'); });
   };
   const onRemove = (id: string): void => {
-    void window.api.mcp.remove(id).then(reload);
+    void window.api.mcp
+      .remove(id)
+      .then(() => { reload(); toast.success('Server removed'); })
+      .catch(() => toast.error('Couldn’t remove server'));
   };
 
   return (
@@ -197,10 +209,16 @@ function SkillsTab({ onCount }: { onCount: (n: number) => void }): ReactElement 
   const pluginName = (id: string | null): string => plugins.find((p) => p.id === id)?.name ?? "plugin";
 
   const onToggle = (s: SkillDto): void => {
-    void window.api.skills.update(s.id, { source: s.source, enabled: !s.enabled }).then(reload);
+    void window.api.skills
+      .update(s.id, { source: s.source, enabled: !s.enabled })
+      .then(reload)
+      .catch(() => toast.error('Couldn’t update skill'));
   };
   const onRemove = (id: string): void => {
-    void window.api.skills.remove(id).then(reload);
+    void window.api.skills
+      .remove(id)
+      .then(() => { reload(); toast.success('Skill removed'); })
+      .catch(() => toast.error('Couldn’t remove skill'));
   };
 
   return (
@@ -256,8 +274,8 @@ function PluginsTab({ onCount }: { onCount: (n: number) => void }): ReactElement
   const reload = (): void => void window.api.plugins.list().then((p) => { setPlugins(p); onCount(p.length); });
   useEffect(() => { reload(); }, []);
 
-  const onToggle = (p: PluginDto): void => void window.api.plugins.toggle(p.id, !p.enabled).then(reload);
-  const onUninstall = (id: string): void => { void window.api.plugins.uninstall(id).then(reload); };
+  const onToggle = (p: PluginDto): void => void window.api.plugins.toggle(p.id, !p.enabled).then(reload).catch(() => toast.error('Couldn’t update plugin'));
+  const onUninstall = (id: string): void => { void window.api.plugins.uninstall(id).then(() => { reload(); toast.success('Plugin uninstalled'); }).catch(() => toast.error('Couldn’t uninstall plugin')); };
 
   return (
     <div className="ext-tab">
@@ -325,7 +343,7 @@ function ToolsTab(): ReactElement {
   const toggle = (): void => {
     const next = !enabled;
     setEnabled(next);
-    void window.api.settings.set(TOOLS_ENABLED_KEY, next);
+    void window.api.settings.set(TOOLS_ENABLED_KEY, next).catch(() => toast.error('Couldn’t update tools'));
   };
   return (
     <div className="ext-tab">

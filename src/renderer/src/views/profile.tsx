@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
 import { Icons } from '@/components/icons'
 import { STUDIO_DATA } from '@/data/studio-data'
+import { toast } from '@/stores/toast'
 
 interface DropdownOption {
   v: string
@@ -107,6 +108,7 @@ export function ProfileForm({ compact, nudgeName }: { compact?: boolean; nudgeNa
   const [p, setP] = useState(PROFILE_DEFAULTS)
   const [loaded, setLoaded] = useState(false)
   const [dirty, setDirty] = useState(false)
+  const [saving, setSaving] = useState(false)
   // Load the persisted profile once, then auto-save (debounced) ONLY after the user actually edits — a
   // first-run user who never touches the form must not get blank/default values persisted as their
   // profile (Batch 4 injects settings('profile') into every request as the shared context layer).
@@ -134,6 +136,32 @@ export function ProfileForm({ compact, nudgeName }: { compact?: boolean; nudgeNa
     setP((prev) => ({ ...prev, name: v }))
     setDirty(true)
     STUDIO_DATA.USER_PROFILE.name = v.trim() // reflect in conversations
+  }
+  // Explicit save (the form also auto-saves on edit; this button gives the user confirmation).
+  const saveNow = async (): Promise<void> => {
+    setSaving(true)
+    try {
+      await window.api.settings.set('profile', p)
+      setDirty(false)
+      toast.success('Profile saved')
+    } catch {
+      toast.error('Couldn’t save profile — please try again')
+    } finally {
+      setSaving(false)
+    }
+  }
+  // Reset = discard in-memory edits and reload the last-saved profile.
+  const resetForm = async (): Promise<void> => {
+    try {
+      const saved = await window.api.settings.get<Partial<typeof PROFILE_DEFAULTS>>('profile')
+      const next = { ...PROFILE_DEFAULTS, ...(saved ?? {}) }
+      setP(next)
+      setDirty(false)
+      STUDIO_DATA.USER_PROFILE.name = next.name.trim()
+      toast.info('Reverted to your saved profile')
+    } catch {
+      toast.error('Couldn’t reset the form')
+    }
   }
   // Settings (full form) uses dropdowns; the compact onboarding step keeps segmented.
   const ToneControl = compact ? Segmented : Dropdown
@@ -202,6 +230,17 @@ export function ProfileForm({ compact, nudgeName }: { compact?: boolean; nudgeNa
           placeholder="Anything the team should keep in mind — how you like to work, what you're building, what to avoid."
         />
       </div>
+
+      {!compact && (
+        <div style={{ display: 'flex', gap: 9, marginTop: 20 }}>
+          <button className="btn primary sm" onClick={() => void saveNow()} disabled={saving}>
+            {saving ? 'Saving…' : 'Save profile'}
+          </button>
+          <button className="btn ghost sm" onClick={() => void resetForm()}>
+            Reset
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -214,10 +253,6 @@ export function ProfilePage(): ReactElement {
         Shared context that helps every expert understand you. It's added to each request and stays on this device.
       </div>
       <ProfileForm />
-      <div style={{ display: 'flex', gap: 9, marginTop: 20 }}>
-        <button className="btn primary sm">Save profile</button>
-        <button className="btn ghost sm">Reset</button>
-      </div>
     </div>
   )
 }

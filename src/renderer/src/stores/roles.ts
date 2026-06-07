@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { useChat } from './chat'
 import { useMemory } from './memory'
 import { useCustomRoles } from './custom-roles'
+import { toast } from './toast'
 
 // Role enable / disable / delete store. Backend-backed via window.api.roles — every mutation persists
 // to role_states (enable/disable) or cascades the delete (memory + bindings + state + custom row).
@@ -42,23 +43,28 @@ export const useRoles = create<RolesState>((set, get) => ({
   isDisabled: (id) => get().disabled.includes(id),
   isDeleted: (id) => get().deleted.includes(id),
 
+  // Failure-only toasts on enable/disable/toggle and success+error on remove are wired HERE rather than
+  // at the call site (the documented store-catch exception): these methods fire-and-forget (`void …` /
+  // `.then(_, onError)`) and swallow errors, so the call sites (sidebar RoleRow/DisabledRow + ExpertDetail)
+  // have no promise to await. Each user click triggers exactly one of these methods → exactly one toast,
+  // so there is no double-toast risk despite the multiple callers.
   toggle: (id) => {
     if (id === COORDINATOR_ID) return
     const currentlyDisabled = get().isDisabled(id)
-    void window.api.roles.setState(id, { enabled: currentlyDisabled })
+    void window.api.roles.setState(id, { enabled: currentlyDisabled }).catch(() => toast.error('Couldn’t update role'))
     set((s) => ({
       disabled: currentlyDisabled ? s.disabled.filter((x) => x !== id) : [...s.disabled, id]
     }))
   },
 
   enable: (id) => {
-    void window.api.roles.setState(id, { enabled: true })
+    void window.api.roles.setState(id, { enabled: true }).catch(() => toast.error('Couldn’t update role'))
     set((s) => ({ disabled: s.disabled.filter((x) => x !== id) }))
   },
 
   disable: (id) => {
     if (id === COORDINATOR_ID) return
-    void window.api.roles.setState(id, { enabled: false })
+    void window.api.roles.setState(id, { enabled: false }).catch(() => toast.error('Couldn’t update role'))
     set((s) => (s.disabled.includes(id) ? s : { disabled: [...s.disabled, id] }))
   },
 
@@ -74,8 +80,12 @@ export const useRoles = create<RolesState>((set, get) => ({
         useCustomRoles.setState((s) => ({ list: s.list.filter((r) => r.id !== id) }))
         void useChat.getState().loadConversations()
         void useMemory.getState().load()
+        toast.success('Role deleted')
       },
-      () => set((s) => ({ deleted: s.deleted.filter((x) => x !== id) })) // rollback the hide on failure
+      () => {
+        set((s) => ({ deleted: s.deleted.filter((x) => x !== id) })) // rollback the hide on failure
+        toast.error('Couldn’t delete role')
+      }
     )
   }
 }))

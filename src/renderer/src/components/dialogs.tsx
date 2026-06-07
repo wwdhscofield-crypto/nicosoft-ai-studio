@@ -9,6 +9,7 @@ import { STUDIO_DATA } from '@/data/studio-data'
 import { useRoles } from '@/stores/roles'
 import { useChat, roleHasAgent } from '@/stores/chat'
 import { useCustomRoles } from '@/stores/custom-roles'
+import { toast } from '@/stores/toast'
 import type { Expert } from '@/types'
 import type { EndpointDto, EndpointInput, ModelInfo, McpServerDto, McpServerInput, McpTransport, SkillDto, SkillInput, SkillSource } from '@/lib/api'
 
@@ -236,9 +237,14 @@ export function McpDialog({
   }
 
   const save = async (): Promise<void> => {
-    if (initial) await window.api.mcp.update(initial.id, buildInput())
-    else await window.api.mcp.add(buildInput())
-    onSaved()
+    try {
+      if (initial) await window.api.mcp.update(initial.id, buildInput())
+      else await window.api.mcp.add(buildInput())
+      toast.success('Server saved')
+      onSaved()
+    } catch {
+      toast.error('Couldn’t save server')
+    }
   }
 
   const test = async (): Promise<void> => {
@@ -249,14 +255,22 @@ export function McpDialog({
     }
     setTestState('testing')
     setTestMsg('')
-    await window.api.mcp.update(initial.id, buildInput()) // pick up edits before testing
-    const r = await window.api.mcp.test(initial.id)
-    if (r.ok) {
-      setTestState('ok')
-      setTestMsg(`${r.toolCount ?? 0} tools`)
-    } else {
+    try {
+      await window.api.mcp.update(initial.id, buildInput()) // pick up edits before testing
+      const r = await window.api.mcp.test(initial.id)
+      if (r.ok) {
+        setTestState('ok')
+        setTestMsg(`${r.toolCount ?? 0} tools`)
+        toast.success('Connection successful')
+      } else {
+        setTestState('fail')
+        setTestMsg(r.error ?? 'Connection failed')
+        toast.error('Connection failed')
+      }
+    } catch {
       setTestState('fail')
-      setTestMsg(r.error ?? 'Connection failed')
+      setTestMsg('Connection failed')
+      toast.error('Connection failed')
     }
   }
 
@@ -515,12 +529,14 @@ export function SkillDialog({
     try {
       if (initial) await window.api.skills.update(initial.id, buildInput())
       else await window.api.skills.add(buildInput())
+      toast.success('Skill saved')
       onSaved()
     } catch (e) {
       // Surface the service's reason (imported: no SKILL.md / empty body; builtin: missing name/body),
       // stripping the layered "Error: … invoking remote method … Error:" IPC wrapper.
       const msg = e instanceof Error ? e.message : String(e)
       setErr(msg.split(/Error:\s*/).filter(Boolean).pop() ?? msg)
+      toast.error('Couldn’t save skill')
     }
   }
 
@@ -804,9 +820,11 @@ export function RoleEditorDialog({
       }
       // Always (re)set the binding — covers both fresh creates and edit-time endpoint/model changes.
       await window.api.roles.setBinding(roleId!, { endpointId, model })
+      toast.success(isEdit ? 'Role updated' : 'Role created')
       onClose()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
+      toast.error('Couldn’t save')
     } finally {
       setSaving(false)
     }

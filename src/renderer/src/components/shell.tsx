@@ -10,6 +10,7 @@ import { STUDIO_DATA } from '@/data/studio-data'
 import { useRoles } from '@/stores/roles'
 import { useAllExperts } from '@/lib/all-experts'
 import { useChat } from '@/stores/chat'
+import { toast } from '@/stores/toast'
 import type { Expert } from '@/types'
 import type { ConversationDto } from '@/lib/api'
 
@@ -32,7 +33,13 @@ export function Topbar({
   const [confirmDel, setConfirmDel] = useState(false)
   const doExport = (fmt: 'md' | 'json'): void => {
     setMenu(false)
-    if (cid) void window.api.conversations.export(cid, fmt)
+    // export opens a native save dialog: a truthy path = exported, a falsy value = the user cancelled
+    // (stay silent), a thrown error = a real failure.
+    if (cid)
+      void window.api.conversations
+        .export(cid, fmt)
+        .then((path) => { if (path) toast.success('Conversation exported') })
+        .catch(() => toast.error('Export failed'))
   }
   return (
     <div className="topbar">
@@ -78,7 +85,7 @@ export function Topbar({
           title="Rename conversation"
           initial={curTitle}
           confirmLabel="Rename"
-          onConfirm={(v) => void chat.rename(cid, v)}
+          onConfirm={(v) => void chat.rename(cid, v).catch(() => toast.error('Couldn’t rename'))}
           onClose={() => setRenaming(false)}
         />
       )}
@@ -88,7 +95,12 @@ export function Topbar({
           body="This permanently deletes this conversation and its messages. This can't be undone."
           confirmLabel="Delete"
           danger
-          onConfirm={() => void chat.removeConversation(cid)}
+          onConfirm={() =>
+            void chat
+              .removeConversation(cid)
+              .then(() => toast.success('Conversation deleted'))
+              .catch(() => toast.error('Couldn’t delete conversation'))
+          }
           onClose={() => setConfirmDel(false)}
         />
       )}
@@ -206,13 +218,13 @@ function HistRow({
         <>
           <div className="menu-backdrop" onClick={(e) => { e.stopPropagation(); setMenu(false) }} />
           <div className={'row-menu right' + (menuUp ? ' up' : '')} onClick={(e) => e.stopPropagation()}>
-            <div className="rm-item" onClick={() => { setMenu(false); void chat.setPinned(conv.id, !conv.pinned) }}>
+            <div className="rm-item" onClick={() => { setMenu(false); void chat.setPinned(conv.id, !conv.pinned).catch(() => toast.error('Couldn’t update')) }}>
               <Icons.pin size={14} /> {conv.pinned ? 'Unpin' : 'Pin'}
             </div>
             <div className="rm-item" onClick={() => { setMenu(false); setRenaming(true) }}>
               <Icons.edit size={14} /> Rename
             </div>
-            <div className="rm-item" onClick={() => { setMenu(false); void chat.setArchived(conv.id, !conv.archived) }}>
+            <div className="rm-item" onClick={() => { setMenu(false); void chat.setArchived(conv.id, !conv.archived).catch(() => toast.error('Couldn’t archive')) }}>
               <Icons.archive size={14} /> {conv.archived ? 'Unarchive' : 'Archive'}
             </div>
             <div className="rm-item danger" onClick={() => { setMenu(false); setConfirmDel(true) }}>
@@ -226,7 +238,7 @@ function HistRow({
           title="Rename conversation"
           initial={conv.title || ''}
           confirmLabel="Rename"
-          onConfirm={(v) => void chat.rename(conv.id, v)}
+          onConfirm={(v) => void chat.rename(conv.id, v).catch(() => toast.error('Couldn’t rename'))}
           onClose={() => setRenaming(false)}
         />
       )}
@@ -236,7 +248,12 @@ function HistRow({
           body="This permanently deletes this conversation and its messages. This can't be undone."
           confirmLabel="Delete"
           danger
-          onConfirm={() => void chat.removeConversation(conv.id)}
+          onConfirm={() =>
+            void chat
+              .removeConversation(conv.id)
+              .then(() => toast.success('Conversation deleted'))
+              .catch(() => toast.error('Couldn’t delete conversation'))
+          }
           onClose={() => setConfirmDel(false)}
         />
       )}

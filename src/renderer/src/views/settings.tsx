@@ -15,6 +15,7 @@ import type { Expert } from '@/types'
 import type { EndpointDto, EndpointInput, AppInfo } from '@/lib/api'
 import { THINKING_OPTIONS } from '@/lib/thinking'
 import { useRoleBinding, FAMILY_LABEL } from '@/lib/use-role-binding'
+import { toast } from '@/stores/toast'
 
 const SETTINGS_NAV: { id: string; label: string; icon: string }[] = [
   { id: "profile",   label: "Profile",   icon: "user" },
@@ -307,10 +308,17 @@ export function SettingsView({
 
   const openAdd = (): void => setDialog({ editing: null });
   const openEdit = (ep: EndpointDto): void => setDialog({ editing: ep });
-  const del = (id: string): void => { void window.api.endpoints.remove(id).then(reload); };
+  const del = (id: string): void => {
+    void window.api.endpoints
+      .remove(id)
+      .then(() => { reload(); toast.success('Endpoint removed'); })
+      .catch(() => toast.error('Couldn’t remove endpoint'));
+  };
   const save = (input: EndpointInput, id: string | null): void => {
     const p = id ? window.api.endpoints.update(id, input) : window.api.endpoints.add(input);
-    void p.then(() => { reload(); setDialog(null); });
+    void p
+      .then(() => { reload(); setDialog(null); toast.success(id ? 'Endpoint saved' : 'Endpoint added'); })
+      .catch(() => toast.error(id ? 'Couldn’t save endpoint' : 'Couldn’t add endpoint'));
   };
 
   return (

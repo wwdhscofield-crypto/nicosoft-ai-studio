@@ -12,6 +12,7 @@ import { Avatar } from '@/components/primitives'
 import { Icons } from '@/components/icons'
 import { Dropdown } from '@/views/profile'
 import { MemToggle } from '@/views/memory'
+import { toast } from '@/stores/toast'
 
 // DTO from the preload bridge — same shape as the scheduler's model (ipc/contracts), no mapping layer.
 type TaskDto = Awaited<ReturnType<typeof window.api.scheduled.list>>[number]
@@ -283,15 +284,23 @@ function ScheduledEditor({
       const payload = { name: name.trim() || 'Untitled task', schedule: buildSchedule(tf), steps, durable: true, cwd: cwd.trim() || undefined }
       if (task) await window.api.scheduled.update(task.id, payload)
       else await window.api.scheduled.create(payload)
+      toast.success(task ? 'Task updated' : 'Task scheduled')
       onSaved()
+    } catch {
+      toast.error(task ? 'Couldn’t update task' : 'Couldn’t schedule task')
     } finally {
       setSaving(false)
     }
   }
 
   const del = async (): Promise<void> => {
-    if (task) await window.api.scheduled.remove(task.id)
-    onSaved()
+    try {
+      if (task) await window.api.scheduled.remove(task.id)
+      toast.success('Task deleted')
+      onSaved()
+    } catch {
+      toast.error('Couldn’t delete task')
+    }
   }
 
   return (
@@ -473,8 +482,12 @@ export function ScheduledView({ onOpenConversation }: { onOpenConversation?: (id
   }, [reload])
 
   const toggle = async (t: TaskDto): Promise<void> => {
-    await window.api.scheduled.setEnabled(t.id, !t.enabled)
-    void reload()
+    try {
+      await window.api.scheduled.setEnabled(t.id, !t.enabled)
+      void reload()
+    } catch {
+      toast.error('Couldn’t update task')
+    }
   }
   const onSaved = (): void => {
     setEditing(null)

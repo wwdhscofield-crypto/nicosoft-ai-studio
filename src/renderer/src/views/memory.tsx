@@ -10,6 +10,7 @@ import { STUDIO_DATA } from '@/data/studio-data'
 import { Dropdown } from '@/views/profile'
 import { Pagination } from '@/components/pagination'
 import { useMemory } from '@/stores/memory'
+import { toast } from '@/stores/toast'
 import type { MemoryItem as MemoryItemData } from '@/types'
 
 const MEM_PAGE_SIZE = 10
@@ -220,7 +221,11 @@ export function MemorySettings(): ReactElement {
   const master = EXPERTS.every((e) => perExpert[e.id] !== false)
   const toggleMaster = (): void => {
     const next = !master
-    EXPERTS.forEach((e) => void mem.setSelfLearning(e.id, next))
+    // Flip every expert at once; surface a single failure toast if any write rejects (the optimistic
+    // switch flip is the success feedback).
+    void Promise.all(EXPERTS.map((e) => mem.setSelfLearning(e.id, next))).catch(() =>
+      toast.error('Couldn’t update setting')
+    )
   }
 
   const expertOpts = [{ v: 'all', l: 'All experts' }, ...EXPERTS.map((e) => ({ v: e.id, l: e.name }))]
@@ -260,7 +265,7 @@ export function MemorySettings(): ReactElement {
               <span className="mse-name">{e.name}</span>
               <MemToggle
                 on={perExpert[e.id] !== false}
-                onClick={() => void mem.setSelfLearning(e.id, perExpert[e.id] === false)}
+                onClick={() => void mem.setSelfLearning(e.id, perExpert[e.id] === false).catch(() => toast.error('Couldn’t update setting'))}
               />
             </div>
           ))}
@@ -297,8 +302,8 @@ export function MemorySettings(): ReactElement {
             <GlobalMemRow
               key={e.uid}
               entry={e}
-              onEdit={(t) => void mem.update(e.uid, t)}
-              onDelete={() => void mem.remove(e.uid)}
+              onEdit={(t) => void mem.update(e.uid, t).then(() => toast.success('Memory updated')).catch(() => toast.error('Couldn’t update memory'))}
+              onDelete={() => void mem.remove(e.uid).then(() => toast.success('Memory removed')).catch(() => toast.error('Couldn’t remove memory'))}
             />
           ))
         )}
