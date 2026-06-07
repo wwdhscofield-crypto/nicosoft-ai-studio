@@ -2,104 +2,110 @@
 
 # NicoSoft AI Studio
 
-**An open-source desktop AI workshop — a team of specialized AI experts that collaborate to get your work done.**
+**An open-source desktop AI workshop — a team of named AI experts that collaborate to get your work done.**
 
-Each expert runs on the best-fit model across OpenAI / Anthropic / Gemini. Bring your own API key. Everything stays on your machine.
+Each expert runs on the model best suited to its job, across OpenAI / Anthropic / Google Gemini. Bring your own API key. Everything stays on your machine.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)
-![Status](https://img.shields.io/badge/status-pre--alpha-orange)
+![Version](https://img.shields.io/badge/version-1.0.1-success)
+![Electron](https://img.shields.io/badge/Electron-42-47848F)
+![React](https://img.shields.io/badge/React-19-61DAFB)
 
 </div>
 
-> **Status: pre-alpha.** Design is settled (see [`docs/`](#-architecture)); implementation is just beginning. Not yet usable — star/watch to follow along.
+---
+
+## ✨ What it is
+
+A desktop app where **nine named AI experts** work for you — each with its own role, tools, and the model family best suited to its job:
+
+| Expert | Role | Best-fit model |
+|---|---|---|
+| **Danny** | Coordinator — routes your request to the right expert(s) and merges their answers | Claude |
+| **Amélie** | Generalist — chat, brainstorming, anything not specialized | GPT |
+| **Flynn** | Backend engineer — APIs, servers, data | Claude |
+| **Shuri** | Frontend engineer — UI, React, CSS | Claude |
+| **Georgia** | Designer — images & posters | Gemini |
+| **Louise** | Translator — any language pair | Gemini |
+| **Miranda** | Editor — summarize & condense | Gemini |
+| **Turing** | Data analyst — stats & charts | GPT |
+| **Joan** | Email & scheduling — drafts, replies, agendas | GPT |
+
+> Model assignments are sensible defaults — every role is freely re-pointable to any provider/model you've configured.
 
 ---
 
-## ✨ Features
+## 🧠 Features
 
-A desktop app where **8 named AI experts** work for you — each with a personality, a specialty, and the model best suited to its job:
-
-| Expert | Role | Default model |
-|---|---|---|
-| **Atlas** | Coordinator — routes your request to the right expert(s), synthesizes their answers | Claude Haiku |
-| **Iris** | Generalist — chat, brainstorming, anything not specialized | GPT-5 mini |
-| **Hex** | Software engineer — write, debug, review, explain code | Claude Sonnet |
-| **Lyra** | Designer — posters, illustrations, avatars, images | Gemini Imagen |
-| **Echo** | Translator — between any language pair | Gemini Flash |
-| **Sage** | Editor — summarize, condense, take notes | Gemini Flash |
-| **Quant** | Data analyst — statistics, math, chart recommendations | GPT-5 |
-| **Mercury** | Email & scheduling — drafts, replies, agendas | GPT-5 mini |
-
-Plus everything that makes them feel like *your* team:
-
-- **Multi-model, three protocols** — connect OpenAI, Anthropic, and Google Gemini natively (each expert on its best-fit model), or use any OpenAI-compatible gateway. Bring your own key.
-- **Per-expert memory that grows** — each expert remembers your preferences, learns from how you correct it, and gets better the more you use it. A shared layer keeps facts about you (your stack, your language) across all experts.
-- **They collaborate** — Atlas can convene the relevant experts to discuss a complex task, agree on a plan, and divide the work *(Council mode — planned for v0.3)*.
-- **Everything local** — conversations in local SQLite, API keys in your OS keychain. No account, no server, no telemetry.
-- **Bilingual** — English & 中文.
+- **Multi-model, three protocols.** Connect OpenAI, Anthropic, and Google Gemini natively, or any OpenAI-compatible gateway. Each expert can run on a different provider — bring your own key.
+- **Experts that do real work.** Behind each expert is a full agent loop with tools: read/write/edit files, run shell commands, search & fetch the web, execute code in a sandbox, generate images, and produce PDFs.
+- **They collaborate.** The coordinator (Danny) can convene the relevant experts, plan a multi-step task, and divide the work across them — or hand off directly to a single specialist.
+- **Memory that grows.** A three-layer memory — about you, per-expert, and shared across hand-offs — learns your preferences from conversations and gets better the more you use it. It dedupes, self-corrects, and can be turned off anytime.
+- **Projects & history.** Organize work into projects, and keep a tidy conversation history with pin, rename, archive, and grouping by recency.
+- **Model Context Protocol.** Attach MCP servers to extend any expert with external tools and resources.
+- **Yours, on this device.** Conversations, memory, and projects live in a local SQLite database; API keys sit in your OS keychain. No account, no server, no telemetry.
 
 ---
 
 ## 📥 Download
 
-> Builds are not published yet. Watch [Releases](https://github.com/nicosoft-dev/nicosoft-ai-studio/releases) for the first v0.1.
-
-When available: macOS (Apple Silicon `.dmg`) and Windows (`.exe`). Linux comes later.
+Build it yourself today (see [Development](#-development)) — packaged macOS (`.dmg` / Apple Silicon) and Windows (`.exe`) installers are published on the [Releases](https://github.com/nicosoft-dev/nicosoft-ai-studio/releases) page as they're cut. Linux comes later.
 
 ---
 
-## 🚀 Quick start (once released)
+## 🚀 Quick start
 
-1. Install the app.
-2. On first launch, add an API key for one or more providers (OpenAI / Anthropic / Google). Get keys from each provider's console — the app links you there.
-3. Pick an expert (or just type — Atlas routes for you) and start working.
+1. Launch the app.
+2. On first run, add an API key for one or more providers (OpenAI / Anthropic / Google) under **Settings → Endpoints**. Get keys from each provider's console.
+3. Pick an expert from the sidebar — or just type, and Danny routes for you — and start working.
 
-You can run all experts on a single provider (e.g. one OpenAI-compatible gateway key), or wire each expert to the provider that suits it best.
+You can run every expert on a single OpenAI-compatible gateway key, or wire each one to the provider that suits it best.
 
 ---
 
 ## 🛠 Development
 
 ```bash
-pnpm install
-pnpm dev          # electron-vite dev — launches the app with HMR
-pnpm typecheck    # tsc --noEmit
-pnpm lint         # eslint --max-warnings=0
-pnpm test         # vitest
+npm install
+npm run dev              # electron-vite dev — launches the app with HMR
+npm run typecheck        # tsc --noEmit (main + renderer)
+npm run build            # production build → out/
+npm run dist:mac         # package a macOS app (.dmg) via electron-builder
+npm run dist:win         # package a Windows installer (.exe)
 ```
 
-Requires **Node 22 LTS** and **pnpm 10+**.
+Requires **Node 22+**.
 
-Stack: Electron + electron-vite + React 19 + TypeScript + Tailwind 4 + shadcn/ui + Zustand + TanStack Query + better-sqlite3. Full rationale in [`docs/`](#-architecture).
-
----
-
-## 🤝 Contributing
-
-Contributions welcome. Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) first — it covers the dev workflow, the (strict) code standards, and the commit format. We use [DCO](https://developercertificate.org/) (sign-off), not a CLA.
-
-The codebase has hard rules (no `any`, strict TypeScript, file/function size limits, no silent error swallowing). They keep the project readable for everyone — see [`docs/01-code-standards.md`](docs/01-code-standards.md).
+**Stack:** Electron 42 · electron-vite · React 19 · TypeScript · Vite · Zustand · built-in `node:sqlite` · `@modelcontextprotocol/sdk` · Shiki + react-markdown (rendering) · CSS Modules with design tokens. No heavyweight UI framework — the interface is hand-built.
 
 ---
 
 ## 📐 Architecture
 
-The design is documented in depth under `docs/`:
+```
+src/
+  main/            Electron main process
+    agent/         agent loop + tools (read/write/edit, bash, web, images, PDF, code-exec, plan, task…)
+    llm/           multi-protocol LLM client (OpenAI / Anthropic / Gemini)
+    db/            SQLite schema, migrations, repositories
+    keychain/      OS keychain storage for API keys
+    mcp/           Model Context Protocol client
+    skills/        built-in skills
+    ipc/           typed IPC contracts + handlers
+  preload/         context-bridge API surface
+  renderer/        React 19 UI — views, components, Zustand stores, CSS modules
+```
 
-| # | Doc | Topic |
-|---|---|---|
-| 00 | overview | Vision, decisions, competitive positioning |
-| 01 | code-standards | TypeScript / React / Electron rules (strict) |
-| 02 | tech-stack | Every dependency + why |
-| 03 | roles | The 8 experts: system prompts, routing, tools |
-| 04 | agent-framework | The agent loop (TS, inspired by Codex), tools, sandbox |
-| 05 | endpoint-integration | Three-protocol LLM client, API-key storage, streaming |
-| 06 | ui-architecture | Routes, state layers, component tree |
-| 07 | mvp-roadmap | v0.1 → v1.0 milestones |
-| 08 | opensource-strategy | License, workflow, community |
-| 09 | build-and-release | electron-builder, signing, release flow |
-| 10 | memory-system | Three-layer memory, self-learning, context compression |
+- **Process boundary:** the renderer never touches the network, the disk, or your keys directly — everything goes through typed IPC to the main process.
+- **Layering (main):** IPC handler → service → repository → SQLite. Adapters in `agent/` and `llm/` translate to each provider's protocol.
+- **Local-first:** all state is on disk (`~/.nsai`); secrets are in the OS keychain.
+
+---
+
+## 🤝 Contributing
+
+Issues and pull requests are welcome. The codebase holds itself to strict standards — strict TypeScript (no `any`), small focused files and functions, no silent error swallowing, and a clean handler → service → repository split. Please match the style of the surrounding code and keep changes scoped.
 
 ---
 
