@@ -254,10 +254,16 @@ export interface ToolCallDto {
   status: 'running' | 'done' | 'error'
   result?: string
 }
+// One renderable unit of a rebuilt assistant run, in EMISSION order. A 'tool' block references a tool by
+// id in RunTranscript.tools. Lets a reopened conversation interleave reasoning text and tool cards exactly
+// as they streamed (mirrors the live MsgBlock in the renderer's chat store).
+export type RunBlockDto = { kind: 'text'; text: string } | { kind: 'tool'; id: string }
 // One run's UI artifacts rebuilt from its transcript when reopening a past conversation: the tool
 // cards plus web_search's server-side activity (searched / visited sites) and the answer's citations.
+// `blocks` is the chronological text+tool sequence across all of the run's turns (for interleaved render).
 export interface RunTranscript {
   tools: ToolCallDto[]
+  blocks: RunBlockDto[]
   servers: { serverType: string; query?: string; url?: string }[]
   citations: { url: string; title?: string }[]
 }

@@ -37,10 +37,17 @@ export interface ToolCall {
   status: 'running' | 'done' | 'error'
   result?: string
 }
+// One renderable unit of an assistant turn, in EMISSION order. A 'tool' block references a tool by id in
+// msg.tools (so tool status/result updates flow through msg.tools without touching this list). This is what
+// lets the renderer interleave reasoning text and tool cards chronologically instead of stacking all text
+// above all cards. msg.text / msg.tools are kept alongside for everything that reads them (live readout,
+// token math, persistence, stop() cleanup); blocks is purely the ORDER overlay.
+export type MsgBlock = { kind: 'text'; text: string } | { kind: 'tool'; id: string }
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   text: string
+  blocks?: MsgBlock[] // ordered text+tool sequence for an agent turn; absent on plain-chat / user messages
   images?: { url: string; name: string }[]
   tools?: ToolCall[] // present on agent (tool-using) turns
   servers?: ServerNote[] // server-side tools the API ran (web_search etc.) — shown as faint status rows
@@ -148,6 +155,17 @@ let creating = false // sync guard: blocks a double-create when a fresh thread's
 let listening = false
 
 export const useChat = create<ChatState>((set, get) => {
+  // Append a text delta into a message's ordered block list: extend the trailing text block, or open a new
+  // one if the list is empty or ends in a tool block (text emitted AFTER a tool call → its own segment, so
+  // the renderer interleaves it below that tool card). Keeps blocks in sync with cur.text on every delta.
+  const pushTextDelta = (cur: ChatMessage, text: string): void => {
+    const blocks = cur.blocks ? [...cur.blocks] : []
+    const last = blocks[blocks.length - 1]
+    if (last && last.kind === 'text') blocks[blocks.length - 1] = { kind: 'text', text: last.text + text }
+    else blocks.push({ kind: 'text', text })
+    cur.blocks = blocks
+  }
+
   // Append a text delta to the last streaming assistant message; start a fresh one if the last isn't
   // streaming. Agent turns are multi-step (assistant → tool results → assistant …) so each new turn
   // becomes its own message, leaving the prior turn's text + tool cards intact.
@@ -160,6 +178,7 @@ export const useChat = create<ChatState>((set, get) => {
         msgs.push(cur)
       }
       cur.text += text
+      pushTextDelta(cur, text)
       return { byConversation: { ...s.byConversation, [convId]: msgs } }
     })
   }
@@ -187,7 +206,9 @@ export const useChat = create<ChatState>((set, get) => {
       const msgs = (s.byConversation[convId] ?? []).map((m) => ({ ...m }))
       for (let i = msgs.length - 1; i >= 0; i--) {
         if (msgs[i].role === 'assistant' && msgs[i].streaming && msgs[i].expertId === roleId) {
-          msgs[i] = { ...msgs[i], text: msgs[i].text + text }
+          const cur = { ...msgs[i], text: msgs[i].text + text }
+          pushTextDelta(cur, text) // keep the ordered block stream in sync (interleave with this step's tool cards)
+          msgs[i] = cur
           return { byConversation: { ...s.byConversation, [convId]: msgs } }
         }
       }
@@ -285,6 +306,9 @@ export const useChat = create<ChatState>((set, get) => {
         }
         if (!cur.tools?.some((t) => t.id === d.id)) {
           cur.tools = [...(cur.tools ?? []), { id: d.id, name: d.name, input: {}, status: 'running' as const }]
+          // Record the tool's position in the ordered block stream (after whatever text streamed before it),
+          // so the renderer slots its card between the preceding and following text segments.
+          cur.blocks = [...(cur.blocks ?? []), { kind: 'tool', id: d.id }]
         }
         return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
       })
@@ -307,6 +331,13 @@ export const useChat = create<ChatState>((set, get) => {
         cur.tools = d.blocks
           .filter((b): b is { type: 'tool_use'; id: string; name: string; input: unknown } => b.type === 'tool_use')
           .map((b) => ({ id: b.id, name: b.name, input: b.input, status: 'running' as const }))
+        // Authoritative ORDER for the turn: rebuild the block list straight from d.blocks (text + tool_use in
+        // emission order). This corrects whatever the delta/onToolStart preview accumulated — the renderer
+        // now interleaves text and tool cards exactly as the model emitted them. (server blocks render
+        // separately as faint status rows, so they're not part of the interleave.)
+        cur.blocks = d.blocks
+          .filter((b): b is { type: 'text'; text: string } | { type: 'tool_use'; id: string; name: string; input: unknown } => b.type === 'text' || b.type === 'tool_use')
+          .map((b) => (b.type === 'text' ? { kind: 'text' as const, text: b.text } : { kind: 'tool' as const, id: b.id }))
         cur.servers = d.blocks
           .filter((b): b is { type: 'server'; serverType: string; query?: string; url?: string } => b.type === 'server' && SHOWN_SERVER_BLOCKS.has(b.serverType))
           .map((b) => ({ serverType: b.serverType, query: b.query, url: b.url }))
@@ -532,6 +563,7 @@ export const useChat = create<ChatState>((set, get) => {
           if (msgs[i].role === 'assistant' && msgs[i].streaming && msgs[i].expertId === d.roleId) {
             if (!msgs[i].tools?.some((t) => t.id === d.id)) {
               msgs[i].tools = [...(msgs[i].tools ?? []), { id: d.id, name: d.name, input: {}, status: 'running' as const }]
+              msgs[i].blocks = [...(msgs[i].blocks ?? []), { kind: 'tool', id: d.id }] // slot the card into this step's ordered stream
             }
             break
           }
@@ -550,14 +582,19 @@ export const useChat = create<ChatState>((set, get) => {
             // Merge this turn's tool_use into the step's cards (fill authoritative name+input on the ones
             // onToolStart created; append any not yet seen). Do NOT set text — step:done is authoritative.
             const tools = [...(m.tools ?? [])]
+            const blocks = [...(m.blocks ?? [])]
             for (const b of d.blocks) {
               if (b.type === 'tool_use') {
                 const idx = tools.findIndex((t) => t.id === b.id)
                 if (idx !== -1) tools[idx] = { ...tools[idx], name: b.name, input: b.input }
-                else tools.push({ id: b.id, name: b.name, input: b.input, status: 'running' as const })
+                else {
+                  tools.push({ id: b.id, name: b.name, input: b.input, status: 'running' as const })
+                  blocks.push({ kind: 'tool', id: b.id }) // a tool we hadn't seen via onToolStart → add to the order
+                }
               }
             }
             m.tools = tools
+            m.blocks = blocks
             const newServers = d.blocks
               .filter((b): b is { type: 'server'; serverType: string; query?: string; url?: string } => b.type === 'server' && SHOWN_SERVER_BLOCKS.has(b.serverType))
               .map((b) => ({ serverType: b.serverType, query: b.query, url: b.url }))
@@ -673,10 +710,20 @@ export const useChat = create<ChatState>((set, get) => {
       ])
       const mapped: ChatMessage[] = rows.map((m) => {
         const run = m.author !== 'user' && m.runId ? transcript[m.runId] : undefined
+        // Rebuild the ordered text+tool stream so a reopened agent turn interleaves exactly like the live one.
+        // The transcript's text blocks are what the persisted reply was assembled from, so they match m.content;
+        // as a safety net, if the run ran tools but the rebuilt stream carries no text (pure tool turns), fold
+        // the DB reply in as a trailing text block so the final answer is never dropped.
+        let blocks: MsgBlock[] | undefined
+        if (run?.tools.length) {
+          blocks = run.blocks.length ? [...run.blocks] : []
+          if (m.content.trim() && !blocks.some((b) => b.kind === 'text')) blocks.push({ kind: 'text', text: m.content })
+        }
         return {
           id: m.id,
           role: m.author === 'user' ? 'user' : 'assistant',
           text: m.content,
+          blocks,
           images: m.attachments.length ? m.attachments.map((a) => ({ url: a.url, name: a.name ?? 'image' })) : undefined,
           tools: run?.tools.length ? run.tools : undefined,
           servers: run?.servers.length ? run.servers : undefined,

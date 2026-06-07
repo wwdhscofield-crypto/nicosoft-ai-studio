@@ -63,9 +63,30 @@ function guessLang(code: string): string {
   return 'text'
 }
 
+// Map a file extension (or bare filename) to one of the Shiki grammars preloaded by `highlighter()`
+// above. Anything not preloaded falls back to 'text' (plain, uncoloured) — CodeBlock degrades to a plain
+// <pre> for unknown langs anyway, so listing only the loaded grammars here keeps the two in sync.
+const EXT_LANG: Record<string, string> = {
+  js: 'javascript', cjs: 'javascript', mjs: 'javascript', jsx: 'jsx',
+  ts: 'typescript', cts: 'typescript', mts: 'typescript', tsx: 'tsx',
+  py: 'python', pyw: 'python', go: 'go', rs: 'rust', java: 'java',
+  c: 'c', h: 'c', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', hh: 'cpp',
+  cs: 'csharp', json: 'json', jsonc: 'json',
+  yaml: 'yaml', yml: 'yaml', sh: 'bash', bash: 'bash', zsh: 'bash',
+  html: 'html', htm: 'html', css: 'css', sql: 'sql',
+  md: 'markdown', markdown: 'markdown', diff: 'diff', patch: 'diff',
+  php: 'php', rb: 'ruby', dockerfile: 'docker', xml: 'xml', svg: 'xml'
+}
+export function extToLang(filePath: string): string {
+  const name = filePath.split(/[\\/]/).pop() ?? ''
+  if (name.toLowerCase() === 'dockerfile') return 'docker'
+  const ext = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : ''
+  return EXT_LANG[ext] ?? 'text'
+}
+
 // One fenced code block: Shiki highlights asynchronously (highlighter loads on first use); until it
 // resolves (or if the language is unknown) we show a plain <pre> fallback so text is never lost.
-function CodeBlock({ lang, code }: { lang: string; code: string }): ReactElement {
+export function CodeBlock({ lang, code }: { lang: string; code: string }): ReactElement {
   const [html, setHtml] = useState('')
   const [copied, setCopied] = useState(false)
   useEffect(() => {

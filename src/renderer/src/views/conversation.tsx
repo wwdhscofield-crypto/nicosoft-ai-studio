@@ -13,7 +13,7 @@ import { EmptyState } from '@/components/empty-state'
 import { PathBar } from '@/components/path-bar'
 import { useWorkspace } from '@/stores/workspace'
 import { Avatar, DispatchBadge, NameChip } from '@/components/primitives'
-import { useChat, roleHasAgent, roleHasImageGen, type ChatMessage } from '@/stores/chat'
+import { useChat, roleHasAgent, roleHasImageGen, type ChatMessage, type MsgBlock, type ToolCall } from '@/stores/chat'
 import { ToolBubble, ServerBubble, Sources } from '@/components/tool-bubble'
 import { Markdown } from '@/components/markdown'
 import { ApprovalDialog } from '@/components/approval-dialog'
@@ -119,6 +119,24 @@ function isSynthesis(msg: ChatMessage): boolean {
   return msg.role === 'assistant' && (msg.expertId ?? null) === 'coordinator' && Array.isArray(msg.dispatch) && msg.dispatch.length > 0
 }
 
+/* — An agent turn's body, rendered in EMISSION order: each text segment as Markdown, each tool card inline
+ *   where it streamed (resolved from `tools` by id). This is what interleaves reasoning text and tool cards
+ *   chronologically — text emitted AFTER a tool call lands below that card, not stacked above it. A text
+ *   block that's still empty (a delta hasn't filled it yet) renders nothing; a tool id with no matching card
+ *   (defensive) is skipped (the parent then renders it in the trailing fallback). — */
+function AgentBody({ blocks, tools }: { blocks: MsgBlock[]; tools?: ToolCall[] }): ReactElement {
+  const byId = (id: string): ToolCall | undefined => tools?.find((t) => t.id === id)
+  return (
+    <>
+      {blocks.map((b, i) => {
+        if (b.kind === 'text') return b.text ? <Markdown key={`t${i}`}>{b.text}</Markdown> : null
+        const tool = byId(b.id)
+        return tool ? <ToolBubble key={tool.id} tool={tool} /> : null
+      })}
+    </>
+  )
+}
+
 /* — One message in the list (user or assistant). For Coordinator-routed conversations the contributing
  *   expert can vary per message — resolve the expert from msg.expertId (with the prop as a fallback). — */
 function ChatSegment({
@@ -172,7 +190,12 @@ function ChatSegment({
         </div>
       </div>
       <div ref={bodyRef} className={'seg-body' + (isUser || synthesis ? ' primary' : '') + (windowed ? ' fold-window' : '')}>
-        {msg.text ? (
+        {/* Agent turns carry an ordered text+tool block list → interleave reasoning text and tool cards in
+            emission order. Everything else (plain chat, user input, or a legacy turn with no block list)
+            falls back to the flat "text, then all tool cards" render. */}
+        {!isUser && msg.blocks && msg.blocks.length > 0 ? (
+          <AgentBody blocks={msg.blocks} tools={msg.tools} />
+        ) : msg.text ? (
           isUser ? (
             <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{msg.text}</p>
           ) : (
@@ -192,7 +215,11 @@ function ChatSegment({
             ))}
           </div>
         ) : null}
-        {msg.tools && msg.tools.length > 0 ? msg.tools.map((t) => <ToolBubble key={t.id} tool={t} />) : null}
+        {/* Tool cards NOT covered by the ordered block list (legacy turn, or a defensive gap) render here so
+            none are ever dropped. With a block list, every tool id appears as a block → this renders nothing. */}
+        {msg.tools && msg.tools.length > 0
+          ? msg.tools.filter((t) => !(msg.blocks ?? []).some((b) => b.kind === 'tool' && b.id === t.id)).map((t) => <ToolBubble key={t.id} tool={t} />)
+          : null}
         {msg.servers && msg.servers.length > 0 ? msg.servers.map((sv, i) => <ServerBubble key={i} note={sv} />) : null}
         {msg.citations && msg.citations.length > 0 ? <Sources items={msg.citations} /> : null}
         {/* Live readout (pulsing dot · elapsed · ↑↓ tokens) shows ONLY while the agent is working — streaming

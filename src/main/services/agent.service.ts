@@ -874,18 +874,29 @@ export function readTranscript(convId: string): Record<string, RunTranscript> {
     if (obj.t !== 'event' || !obj.runId || !obj.event) continue
     const content = obj.event.message?.content
     if (!Array.isArray(content)) continue
-    const run = (byRun[obj.runId] ??= { tools: [], servers: [], citations: [] })
+    const run = (byRun[obj.runId] ??= { tools: [], blocks: [], servers: [], citations: [] })
     if (obj.event.type === 'assistant') {
       for (const b of content as {
         type?: string
         id?: string
         name?: string
         input?: unknown
+        text?: string
         action?: { query?: string; url?: string }
         citations?: { url?: string; title?: string }[]
       }[]) {
         if (b.type === 'tool_use' && b.id) {
           run.tools.push({ id: b.id, name: b.name ?? '', input: b.input, status: 'running' })
+          run.blocks.push({ kind: 'tool', id: b.id }) // chronological position of this card across the run's turns
+        } else if (b.type === 'text') {
+          // Carry the turn's prose in order so it interleaves with the tool cards. Skip empty/whitespace-only
+          // text (some turns are pure tool calls) to avoid blank segments. Merge into a trailing text block so
+          // consecutive text across turns reads as one paragraph.
+          if (b.text && b.text.trim()) {
+            const last = run.blocks[run.blocks.length - 1]
+            if (last && last.kind === 'text') last.text += b.text
+            else run.blocks.push({ kind: 'text', text: b.text })
+          }
         } else if (b.type === 'web_search_call') {
           // search → query, open_page → url (visited site). reasoning/other server blocks aren't shown.
           const sv: { serverType: string; query?: string; url?: string } = { serverType: b.type }

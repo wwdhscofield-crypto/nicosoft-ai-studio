@@ -7,9 +7,22 @@
 import { useState } from 'react'
 import type { ReactElement } from 'react'
 import { Icons } from '@/components/icons'
+import { CodeBlock, extToLang } from '@/components/markdown'
 import type { ToolCall, ServerNote } from '@/stores/chat'
 
 const DIFF_TOOLS = new Set(['Edit', 'Write', 'MultiEdit'])
+
+// Read returns its file contents framed `cat -n` style: a 1-based line number (6-wide, space-padded) + a
+// TAB + the line. Strip that framing so the code block shows the raw source (and Shiki highlights it). The
+// pattern only matches the numbered framing — PDF text / "(empty file)" / "(no extractable text…)" pass
+// through untouched.
+function stripLineNumbers(text: string): string {
+  if (!/^\s*\d+\t/.test(text)) return text // not the numbered format (PDF text, empty-file marker, …)
+  return text
+    .split('\n')
+    .map((l) => l.replace(/^\s*\d+\t/, ''))
+    .join('\n')
+}
 
 // One-line summary of what the tool is doing — the file path or the command.
 function toolSummary(name: string, input: Record<string, unknown>): string {
@@ -43,6 +56,9 @@ export function ToolBubble({ tool }: { tool: ToolCall }): ReactElement {
   const summary = toolSummary(tool.name, input)
   const isDiff = DIFF_TOOLS.has(tool.name)
   const hasResult = !!tool.result && tool.status !== 'running'
+  // Read's result is file contents → render it as a syntax-highlighted code block (language guessed from
+  // the file extension). Edit/Write/MultiEdit keep the collapsed diff form (isDiff branch below).
+  const isReadResult = tool.name === 'Read' && hasResult
   const expandable = isDiff || hasResult
 
   return (
@@ -64,7 +80,13 @@ export function ToolBubble({ tool }: { tool: ToolCall }): ReactElement {
       {open && (
         <div className="tb-detail">
           {isDiff ? <DiffView name={tool.name} input={input} /> : null}
-          {hasResult && !isDiff ? <pre className="tb-result">{tool.result!.slice(0, 6000)}</pre> : null}
+          {isReadResult ? (
+            <div className="tb-code">
+              <CodeBlock lang={extToLang(String(input.file_path ?? ''))} code={stripLineNumbers(tool.result!).slice(0, 50000)} />
+            </div>
+          ) : hasResult && !isDiff ? (
+            <pre className="tb-result">{tool.result!.slice(0, 6000)}</pre>
+          ) : null}
         </div>
       )}
     </div>
