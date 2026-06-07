@@ -258,11 +258,20 @@ function GenericSettingsPage({ id }: { id: string }): ReactElement {
           <div className="about-ver">v{info?.version ?? "…"} · Apache-2.0 · open source</div>
         </div>
         <div className="settings-desc">A desktop workspace where a team of named AI experts — engineers, a designer, a translator, an editor, an analyst, a scheduler, and a coordinator — works for you, running on the model providers you choose.</div>
+        <ul className="set-points">
+          <li><b>A team, not a chatbot</b> — each expert has its own role, tools, and starter prompts; the coordinator can route a task across several of them.</li>
+          <li><b>Bring your own models</b> — point each role at any OpenAI-, Anthropic-, or Gemini-compatible endpoint; no NicoSoft account or proxy in between.</li>
+          <li><b>Experts that remember</b> — a layered memory (about you, per-role, and shared across hand-offs) grows from your conversations and can be turned off anytime.</li>
+          <li><b>Real work, not just chat</b> — agents run tools to read and write files, fetch and search the web, generate images, and produce PDFs.</li>
+          <li><b>Yours, on this device</b> — conversations, memory, and projects live in a local SQLite database; API keys sit in the OS keychain.</li>
+        </ul>
         <div className="set-list">
           <div className="set-row"><span className="set-row-label">Version</span><span className="set-row-val">{info?.version ?? "…"}</span></div>
-          <div className="set-row"><span className="set-row-label">License</span><span className="set-row-val">Apache-2.0</span></div>
+          <div className="set-row"><span className="set-row-label">License</span><span className="set-row-val">Apache-2.0 · open source</span></div>
+          <div className="set-row"><span className="set-row-label">Engine</span><span className="set-row-val">Electron · React</span></div>
           <div className="set-row"><span className="set-row-label">Author</span><span className="set-row-val">NicoSoft</span></div>
         </div>
+        <div className="settings-note">Built to run on your machine and your model providers — nothing about how you use it is sent anywhere else.</div>
       </div>
     )
   }

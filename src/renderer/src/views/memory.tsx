@@ -303,7 +303,7 @@ export function MemorySettings(): ReactElement {
           ))
         )}
       </div>
-      <Pagination page={safePage} pageCount={pageCount} onChange={setPage} />
+      <Pagination page={safePage} pageCount={pageCount} total={filtered.length} pageSize={MEM_PAGE_SIZE} onChange={setPage} />
     </div>
   )
 }

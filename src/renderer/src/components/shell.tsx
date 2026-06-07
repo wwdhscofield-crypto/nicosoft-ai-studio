@@ -1,8 +1,8 @@
 /* ============================================================
    NicoSoft AI Studio — app shell: Topbar + Sidebar
    ============================================================ */
-import { Fragment, useState } from 'react'
-import type { CSSProperties, ReactElement } from 'react'
+import { Fragment, useRef, useState } from 'react'
+import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactElement } from 'react'
 import { Icons } from '@/components/icons'
 import { Avatar } from '@/components/primitives'
 import { ConfirmDialog, PromptDialog } from '@/components/dialogs'
@@ -163,6 +163,9 @@ function DisabledRow({ expert, onProfile }: { expert: Expert; onProfile: () => v
 }
 
 // One History row: select on click; a ⋯ menu for pin / rename / archive / delete.
+// Approx. height of the 4-item actions menu; used to decide flip direction.
+const HIST_MENU_HEIGHT = 160
+
 function HistRow({
   conv,
   active,
@@ -176,19 +179,33 @@ function HistRow({
 }): ReactElement {
   const chat = useChat()
   const [menu, setMenu] = useState(false)
+  const [menuUp, setMenuUp] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [confirmDel, setConfirmDel] = useState(false)
+  const moreRef = useRef<HTMLButtonElement>(null)
+  // Flip the menu upward when the row sits too low in the scroll area for the
+  // menu to fit below it — otherwise sidebar-scroll's overflow clips the menu.
+  const toggleMenu = (e: ReactMouseEvent): void => {
+    e.stopPropagation()
+    const btn = moreRef.current
+    const scroll = btn?.closest('.sidebar-scroll')
+    if (btn && scroll) {
+      const below = scroll.getBoundingClientRect().bottom - btn.getBoundingClientRect().bottom
+      setMenuUp(below < HIST_MENU_HEIGHT)
+    }
+    setMenu((s) => !s)
+  }
   return (
     <div className={'hist-row' + (active ? ' active' : '')} onClick={() => onSelect(conv.id)}>
       <span className="hist-dot" style={{ background: expert?.color ?? 'var(--text-4)' }} />
       <span className="hist-title">{conv.title || 'Untitled'}</span>
-      <button className="hist-more" title="Actions" onClick={(e) => { e.stopPropagation(); setMenu((s) => !s) }}>
+      <button ref={moreRef} className="hist-more" title="Actions" onClick={toggleMenu}>
         <Icons.more size={14} />
       </button>
       {menu && (
         <>
           <div className="menu-backdrop" onClick={(e) => { e.stopPropagation(); setMenu(false) }} />
-          <div className="row-menu right" onClick={(e) => e.stopPropagation()}>
+          <div className={'row-menu right' + (menuUp ? ' up' : '')} onClick={(e) => e.stopPropagation()}>
             <div className="rm-item" onClick={() => { setMenu(false); void chat.setPinned(conv.id, !conv.pinned) }}>
               <Icons.pin size={14} /> {conv.pinned ? 'Unpin' : 'Pin'}
             </div>
