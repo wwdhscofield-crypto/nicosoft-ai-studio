@@ -7,6 +7,7 @@
 // Combining google_search grounding with custom function calling in one call needs Gemini 3 (see doc 29).
 
 import { geminiModelPath, iterSSE, openStream, parseJSON, sanitizeGeminiSchema, toLlmError } from '../llm/_shared'
+import { USER_AGENT } from '../user-agent'
 import { streamIdleGuard, LLM_STREAM_IDLE_MS } from './stream-timeout'
 import { ulid } from '../db/id'
 import type { AgentLlmEvent, AgentLlmRequest } from './llm'
@@ -148,7 +149,7 @@ export async function* callWithToolsGemini(
     guard.reset()
     const reader = await openStream(PROVIDER, url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': req.apiKey },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': req.apiKey, 'User-Agent': USER_AGENT },
       body: JSON.stringify(body),
       signal: guard.signal,
     })

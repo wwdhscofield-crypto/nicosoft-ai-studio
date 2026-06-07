@@ -4,6 +4,7 @@
 
 import type { ChatAttachment, ChatFn, ChatMessage, ChatRequest, ChatResult, OnDelta } from './types'
 import { iterSSE, openStream, parseJSON, toLlmError } from './_shared'
+import { USER_AGENT } from '../user-agent'
 
 const PROVIDER = 'openai'
 
@@ -95,6 +96,7 @@ export const chatOpenAI: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Pr
     headers: {
       Authorization: `Bearer ${req.apiKey}`,
       'Content-Type': 'application/json',
+      'User-Agent': USER_AGENT,
     },
     body: JSON.stringify(buildBody(req)),
     signal: req.signal,

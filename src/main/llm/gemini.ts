@@ -7,6 +7,7 @@
 import type { ChatAttachment, ChatFn, ChatMessage, ChatRequest, ChatResult, OnDelta, ToolCall } from './types'
 import { geminiModelPath, iterSSE, openStream, parseJSON, sanitizeGeminiSchema, toLlmError } from './_shared'
 import { ulid } from '../db/id'
+import { USER_AGENT } from '../user-agent'
 
 const PROVIDER = 'gemini'
 
@@ -151,7 +152,7 @@ export const chatGemini: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Pr
   const url = `${base}/v1beta/models/${geminiModelPath(req.model)}:streamGenerateContent?alt=sse`
   const reader = await openStream(PROVIDER, url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': req.apiKey },
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': req.apiKey, 'User-Agent': USER_AGENT },
     body: JSON.stringify(buildBody(req)),
     signal: req.signal,
   })

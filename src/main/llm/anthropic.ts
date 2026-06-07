@@ -4,6 +4,7 @@
 
 import type { ChatAttachment, ChatFn, ChatMessage, ChatRequest, ChatResult, OnDelta } from './types'
 import { iterSSE, openStream, parseJSON, toLlmError } from './_shared'
+import { USER_AGENT } from '../user-agent'
 
 const PROVIDER = 'anthropic'
 const MAX_TOKENS = 4096
@@ -116,6 +117,7 @@ export const chatAnthropic: ChatFn = async (req: ChatRequest, onDelta: OnDelta):
       'x-api-key': req.apiKey,
       'anthropic-version': '2023-06-01',
       'Content-Type': 'application/json',
+      'User-Agent': USER_AGENT,
     },
     body: JSON.stringify(buildBody(req)),
     signal: req.signal,

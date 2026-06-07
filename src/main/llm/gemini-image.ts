@@ -10,6 +10,7 @@
 
 import { LlmError, type ImageGenResult } from './types'
 import { throwHttpError, toLlmError } from './_shared'
+import { USER_AGENT } from '../user-agent'
 
 const PROVIDER = 'gemini'
 
@@ -41,7 +42,7 @@ async function postJson(url: string, apiKey: string, body: unknown, signal?: Abo
   try {
     res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey, 'User-Agent': USER_AGENT },
       body: JSON.stringify(body),
       signal,
     })

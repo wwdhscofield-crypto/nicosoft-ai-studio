@@ -5,6 +5,7 @@
 // See docs/nicosoft-studio/16-openai-agent-loop.md.
 
 import { iterSSE, openStream, parseJSON, toLlmError } from '../llm/_shared'
+import { USER_AGENT } from '../user-agent'
 import { streamIdleGuard, LLM_STREAM_IDLE_MS } from './stream-timeout'
 import type { AgentLlmEvent, AgentLlmRequest } from './llm'
 import type {
@@ -155,7 +156,7 @@ export async function* callWithToolsOpenAI(
     guard.reset()
     const reader = await openStream(PROVIDER, url, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${req.apiKey}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${req.apiKey}`, 'Content-Type': 'application/json', 'User-Agent': USER_AGENT },
       body: JSON.stringify(body),
       signal: guard.signal,
     })

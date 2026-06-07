@@ -13,6 +13,7 @@ import { request as httpRequest } from 'node:http'
 import type { IncomingMessage } from 'node:http'
 import TurndownService from 'turndown'
 import { z } from 'zod'
+import { USER_AGENT } from '../../user-agent'
 import { chatAnthropic } from '../../llm/anthropic'
 import type { AgentLlmAccess } from '../context'
 import { buildTool } from '../tool'
@@ -78,7 +79,7 @@ function httpGet(target: string, signal: AbortSignal): Promise<HttpResult> {
         lookup: ssrfSafeLookup,
         agent: false,
         signal: combined,
-        headers: { Accept: 'text/markdown, text/html, */*', 'User-Agent': 'NicoSoft-AI-Studio/WebFetch' },
+        headers: { Accept: 'text/markdown, text/html, */*', 'User-Agent': USER_AGENT },
       },
       (res: IncomingMessage) => {
         const status = res.statusCode ?? 0

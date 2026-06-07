@@ -4,6 +4,7 @@
 // Reuses the shared SSE plumbing. See docs/nicosoft-studio/12-hex-coding-agent.md §2.4.
 
 import { iterSSE, openStream, parseJSON, toLlmError } from '../llm/_shared'
+import { USER_AGENT } from '../user-agent'
 import { streamIdleGuard, LLM_STREAM_IDLE_MS } from './stream-timeout'
 import { callWithToolsOpenAI } from './llm-openai'
 import { callWithToolsGemini } from './llm-gemini'
@@ -111,6 +112,7 @@ async function* callWithToolsAnthropic(
         'x-api-key': req.apiKey,
         'anthropic-version': ANTHROPIC_VERSION,
         'content-type': 'application/json',
+        'User-Agent': USER_AGENT,
       },
       body: JSON.stringify(body),
       signal: guard.signal,

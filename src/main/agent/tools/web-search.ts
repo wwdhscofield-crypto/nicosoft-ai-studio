@@ -9,6 +9,7 @@
 
 import { z } from 'zod'
 import { geminiModelPath } from '../../llm/_shared'
+import { USER_AGENT } from '../../user-agent'
 import type { AgentLlmAccess } from '../context'
 import { buildTool } from '../tool'
 import type { ToolResultBlock } from '../types'
@@ -63,7 +64,7 @@ async function delegatedSearch(
   const res = await fetch(`${llm.baseUrl.replace(/\/$/, '')}/v1/messages`, {
     method: 'POST',
     signal: AbortSignal.any([signal, AbortSignal.timeout(SEARCH_TIMEOUT_MS)]),
-    headers: { 'x-api-key': llm.apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    headers: { 'x-api-key': llm.apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json', 'User-Agent': USER_AGENT },
     body: JSON.stringify({
       model: llm.searchModel,
       max_tokens: 1024,
@@ -110,7 +111,7 @@ async function delegatedSearchGemini(
   const res = await fetch(url, {
     method: 'POST',
     signal: AbortSignal.any([signal, AbortSignal.timeout(SEARCH_TIMEOUT_MS)]),
-    headers: { 'x-goog-api-key': llm.apiKey, 'content-type': 'application/json' },
+    headers: { 'x-goog-api-key': llm.apiKey, 'content-type': 'application/json', 'User-Agent': USER_AGENT },
     body: JSON.stringify({
       contents: [{ role: 'user', parts: [{ text: `Search the web for: ${input.query}` }] }],
       tools: [{ google_search: {} }],
