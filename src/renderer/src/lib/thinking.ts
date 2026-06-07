@@ -63,7 +63,7 @@ function openaiDepths(slug: string): ThinkingDepth[] {
   if (major > 5 || minor >= 5) tiers.push('xhigh')
   return tiers
 }
-// Claude effort levels (ccb: low/medium/high/xhigh/max) expressed as extended-thinking budgets, so any
+// Claude effort levels (low/medium/high/xhigh/max) expressed as extended-thinking budgets, so any
 // Anthropic-protocol endpoint accepts them — budget_tokens is the universally-supported wire form
 // (new Opus models also take the effort enum, but budget is the safe, portable choice).
 const ANTHROPIC_BUDGET: Partial<Record<ThinkingDepth, number>> = {
@@ -74,7 +74,7 @@ const ANTHROPIC_BUDGET: Partial<Record<ThinkingDepth, number>> = {
   max: 65536
 }
 
-// Per-model Claude tiers (ccb): low/medium/high base; +max on Opus 4.6+; +xhigh(Extra) on Opus 4.7+.
+// Per-model Claude tiers: low/medium/high base; +max on Opus 4.6+; +xhigh(Extra) on Opus 4.7+.
 // Haiku has no thinking; non-Opus or older Opus Claude gets the base three.
 function anthropicDepths(slug: string): ThinkingDepth[] {
   if (slug.includes('haiku')) return []

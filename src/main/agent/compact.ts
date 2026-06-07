@@ -1,4 +1,4 @@
-// Compaction layers 2 & 3 (overflow prevention). Mirrors ccb's microcompact + autocompact.
+// Compaction layers 2 & 3 (overflow prevention). Two-layer compaction: microcompact + autocompact.
 // Layer 2 (microcompact): clear the CONTENT of old tool results, keep the most recent N — cheap,
 //   non-destructive to message structure, preserves tool_use/tool_result pairing. Returns the freed
 //   char count so the running token estimate can subtract it (else it over-estimates and fires the
@@ -67,7 +67,7 @@ export function tokensFromUsage(usage: Usage): number {
 }
 
 // Input tokens actually SENT this turn = non-cached prefix + cache read + cache creation. With prompt
-// caching (Claude OAuth mirrors Claude Code's cache_control), message_start.input_tokens is only the tiny
+// caching (Claude OAuth uses cache_control), message_start.input_tokens is only the tiny
 // non-cached delta — the bulk lands in cache_read/cache_creation. Summing all three gives the true ↑
 // prompt size for the readout; without it a cache-heavy turn reports a misleadingly tiny ↑ (e.g. 8).
 export function promptTokensFromUsage(usage: Usage): number {
@@ -105,7 +105,7 @@ const MAX_TOOL_RESULT_IN_TRANSCRIPT = 800
 
 const COMPACT_SYSTEM = 'You are a helpful AI assistant tasked with summarizing conversations.'
 
-// The 9-section summary prompt, ported from ccb's BASE_COMPACT_PROMPT.
+// The 9-section summary prompt.
 const COMPACT_PROMPT = `Summarize the conversation below in detail. Wrap your reasoning in <analysis> tags, then output the summary inside <summary> tags with exactly these numbered sections:
 
 1. Primary Request and Intent: the user's explicit requests and overall goal, in detail.

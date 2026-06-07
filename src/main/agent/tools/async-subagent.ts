@@ -2,7 +2,7 @@
 // Where Task is a synchronous one-shot (spawn → run → summary, blocking the turn), these drive PERSISTENT
 // background children: agent_spawn (non-blocking, returns an id), agent_send (message it mid-flight),
 // agent_wait (pull its next reply), agent_close (end it), and agent_batch (fan out many one-shots at once,
-// learning Codex's agent_jobs). All are read-only at this layer — permission is delegated to the child's
+// a background-job pool). All are read-only at this layer — permission is delegated to the child's
 // own tools — and concurrency-safe so several can run in one turn. The pool lives in ctx.subAgents.
 
 import { z } from 'zod'

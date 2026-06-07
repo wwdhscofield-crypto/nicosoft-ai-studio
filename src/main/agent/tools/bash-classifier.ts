@@ -5,7 +5,7 @@
 // (`echo x && ls`) classify as read-only — parallelizable, no approval — while anything it can't
 // prove read-only still falls through to "write" (serial + approval + plan-blocked).
 //
-// Deliberately NOT a full bash grammar (ccb ships a ~4400-line tree-sitter parser for that). It's the
+// Deliberately NOT a full bash grammar (a full tree-sitter parser would be needed for that). It's the
 // minimal quote-aware split needed to judge read-only intent: single/double quotes and backslash
 // escapes are honored so operators inside them aren't mistaken for separators, and every exotic
 // construct (substitution, redirect, subshell, heredoc, ANSI-C/locale quoting, background, embedded

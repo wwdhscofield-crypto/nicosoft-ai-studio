@@ -1,5 +1,5 @@
 // Scheduler engine (batch 2 / doc 28 §3.3). Lives in the Electron main process — the natural single daemon
-// (no multi-session lock needed, unlike ccb's CLI). Every CHECK_MS it scans enabled tasks and fires the due
+// (no multi-session lock needed, unlike a multi-session CLI). Every CHECK_MS it scans enabled tasks and fires the due
 // ones. A task is a STEP CHAIN (doc 28 §5.3): an ordered list of steps, each an agent run by its own role,
 // permissionMode='bypass' confined to the task's pre-authorized cwd (§5.1). Steps run sequentially in one
 // conversation; each step's final reply is injected into the next step's prompt — a cross-role pipeline
@@ -22,7 +22,7 @@ import * as convRepo from '../../repos/conversation.repo'
 import * as conversationService from '../../services/conversation.service'
 import * as keychain from '../../keychain/keychain'
 
-const CHECK_MS = 1000 // ccb parity; main process is always up, a 1s small-file read is negligible
+const CHECK_MS = 1000 // main process is always up, a 1s small-file read is negligible
 
 // Unattended callbacks shared by every step: bypass skips requestPermission (a cwd-confined tool that somehow
 // asked is denied — no user to approve); no streaming UI, no askUser.

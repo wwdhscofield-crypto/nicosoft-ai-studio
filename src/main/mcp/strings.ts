@@ -1,4 +1,4 @@
-// MCP tool naming — fully-qualified `mcp__<server>__<tool>`. Mirrors claude-code's strings.ts so the
+// MCP tool naming — fully-qualified `mcp__<server>__<tool>`. Uses the fully-qualified MCP naming convention so the
 // agent loop sees a stable, namespaced tool name. Normalization keeps names within the Anthropic
 // tool-name charset [a-zA-Z0-9_-] by replacing anything else with '_'.
 

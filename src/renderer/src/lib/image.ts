@@ -1,5 +1,5 @@
 // Image attachment helpers for the composer. Electron is local-first, so images travel as data URLs
-// (base64) straight into the Anthropic image block — no upload server. Mirrors ccb's auto-resize:
+// (base64) straight into the Anthropic image block — no upload server. Auto-resize strategy:
 // clamp to 2000px, keep PNG if it fits; otherwise recompress as JPEG (decreasing quality), then
 // downscale dimensions as a last resort. Accepts png/jpeg/webp/gif input (output is png or jpeg).
 
@@ -12,7 +12,7 @@ export interface ImageAttachment {
 }
 
 const MAX_BASE64 = 5 * 1024 * 1024 // 5 MB base64 — the Anthropic per-image cap
-const MAX_DIM = 2000 // ccb IMAGE_MAX_WIDTH / IMAGE_MAX_HEIGHT
+const MAX_DIM = 2000 // max image width / height
 const ACCEPTED = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 
 const uid = (): string => globalThis.crypto.randomUUID()
@@ -73,7 +73,7 @@ async function resizeToLimits(dataUrl: string): Promise<{ dataUrl: string; mime:
       if (base64Len(out) <= MAX_BASE64) return { dataUrl: out, mime: 'image/jpeg' }
     }
 
-    // Still too big → downscale dimensions and retry low-quality JPEG (ccb's last resort).
+    // Still too big → downscale dimensions and retry low-quality JPEG (the last resort).
     let w = width
     let h = height
     for (let i = 0; i < 6; i++) {

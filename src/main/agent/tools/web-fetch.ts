@@ -1,8 +1,8 @@
-// WebFetch — fetch a URL and extract what the prompt asks for, using a small fast model. Mirrors
-// ccb's WebFetchTool pattern: fetch → HTML→markdown (turndown) → truncate → run the prompt over the
+// WebFetch — fetch a URL and extract what the prompt asks for, using a small fast model. Standard
+// web-fetch pattern: fetch → HTML→markdown (turndown) → truncate → run the prompt over the
 // content with a cheap model, return its answer. Read-only (modifies nothing), concurrency-safe.
 //
-// Differences from ccb (adapted to studio's stack): Node fetch instead of axios; our own SSRF guard
+// Adapted to studio's stack: Node fetch instead of axios; our own SSRF guard
 // (checkUrlSsrf) instead of Anthropic's domain_info preflight; the small-model call goes through
 // chatAnthropic against ctx.llm. Same-host(±www) redirects are followed; a cross-host redirect is
 // reported back so the model re-issues WebFetch with the new URL (an open-redirect can't silently

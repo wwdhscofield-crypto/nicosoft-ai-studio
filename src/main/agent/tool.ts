@@ -1,4 +1,4 @@
-// Tool contract for the Engineer coding agent — the runtime-only subset of Claude Code's Tool interface
+// Tool contract for the Engineer coding agent — the runtime-only subset of a coding-agent Tool interface
 // (none of the ~30 UI render methods). A tool author writes a ToolDef; buildTool fills fail-closed
 // defaults. See docs/nicosoft-studio/12-hex-coding-agent.md §2.2.
 
@@ -59,8 +59,8 @@ export interface Tool<In extends z.ZodTypeAny = z.ZodTypeAny, Out = unknown>
 }
 
 // Fail-closed defaults: not concurrency-safe, treated as a write, non-destructive, input valid,
-// allow (the permission MODE — not this default — is what actually gates writes). Mirrors ccb's
-// TOOL_DEFAULTS.
+// allow (the permission MODE — not this default — is what actually gates writes). Standard tool
+// defaults.
 export function buildTool<In extends z.ZodTypeAny, Out>(def: ToolDef<In, Out>): Tool<In, Out> {
   return {
     isReadOnly: () => false,

@@ -1,4 +1,4 @@
-// MCP error hierarchy — mirrors claude-code's errors.ts (trimmed). Each carries the server name so the
+// MCP error hierarchy (trimmed). Each carries the server name so the
 // service/UI can attribute failures.
 
 export class McpError extends Error {

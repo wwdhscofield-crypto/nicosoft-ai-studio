@@ -5,7 +5,7 @@ import { pickSmallModel } from './model-select'
 
 // Conversation title generation. Picks a small/fast model WITHIN the conversation's own endpoint (see
 // pickSmallModel — haiku/sonnet, mini/nano, or flash by protocol; never crossing providers) and asks
-// it for a concise title from the user's first message. Mirrors the Claude Code approach: a 3-7 word
+// it for a concise title from the user's first message. Uses a title-generation approach: a 3-7 word
 // sentence-case title returned as JSON {title}, derived from the user's input (not the assistant's
 // reply). Best-effort: any failure (no endpoint, no key, network error, unparseable reply) falls back
 // to a truncation of the first message.

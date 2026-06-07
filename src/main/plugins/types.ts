@@ -1,9 +1,9 @@
 import { z } from 'zod'
 
-// A plugin manifest (plugin.json) — studio's simplified take on ccb's PluginManifestSchema. mcpServers
+// A plugin manifest (plugin.json) — studio's simplified take on a plugin-manifest schema. mcpServers
 // are declared inline (the same shape studio's McpManager understands); roles are studio custom-role
 // definitions; skills live under a skills/ folder (auto-discovered, each subdir holding a SKILL.md).
-// ccb's marketplace / git / hooks / commands / lsp / outputStyles are intentionally out of scope.
+// marketplace / git / hooks / commands / lsp / outputStyles are intentionally out of scope.
 export const PluginManifestSchema = z.object({
   name: z.string().min(1),
   version: z.string().optional(),

@@ -1,5 +1,5 @@
 // ApprovalDialog — a centered floating card asking the user to approve a mutating tool before Engineer
-// runs it. Visual design from claude.ai/design: title "Engineer wants to run <Tool>" (tool in accent), an
+// runs it. Visual design: title "Engineer wants to run <Tool>" (tool in accent), an
 // optional reason line, the tool input as a mono code block, and Deny (ghost, Esc) / Allow (accent,
 // Enter) buttons. Keyboard: Enter approves, Esc denies. Styles in styles/agent.css.
 

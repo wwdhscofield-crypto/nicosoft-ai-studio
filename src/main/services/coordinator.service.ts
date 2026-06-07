@@ -7,7 +7,7 @@
 //
 // Cross-protocol JSON forcing for the router: Anthropic uses assistant-prefill "{"; the user message
 // always reiterates the JSON contract so it survives OAuth gateways that overwrite the system prompt
-// (Claude Code identity injection on nicosoft/* slugs — Batch 2 lesson). `parseRouteDecision` is
+// (OAuth-gateway identity injection on nicosoft/* slugs — Batch 2 lesson). `parseRouteDecision` is
 // lenient (JSON.parse → first {...} substring → role-name scan → fallback generalist) — Coordinator never gets
 // stuck.
 //
@@ -394,7 +394,7 @@ function buildRouterMessages(
     messages.push({ role: 'user', content: m.content })
     lastUserInHistory = messages.length - 1
   }
-  // Reinforce the JSON contract on the LAST user message — OAuth gateways (nicosoft/*, Claude Code
+  // Reinforce the JSON contract on the LAST user message — OAuth gateways (nicosoft/*, with
   // identity injection) may overwrite system prompts, so the routing instructions MUST also live in a
   // user message to survive. (Lesson from Batch 2.)
   const reinforcer = `\n\n---\nRoute the above. Respond with ONLY a JSON object — no markdown, no explanation, no leading text. Format:\n{"mode":"direct","reason":"<≤8 words>"}\nor\n{"mode":"single","role":"<name>","intro":"<one sentence to the user>","reason":"<≤8 words>"}\nor\n{"mode":"pipeline","roles":["<name>","<name>"],"intro":"<one sentence>","reason":"<≤8 words>"}`

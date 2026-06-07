@@ -31,7 +31,7 @@ function fmtTokens(n: number): string {
   return `${parseFloat((n / 1000).toFixed(1))}K`
 }
 
-// Claude-Code-style readout formatters for the streaming indicator: compact lower-case token count
+// Coding-agent-style readout formatters for the streaming indicator: compact lower-case token count
 // ("1.2k") and a coarse elapsed string ("3s" / "1m 5s").
 const READOUT_NUM = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
 function fmtReadoutTokens(n: number): string {
@@ -44,7 +44,7 @@ function fmtElapsed(ms: number): string {
 }
 
 // The live "thinking" readout shown while a reply streams: a steady role-colored dot (CSS breathes its
-// opacity — no spin) + elapsed · output-token estimate (chars/4, same heuristic Claude Code uses).
+// opacity — no spin) + elapsed · output-token estimate (chars/4, a common heuristic).
 // Tokens/elapsed appear once they're meaningful, so the pure-thinking phase (no text yet) is just the dot.
 function ThinkingReadout({ chars, inputTokens, outputTokens }: { chars: number; inputTokens: number; outputTokens?: number }): ReactElement {
   const startRef = useRef(Date.now())

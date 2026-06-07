@@ -126,7 +126,7 @@ export async function* runAgent(
     llm: params.ctx.llm ?? { protocol: params.protocol, baseUrl, apiKey, smallModel, searchModel, imageModel: params.imageModel },
     setPermissionMode: setPlanMode,
   }
-  // No fixed turn cap (aligned with claude-code / codex): the loop is bounded by autocompact + microcompact
+  // No fixed turn cap (common for coding agents): the loop is bounded by autocompact + microcompact
   // (token blow-up), the model ending its turn, and the abort/retry budgets — not a hardcoded count. A caller
   // MAY still pass maxTurns to bound a run explicitly; sub-agents inherit it (usually undefined → unbounded).
   const maxTurns = params.maxTurns

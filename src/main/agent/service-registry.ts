@@ -4,14 +4,14 @@
 // timeout, so long-lived servers need this separate subsystem. A registry is bound to a container (a
 // conversation now; a project in phase 5) and tree-kills everything on dispose — no zombie ports.
 //
-// Ported from codex unified_exec (codex-rs/core/src/unified_exec/):
+// Long-running service/process registry:
 //   • store-before-ready: the record is inserted BEFORE we await readiness, so a caller abort during
-//     startup can't drop the only handle and orphan the process (codex process_manager.rs comment).
+//     startup can't drop the only handle and orphan the process.
 //   • alive-only: a command that exits immediately (bad command) isn't kept as a "service".
-//   • HeadTailBuffer: keep a head prefix + tail suffix of logs, truncate the middle (head_tail_buffer.rs).
-//   • process cap (codex MAX_UNIFIED_EXEC_PROCESSES = 64); exited records are LRU-evicted to make room.
-// Added on top of codex (which only waits a fixed yield): real readiness — a log keyword or an HTTP probe —
-// so a frontend never connects to a backend that hasn't bound its port yet; + reuse + port probing.
+//   • HeadTailBuffer: keep a head prefix + tail suffix of logs, truncate the middle.
+//   • process cap (MAX_SERVICES = 64); exited records are LRU-evicted to make room.
+// Real readiness — a log keyword or an HTTP probe — so a frontend never connects to a backend that
+// hasn't bound its port yet; plus reuse + port probing.
 
 import { spawn, type ChildProcess } from 'node:child_process'
 import { ulid } from '../db/id'
@@ -122,7 +122,7 @@ export class ServiceRegistry implements ServiceHandle {
       id: ulid(), name: input.name, command: input.command, cwd: input.cwd, pid: child.pid,
       port: null, status: 'starting', exitCode: null, startedAt: Date.now(), child, logs: new HeadTailBuffer(),
     }
-    // STORE BEFORE awaiting readiness (codex store-before-output) — an abort mid-startup mustn't orphan it.
+    // STORE BEFORE awaiting readiness (store-before-output) — an abort mid-startup mustn't orphan it.
     this.services.set(rec.id, rec)
 
     const onChunk = (d: Buffer): void => {

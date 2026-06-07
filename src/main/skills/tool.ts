@@ -1,7 +1,7 @@
-// The single `Skill` tool a role's agent gets (ccb's SkillTool, inline mode only). The model picks a
+// The single `Skill` tool a role's agent gets (inline mode only). The model picks a
 // skill by name — from the "Available skills" listing in the system prompt — and this resolves the
 // skill's instruction body and returns it as the tool result for the model to follow. Forked
-// sub-agents, !cmd execution and allowed-tools switching (ccb extras) are intentionally not in v1.
+// sub-agents, !cmd execution and allowed-tools switching (extras) are intentionally not in v1.
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'

@@ -1,5 +1,5 @@
 // schedule_create / schedule_list / schedule_delete (doc 28) — the role's interface to the scheduled-task
-// store (ported from ccb's CronCreate/List/Delete). A task is a STEP CHAIN: an ordered list of steps, each an
+// store (cron-style create/list/delete). A task is a STEP CHAIN: an ordered list of steps, each an
 // agent run by its own role; the scheduler engine (engine.ts) fires due tasks and runs the steps in sequence,
 // piping each step's output into the next. cwd defaults to the creating agent's cwd, which becomes the task's
 // pre-authorized working dir (full perms inside it when fired — doc 28 §5.1).

@@ -1,6 +1,6 @@
 // Compaction layer 1 — persist an over-cap tool result to disk and replace its in-message content
 // with a head+tail preview + file path (the model can Read the path to recover the full output).
-// Mirrors ccb's toolResultStorage. Keeps a single large result from blowing the context window.
+// Tool-result storage. Keeps a single large result from blowing the context window.
 
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'

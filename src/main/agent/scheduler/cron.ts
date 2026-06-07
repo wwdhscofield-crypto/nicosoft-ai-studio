@@ -1,5 +1,5 @@
 // Cron + interval parsing for scheduled tasks (batch 1 / doc 28). Zero-dependency 5-field cron
-// (M H DoM Mon DoW, LOCAL time) — the same shape ccb uses. Supports *, ranges (1-5), steps (*/5), lists
+// (M H DoM Mon DoW, LOCAL time) — the standard cron shape. Supports *, ranges (1-5), steps (*/5), lists
 // (1,3,5). Plus a /loop-style interval shorthand (5m → */5 * * * *) and one-shot ISO datetimes. The
 // scheduler engine (batch 2) only ever reads nextRunAt; this module computes it.
 

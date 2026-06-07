@@ -260,7 +260,7 @@ export function McpDialog({
     }
   }
 
-  // Parse a pasted `{ "mcpServers": { "<name>": {…} } }` config (the Claude Desktop / Cursor / Cline
+  // Parse a pasted `{ "mcpServers": { "<name>": {…} } }` config (the standard MCP server config
   // format) — or a bare single-server object — and fill the form fields. Lets users copy from any MCP
   // server's docs instead of re-typing command/args by hand. Secrets (env/headers) flow into the same
   // keychain-bound textarea as manual entry.

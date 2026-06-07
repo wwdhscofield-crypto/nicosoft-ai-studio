@@ -1,4 +1,4 @@
-// Provider-dispatched token counter. Anthropic mirrors Claude Code's 3-tier strategy:
+// Provider-dispatched token counter. Anthropic uses a 3-tier strategy:
 //   L1: POST /v1/messages/count_tokens — exact, free, model-specific (the real input the API will bill)
 //   L2: a small-model max_tokens:1 probe, reading usage.input_tokens (+cache) — only if L1 is down
 //   L3: roughTokenCountEstimation (chars/4, dense JSON /2, image=2000) — last resort
@@ -83,7 +83,7 @@ function anthropicHeaders(apiKey: string): Record<string, string> {
   return { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
 }
 
-// Shared body builder. Empty messages with tools still needs a dummy user turn (ccb does the same) so
+// Shared body builder. Empty messages with tools still needs a dummy user turn so
 // the tool token count comes back accurate.
 function bodyFor(model: string, input: AnthropicCountInput): Record<string, unknown> {
   const body: Record<string, unknown> = {
@@ -98,7 +98,7 @@ function bodyFor(model: string, input: AnthropicCountInput): Record<string, unkn
   return body
 }
 
-// L3 — chars/4, dense JSON /2, image=2000 (mirrors ccb's per-block estimation). Conservative so an
+// L3 — chars/4, dense JSON /2, image=2000 (per-block estimation). Conservative so an
 // underestimate can't let context overflow the window unnoticed.
 function roughCount(input: AnthropicCountInput): number {
   let t = 0
@@ -114,7 +114,7 @@ function roughContent(content: unknown): number {
   let t = 0
   for (const b of content as Record<string, unknown>[]) {
     if (b.type === 'text' && typeof b.text === 'string') t += Math.ceil(b.text.length / 4)
-    else if (b.type === 'image') t += 2000 // ccb's conservative image constant
+    else if (b.type === 'image') t += 2000 // conservative image constant
     else if (b.type === 'tool_use') t += Math.ceil((String(b.name ?? '') + JSON.stringify(b.input ?? {})).length / 4)
     else if (b.type === 'tool_result') t += roughContent(b.content)
     else t += Math.ceil(JSON.stringify(b).length / 4)

@@ -1,5 +1,5 @@
-// ToolBubble + DiffView — renders a tool the Engineer agent ran inside an assistant message. Visual design
-// from claude.ai/design ("Engineer · coding-agent components"): a compact row with a status indicator
+// ToolBubble + DiffView — renders a tool the Engineer agent ran inside an assistant message. Visual design:
+// a compact row with a status indicator
 // (running = pulsing accent dot, done = success check, error = error x), the tool name in mono, a
 // dimmed one-line summary, and a chevron to expand. Edit/Write/MultiEdit expand to a DiffView; other
 // tools expand to their text result. Uses the existing studio tokens via styles/agent.css.

@@ -1,4 +1,4 @@
-// Scheduled-task storage (batch 1 / doc 28). Two modes, ported from ccb:
+// Scheduled-task storage (batch 1 / doc 28). Two modes:
 //   • durable: true  → persisted to ~/.nsai/scheduled_tasks.json, survives restarts.
 //   • durable: false → in-memory, lives only for this main-process run (default; for "remind me in 5min").
 // Batch 1 is CRUD only — create / list / delete. The scheduler engine (batch 2) reads nextRunAt to fire and

@@ -1,5 +1,5 @@
 // The "Available skills" block injected into a role's system prompt — the discovery surface the model
-// reads before calling the Skill tool. Mirrors ccb's `- name: description - whenToUse`, with a
+// reads before calling the Skill tool. Uses a `- name: description - whenToUse` listing, with a
 // per-entry cap so verbose whenToUse strings don't bloat the turn. Returns '' when the role has no
 // skills so the caller can omit the section entirely.
 
