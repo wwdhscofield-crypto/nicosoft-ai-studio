@@ -11,6 +11,8 @@ export interface ConversationRow {
   primaryRoleId: string | null
   title: string | null
   projectId: string | null
+  pinned: boolean
+  archived: boolean
   createdAt: string
   updatedAt: string
 }
@@ -55,6 +57,8 @@ interface ConversationRaw {
   primary_role_id: string | null
   title: string | null
   project_id: string | null
+  pinned: number
+  archived: number
   created_at: string
   updated_at: string
 }
@@ -81,6 +85,8 @@ function mapConversation(raw: ConversationRaw): ConversationRow {
     primaryRoleId: raw.primary_role_id,
     title: raw.title,
     projectId: raw.project_id,
+    pinned: raw.pinned === 1,
+    archived: raw.archived === 1,
     createdAt: raw.created_at,
     updatedAt: raw.updated_at
   }
@@ -120,6 +126,8 @@ export function create(input: ConversationCreateInput): ConversationRow {
     primaryRoleId: input.primaryRoleId ?? null,
     title: input.title ?? null,
     projectId: input.projectId ?? null,
+    pinned: false,
+    archived: false,
     createdAt: now,
     updatedAt: now
   }
@@ -142,6 +150,16 @@ export function list(): ConversationRow[] {
 export function rename(id: string, title: string): void {
   const now = new Date().toISOString()
   getDb().prepare('UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?').run(title, now, id)
+}
+
+// Pin / archive toggles. Deliberately do NOT touch updated_at — pinning or archiving shouldn't reorder
+// a conversation's recency within its group.
+export function setPinned(id: string, pinned: boolean): void {
+  getDb().prepare('UPDATE conversations SET pinned = ? WHERE id = ?').run(pinned ? 1 : 0, id)
+}
+
+export function setArchived(id: string, archived: boolean): void {
+  getDb().prepare('UPDATE conversations SET archived = ? WHERE id = ?').run(archived ? 1 : 0, id)
 }
 
 // Link a conversation to a project (Coordinator 2.0 — doc 19 §1). Set when a collaborate turn creates

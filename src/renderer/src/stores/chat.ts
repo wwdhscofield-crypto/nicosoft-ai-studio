@@ -130,6 +130,8 @@ interface ChatState {
   rejectApproval: (convId: string, pendingId: string) => void
   removeConversation: (convId: string) => Promise<void>
   rename: (convId: string, title: string) => Promise<void>
+  setPinned: (convId: string, pinned: boolean) => Promise<void>
+  setArchived: (convId: string, archived: boolean) => Promise<void>
 }
 
 const uid = (): string => globalThis.crypto.randomUUID()
@@ -897,6 +899,16 @@ export const useChat = create<ChatState>((set, get) => {
     rename: async (convId, title) => {
       await window.api.conversations.rename(convId, title)
       set((s) => ({ conversations: s.conversations.map((c) => (c.id === convId ? { ...c, title } : c)) }))
+    },
+
+    setPinned: async (convId, pinned) => {
+      await window.api.conversations.pin(convId, pinned)
+      set((s) => ({ conversations: s.conversations.map((c) => (c.id === convId ? { ...c, pinned } : c)) }))
+    },
+
+    setArchived: async (convId, archived) => {
+      await window.api.conversations.archive(convId, archived)
+      set((s) => ({ conversations: s.conversations.map((c) => (c.id === convId ? { ...c, archived } : c)) }))
     }
   }
 })

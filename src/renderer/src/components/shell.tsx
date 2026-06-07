@@ -1,7 +1,7 @@
 /* ============================================================
    NicoSoft AI Studio — app shell: Topbar + Sidebar
    ============================================================ */
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
 import { Icons } from '@/components/icons'
 import { Avatar } from '@/components/primitives'
@@ -162,6 +162,81 @@ function DisabledRow({ expert, onProfile }: { expert: Expert; onProfile: () => v
   )
 }
 
+// One History row: select on click; a ⋯ menu for pin / rename / archive / delete.
+function HistRow({
+  conv,
+  active,
+  expert,
+  onSelect
+}: {
+  conv: ConversationDto
+  active: boolean
+  expert: Expert | null
+  onSelect: (id: string) => void
+}): ReactElement {
+  const chat = useChat()
+  const [menu, setMenu] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+  const [confirmDel, setConfirmDel] = useState(false)
+  return (
+    <div className={'hist-row' + (active ? ' active' : '')} onClick={() => onSelect(conv.id)}>
+      <span className="hist-dot" style={{ background: expert?.color ?? 'var(--text-4)' }} />
+      <span className="hist-title">{conv.title || 'Untitled'}</span>
+      <button className="hist-more" title="Actions" onClick={(e) => { e.stopPropagation(); setMenu((s) => !s) }}>
+        <Icons.more size={14} />
+      </button>
+      {menu && (
+        <>
+          <div className="menu-backdrop" onClick={(e) => { e.stopPropagation(); setMenu(false) }} />
+          <div className="row-menu right" onClick={(e) => e.stopPropagation()}>
+            <div className="rm-item" onClick={() => { setMenu(false); void chat.setPinned(conv.id, !conv.pinned) }}>
+              <Icons.pin size={14} /> {conv.pinned ? 'Unpin' : 'Pin'}
+            </div>
+            <div className="rm-item" onClick={() => { setMenu(false); setRenaming(true) }}>
+              <Icons.edit size={14} /> Rename
+            </div>
+            <div className="rm-item" onClick={() => { setMenu(false); void chat.setArchived(conv.id, !conv.archived) }}>
+              <Icons.archive size={14} /> {conv.archived ? 'Unarchive' : 'Archive'}
+            </div>
+            <div className="rm-item danger" onClick={() => { setMenu(false); setConfirmDel(true) }}>
+              <Icons.trash size={14} /> Delete
+            </div>
+          </div>
+        </>
+      )}
+      {renaming && (
+        <PromptDialog
+          title="Rename conversation"
+          initial={conv.title || ''}
+          confirmLabel="Rename"
+          onConfirm={(v) => void chat.rename(conv.id, v)}
+          onClose={() => setRenaming(false)}
+        />
+      )}
+      {confirmDel && (
+        <ConfirmDialog
+          title="Delete conversation"
+          body="This permanently deletes this conversation and its messages. This can't be undone."
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => void chat.removeConversation(conv.id)}
+          onClose={() => setConfirmDel(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+// Bucket a conversation into a History date group by recency (updatedAt), local time.
+function histGroup(iso: string): 'Today' | 'Yesterday' | 'Earlier' {
+  const startOfDay = (x: Date): number => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const today = startOfDay(new Date())
+  const day = startOfDay(new Date(iso))
+  if (day >= today) return 'Today'
+  if (day >= today - 86_400_000) return 'Yesterday'
+  return 'Earlier'
+}
+
 function SideSectionHead({
   label,
   count,
@@ -231,6 +306,17 @@ export function Sidebar({
   const [rolesOpen, setRolesOpen] = useState(true)
   const [histOpen, setHistOpen] = useState(true)
   const [disabledOpen, setDisabledOpen] = useState(false)
+  const [archivedOpen, setArchivedOpen] = useState(false)
+
+  // History grouping: pinned first, then date buckets (Today / Yesterday / Earlier), archived last.
+  // `conversations` is already updated_at-DESC, so each group stays recency-ordered.
+  const pinnedConvs = conversations.filter((c) => c.pinned && !c.archived)
+  const activeConvs = conversations.filter((c) => !c.pinned && !c.archived)
+  const archivedConvs = conversations.filter((c) => c.archived)
+  const dateGroups = (['Today', 'Yesterday', 'Earlier'] as const)
+    .map((label) => ({ label, items: activeConvs.filter((c) => histGroup(c.updatedAt) === label) }))
+    .filter((g) => g.items.length > 0)
+  const histExpert = (c: ConversationDto): Expert | null => (c.primaryRoleId ? EXPERT_BY_ID[c.primaryRoleId] ?? null : null)
 
   return (
     <div className="sidebar">
@@ -290,19 +376,36 @@ export function Sidebar({
           (conversations.length === 0 ? (
             <div className="empty-history">No conversations yet. Pick an expert above to start one.</div>
           ) : (
-            conversations.map((c) => {
-              const e = c.primaryRoleId ? EXPERT_BY_ID[c.primaryRoleId] : null
-              return (
-                <div
-                  key={c.id}
-                  className={'hist-row' + (activeConv === c.id ? ' active' : '')}
-                  onClick={() => onSelectConv(c.id)}
-                >
-                  <span className="hist-dot" style={{ background: e?.color ?? 'var(--text-4)' }} />
-                  <span className="hist-title">{c.title || 'Untitled'}</span>
-                </div>
-              )
-            })
+            <>
+              {pinnedConvs.length > 0 && (
+                <>
+                  <div className="hist-group-head"><Icons.pin size={11} /> Pinned</div>
+                  {pinnedConvs.map((c) => (
+                    <HistRow key={c.id} conv={c} active={activeConv === c.id} expert={histExpert(c)} onSelect={onSelectConv} />
+                  ))}
+                </>
+              )}
+              {dateGroups.map((g) => (
+                <Fragment key={g.label}>
+                  <div className="hist-group-head">{g.label}</div>
+                  {g.items.map((c) => (
+                    <HistRow key={c.id} conv={c} active={activeConv === c.id} expert={histExpert(c)} onSelect={onSelectConv} />
+                  ))}
+                </Fragment>
+              ))}
+              {archivedConvs.length > 0 && (
+                <>
+                  <div className="hist-group-head clickable" onClick={() => setArchivedOpen((s) => !s)}>
+                    <span className={'ssh-chev' + (archivedOpen ? '' : ' collapsed')}><Icons.chevronDown size={11} /></span>
+                    Archived <span className="count">{archivedConvs.length}</span>
+                  </div>
+                  {archivedOpen &&
+                    archivedConvs.map((c) => (
+                      <HistRow key={c.id} conv={c} active={activeConv === c.id} expert={histExpert(c)} onSelect={onSelectConv} />
+                    ))}
+                </>
+              )}
+            </>
           ))}
       </div>
     </div>

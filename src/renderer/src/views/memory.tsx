@@ -8,8 +8,11 @@ import { Icons } from '@/components/icons'
 import { Avatar } from '@/components/primitives'
 import { STUDIO_DATA } from '@/data/studio-data'
 import { Dropdown } from '@/views/profile'
+import { Pagination } from '@/components/pagination'
 import { useMemory } from '@/stores/memory'
 import type { MemoryItem as MemoryItemData } from '@/types'
+
+const MEM_PAGE_SIZE = 10
 import type { MemoryDto } from '@/lib/api'
 
 type LayerKey = 'SHARED' | 'ROLE' | 'COLLAB'
@@ -207,6 +210,9 @@ export function MemorySettings(): ReactElement {
   const entries = useMemo(() => toEntries(mem.memories), [mem.memories])
   const [fExpert, setFExpert] = useState('all')
   const [fLayer, setFLayer] = useState('all')
+  const [page, setPage] = useState(0)
+  // Reset to the first page whenever a filter narrows the set (else you can land past the last page).
+  useEffect(() => setPage(0), [fExpert, fLayer])
 
   // Per-expert self-learning comes from role_states (default on when absent). Master is derived: on iff
   // every expert has it on; toggling master flips them all.
@@ -225,6 +231,9 @@ export function MemorySettings(): ReactElement {
     if (fExpert !== 'all' && !(e.scope === fExpert || e.scope === 'shared')) return false
     return true
   })
+  const pageCount = Math.max(1, Math.ceil(filtered.length / MEM_PAGE_SIZE))
+  const safePage = Math.min(page, pageCount - 1) // stay in range if the set shrank (e.g. after a delete)
+  const paged = filtered.slice(safePage * MEM_PAGE_SIZE, safePage * MEM_PAGE_SIZE + MEM_PAGE_SIZE)
 
   return (
     <div className="sc-wrap">
@@ -279,12 +288,12 @@ export function MemorySettings(): ReactElement {
         <span className="mf-count">{filtered.length} memories</span>
       </div>
 
-      {/* list */}
+      {/* list — 10 per page */}
       <div className="mem-global-list">
         {filtered.length === 0 ? (
           <div className="mem-empty">No memories yet — they form as you chat.</div>
         ) : (
-          filtered.map((e) => (
+          paged.map((e) => (
             <GlobalMemRow
               key={e.uid}
               entry={e}
@@ -294,6 +303,7 @@ export function MemorySettings(): ReactElement {
           ))
         )}
       </div>
+      <Pagination page={safePage} pageCount={pageCount} onChange={setPage} />
     </div>
   )
 }

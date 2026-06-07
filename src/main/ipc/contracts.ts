@@ -432,6 +432,8 @@ export interface ConversationDto {
   primaryRoleId: string | null
   title: string | null
   projectId: string | null // set when a collaborate turn linked this chat to a project (doc 19 §1)
+  pinned: boolean // pinned to the top of History
+  archived: boolean // moved to the Archived group
   createdAt: string
   updatedAt: string
 }

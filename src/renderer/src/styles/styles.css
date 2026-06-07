@@ -307,11 +307,28 @@ input, textarea, select { font-family: inherit; color: inherit; }
   height: 30px; padding: 0 10px; border-radius: 6px;
   font-size: 13px; color: var(--text-2); cursor: pointer;
   transition: background 0.1s;
+  position: relative;
 }
 .hist-row:hover { background: var(--bg-2); }
 .hist-row.active { background: var(--bg-3); color: var(--text-1); }
 .hist-row .hist-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hist-row .hist-dot { width: 5px; height: 5px; border-radius: 50%; flex: 0 0 5px; opacity: 0.85; }
+.hist-more {
+  width: 22px; height: 22px; border-radius: 5px; display: grid; place-items: center;
+  color: var(--text-4); flex: 0 0 auto; opacity: 0; background: transparent; border: none; cursor: pointer;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
+}
+.hist-row:hover .hist-more, .hist-row.active .hist-more { opacity: 1; }
+.hist-more:hover { background: var(--bg-3); color: var(--text-1); }
+
+/* History group subheads (Pinned / Today / Yesterday / Earlier / Archived) */
+.hist-group-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 12px 10px 4px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em;
+  color: var(--text-4); text-transform: uppercase; user-select: none;
+}
+.hist-group-head.clickable { cursor: pointer; }
+.hist-group-head .count { margin-left: auto; font-weight: 500; opacity: 0.85; }
 
 .empty-history { padding: 16px 12px; color: var(--text-4); font-size: 12px; line-height: 1.5; }
 

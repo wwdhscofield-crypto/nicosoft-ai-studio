@@ -1203,6 +1203,18 @@
 .mem-global-list { display: flex; flex-direction: column; gap: 6px; }
 .mem-empty { font-size: 13px; color: var(--text-4); padding: 24px; text-align: center; border: 1px dashed var(--border-1); border-radius: var(--r-md); }
 
+/* Pagination (reusable) */
+.pagination { display: flex; align-items: center; justify-content: center; gap: 4px; margin-top: 16px; }
+.pg-btn, .pg-num {
+  min-width: 30px; height: 30px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border-1); border-radius: var(--r-sm); background: var(--bg-1);
+  color: var(--text-2); font-size: 12.5px; cursor: pointer; transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.pg-btn:hover:not(:disabled), .pg-num:hover { background: var(--bg-2); border-color: var(--border-2); color: var(--text-1); }
+.pg-btn:disabled { opacity: 0.4; cursor: default; }
+.pg-num.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.pg-gap { min-width: 22px; text-align: center; color: var(--text-4); font-size: 12.5px; }
+
 /* conversation header menu + rename + endpoint menu */
 .conv-menu-wrap { position: relative; }
 .conv-rename { flex: 1; height: 30px; font-size: 15px; font-weight: 500; max-width: 360px; }

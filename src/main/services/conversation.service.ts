@@ -21,6 +21,8 @@ function toConvDto(r: convRepo.ConversationRow): ConversationDto {
     primaryRoleId: r.primaryRoleId,
     title: r.title,
     projectId: r.projectId,
+    pinned: r.pinned,
+    archived: r.archived,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt
   }
@@ -79,6 +81,14 @@ export function append(convId: string, input: MessageAppendDto): MessageDto {
 
 export function rename(convId: string, title: string): void {
   convRepo.rename(convId, title)
+}
+
+export function setPinned(convId: string, pinned: boolean): void {
+  convRepo.setPinned(convId, pinned)
+}
+
+export function setArchived(convId: string, archived: boolean): void {
+  convRepo.setArchived(convId, archived)
 }
 
 // Generate a title for a fresh conversation from the user's first message (small/fast model — see

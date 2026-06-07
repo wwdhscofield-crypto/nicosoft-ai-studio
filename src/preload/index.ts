@@ -249,6 +249,10 @@ const api = {
       ipcRenderer.invoke('conversations:append', convId, input),
     rename: (convId: string, title: string): Promise<void> =>
       ipcRenderer.invoke('conversations:rename', convId, title),
+    pin: (convId: string, pinned: boolean): Promise<void> =>
+      ipcRenderer.invoke('conversations:pin', convId, pinned),
+    archive: (convId: string, archived: boolean): Promise<void> =>
+      ipcRenderer.invoke('conversations:archive', convId, archived),
     title: (input: ConversationTitleInput): Promise<string> =>
       ipcRenderer.invoke('conversations:title', input),
     remove: (convId: string): Promise<void> => ipcRenderer.invoke('conversations:remove', convId),

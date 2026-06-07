@@ -220,11 +220,17 @@ function GenericSettingsPage({ id }: { id: string }): ReactElement {
     return (
       <div className="sc-wrap">
         <div className="settings-title">Privacy</div>
-        <div className="settings-desc">Everything you do here stays on this device.</div>
+        <div className="settings-desc">
+          NicoSoft AI Studio is local-first. Your conversations, memory, projects, and settings live only on
+          this device — there is no NicoSoft account, no server, and no cloud sync. We collect no usage
+          analytics or telemetry; nothing about how you use the app is sent anywhere.
+        </div>
         <ul className="set-points">
-          <li>Your API keys are encrypted in the OS keychain.</li>
-          <li>Conversations and memory live in a local database — nothing is sent to NicoSoft.</li>
-          <li>Model requests go straight to the providers you configure; none are proxied through us.</li>
+          <li><strong>API keys are encrypted in the OS keychain</strong> — never written in plain text, and only ever sent to the provider they belong to.</li>
+          <li><strong>Conversations &amp; memory stay local</strong> — stored in a SQLite database in your home folder, never uploaded to NicoSoft.</li>
+          <li><strong>Model requests go straight to the providers you configure</strong> (Anthropic, OpenAI, Google, …). Nothing is proxied through us — your prompts are subject only to those providers' policies.</li>
+          <li><strong>Web search &amp; fetch run only on demand</strong> — when an expert uses a tool, and only against the URLs or queries in that turn.</li>
+          <li><strong>You stay in control</strong> — delete any conversation or memory anytime, or wipe everything by removing the data folder below.</li>
         </ul>
         <div className="set-list">
           <div className="set-row">

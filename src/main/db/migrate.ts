@@ -22,6 +22,8 @@ export function runMigrations(db: DatabaseSync): void {
   ensureColumn(db, 'plugins', 'dir_path', 'TEXT')
   ensureColumn(db, 'plugins', 'created_at', 'TEXT')
   ensureColumn(db, 'projects', 'cwd', 'TEXT')
+  ensureColumn(db, 'conversations', 'pinned', 'INTEGER NOT NULL DEFAULT 0')
+  ensureColumn(db, 'conversations', 'archived', 'INTEGER NOT NULL DEFAULT 0')
 }
 
 // Add a column only if the table doesn't already have it (SQLite lacks ADD COLUMN IF NOT EXISTS).
