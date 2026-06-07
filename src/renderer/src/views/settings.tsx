@@ -18,6 +18,7 @@ import type { EndpointDto, EndpointInput, AppInfo } from '@/lib/api'
 import { THINKING_OPTIONS } from '@/lib/thinking'
 import { useRoleBinding, FAMILY_LABEL } from '@/lib/use-role-binding'
 import { toast } from '@/stores/toast'
+import { useTheme, type ThemePref } from '@/stores/theme'
 
 const SETTINGS_NAV: { id: string; label: string; icon: string }[] = [
   { id: "profile",   label: "Profile",   icon: "user" },
@@ -28,6 +29,27 @@ const SETTINGS_NAV: { id: string; label: string; icon: string }[] = [
   { id: "privacy",   label: "Privacy",   icon: "shield" },
   { id: "about",     label: "About",     icon: "info" },
 ];
+
+// Theme selector row (General page). Its own component so the theme hook isn't called conditionally.
+function ThemeRow(): ReactElement {
+  const { pref, setPref } = useTheme();
+  return (
+    <div className="set-row">
+      <span className="set-row-label">Theme</span>
+      <div style={{ width: 168, marginLeft: "auto" }}>
+        <Dropdown
+          options={[
+            { v: "auto", l: "Auto (system)" },
+            { v: "light", l: "Light" },
+            { v: "dark", l: "Dark" }
+          ]}
+          value={pref}
+          onChange={(v) => setPref(v as ThemePref)}
+        />
+      </div>
+    </div>
+  );
+}
 
 function SettingsNav({
   active,
@@ -297,10 +319,10 @@ function GenericSettingsPage({ id }: { id: string }): ReactElement {
       <div className="settings-title">General</div>
       <div className="settings-desc">Appearance and language.</div>
       <div className="set-list">
-        <div className="set-row"><span className="set-row-label">Theme</span><span className="set-row-val">Dark</span></div>
+        <ThemeRow />
         <div className="set-row"><span className="set-row-label">Language</span><span className="set-row-val">English</span></div>
       </div>
-      <div className="settings-note">Light theme and additional languages are planned for a future release.</div>
+      <div className="settings-note">Additional languages are planned for a future release.</div>
     </div>
   )
 }

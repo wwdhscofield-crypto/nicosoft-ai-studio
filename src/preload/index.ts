@@ -118,6 +118,12 @@ const api = {
     set: (key: string, value: unknown): Promise<void> => ipcRenderer.invoke('settings:set', key, value)
   },
 
+  theme: {
+    // Mirror the renderer's theme preference to the main process so native chrome (menus, dialogs,
+    // window background) follows. 'auto' → nativeTheme follows the OS.
+    set: (pref: 'auto' | 'light' | 'dark'): Promise<void> => ipcRenderer.invoke('theme:set', pref)
+  },
+
   chat: {
     send: (input: ChatSendInput): Promise<{ streamId: string }> => ipcRenderer.invoke('chat:send', input),
     stop: (streamId: string): Promise<void> => ipcRenderer.invoke('chat:stop', streamId),

@@ -1,6 +1,7 @@
-import { app, shell, BrowserWindow, ipcMain, protocol } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, nativeTheme, protocol } from 'electron'
 import { join } from 'path'
 import { getDb } from './db/connection'
+import * as settingsService from './services/settings.service'
 import { registerIpc } from './ipc/register'
 import { registerMediaProtocol, MEDIA_PRIVILEGED_SCHEME } from './media/protocol'
 import { runIdleSweep } from './services/memory.service'
@@ -50,7 +51,9 @@ function createWindow(): void {
     titleBarStyle: 'hidden',
     trafficLightPosition: { x: 18, y: 19 },
     roundedCorners: true,
-    backgroundColor: '#050507',
+    // Themed so the first frame doesn't flash the wrong color (nativeTheme is set from the persisted
+    // preference before this window is created). --desktop in each theme.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#050507' : '#dcdfe4',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: true,
@@ -84,8 +87,16 @@ ipcMain.on('app:maximize', (e) => {
   w.isMaximized() ? w.unmaximize() : w.maximize()
 })
 
+// Theme: map the renderer's preference onto nativeTheme so native chrome (menus, dialogs, scrollbars,
+// window background) follows. 'auto' → 'system'.
+function applyThemePref(pref: string | null): void {
+  nativeTheme.themeSource = pref === 'light' || pref === 'dark' ? pref : 'system'
+}
+ipcMain.handle('theme:set', (_e, pref: string) => applyThemePref(pref))
+
 app.whenReady().then(() => {
   getDb() // open SQLite + run migrations (idempotent) before any IPC handler can hit it
+  applyThemePref(settingsService.get<string>('theme')) // set nativeTheme from the persisted pref before the window is created
   registerMediaProtocol() // nsai-media:// → local image files, before the window loads any attachment
   registerIpc()
   // Connect every enabled MCP server (best effort) so their tools are ready when an agent role runs.

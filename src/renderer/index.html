@@ -4,6 +4,24 @@
     <meta charset="UTF-8" />
     <title>NicoSoft AI Studio</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Theme FOUC guard: set data-theme before first paint so light/dark doesn't flash on load.
+         Reads the persisted preference (auto|light|dark); 'auto' resolves via the system setting. -->
+    <script>
+      (function () {
+        try {
+          var pref = localStorage.getItem('nicosoft-studio-theme') || 'auto';
+          var resolved =
+            pref === 'auto'
+              ? window.matchMedia('(prefers-color-scheme: light)').matches
+                ? 'light'
+                : 'dark'
+              : pref;
+          document.documentElement.dataset.theme = resolved;
+        } catch (e) {
+          document.documentElement.dataset.theme = 'dark';
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

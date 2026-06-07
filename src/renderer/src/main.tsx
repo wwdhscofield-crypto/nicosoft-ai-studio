@@ -15,6 +15,9 @@ import './styles/electron-overrides.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import { initTheme } from './stores/theme'
+
+initTheme() // resolve theme + start tracking OS changes (FOUC guard in index.html already set the first frame)
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
