@@ -17,7 +17,7 @@ import { promptTokensFromUsage } from '../agent/compact'
 import { isContentBlock } from '../agent/types'
 import type { AgentMessage, AnyBlock, ImageBlock, ServerToolSchema, ToolResultBlock } from '../agent/types'
 import { CORE_TOOLS } from '../agent/registry'
-import { ENGINEER_SYSTEM_PROMPT, SHURI_SYSTEM_PROMPT } from '../agent/system-prompt'
+import { CODING_DISCIPLINE, ENGINEER_SYSTEM_PROMPT, SHURI_SYSTEM_PROMPT } from '../agent/system-prompt'
 import { buildRolePrompt, displayName } from '../agent/roles/prompts'
 import { enterPlanModeTool } from '../agent/tools/enter-plan-mode'
 import { exitPlanModeTool } from '../agent/tools/exit-plan-mode'
@@ -743,7 +743,14 @@ const TOOL_AWARENESS =
   'thumb: anything you can compute or derive precisely (math, statistics, data wrangling, parsing, ' +
   'formatting) is more reliable run through a code-execution tool — IF you have one — than estimated or ' +
   "fetched from an external service; reach for the web when you genuinely need information you don't " +
-  'already have. There is no rule that you must stay local or must go online — the choice is yours.'
+  'already have. There is no rule that you must stay local or must go online — the choice is yours.\n\n' +
+  '# Iron rule: you are not a software engineer — do NOT write code\n' +
+  'Use your tools for YOUR job, but you must NOT write or edit the project source code (application logic, ' +
+  'components, types, build or config files) — that work belongs to the engineers. If your task needs a code ' +
+  'change, do NOT attempt it yourself: state plainly in your result that it needs Shuri (frontend) or Flynn ' +
+  '(backend), and exactly what is required, so the coordinator routes it to them. Producing your own ' +
+  'deliverable file when that file IS your output (a translation file, a report, notes) is fine; reaching ' +
+  'into the existing source code is not.'
 
 // Project-convention files (CLAUDE.md / AGENTS.md) from the agent's working dir — the user's
 // project-specific rules. Injected as REFERENCE BELOW the hardcoded system rules (PLAN_FIRST), which
@@ -776,7 +783,9 @@ function buildAgentSystem(
   cwd?: string,
 ): string {
   const base = DEV_ROLES.has(roleId) ? DEV_PROMPT[roleId] : (buildRolePrompt(roleId) ?? ENGINEER_SYSTEM_PROMPT)
-  const parts = [PLAN_FIRST, base]
+  // Verify-before-done + stay-in-scope discipline applies to EVERY tool-wielding expert, not just the dev
+  // roles — a non-dev expert (e.g. the translator editing source files) must verify + stay in scope too.
+  const parts = [PLAN_FIRST, base, CODING_DISCIPLINE]
   // Non-dev agent roles use a chat-style role prompt with no tool awareness — give them the capability note
   // so they know they can act (dev roles already have detailed tool guidance baked into DEV_PROMPT).
   if (!DEV_ROLES.has(roleId)) parts.push(TOOL_AWARENESS)

@@ -81,7 +81,8 @@ Produce ONE coherent reply in the user's language:
 - Resolve or surface contradictions — don't silently pick a side.
 - Drop redundancy; the user reads one clean answer, not a meeting log.
 - Don't add new content beyond what the experts provided.
-- Lead with the bottom line; details after.`
+- Lead with the bottom line; details after.
+- For coding work: do NOT present it as done unless the expert actually verified it (project checks green). If an expert reported failing checks, unverified work, or that it stopped short, say so plainly — never round an unverified or red result up to "done". An honest "X still fails / Y is unverified" beats a false "all done".`
 
 // B0: Danny answers simple/general turns himself instead of dispatching (router returns mode:direct).
 // A warm generalist-host voice — distinct from the JSON router prompt and the merge-only synthesis prompt.
