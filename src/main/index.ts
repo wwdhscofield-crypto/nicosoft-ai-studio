@@ -9,6 +9,25 @@ import { loadEnabled as loadSkills } from './services/skill.service'
 import { schedulerEngine } from './agent/scheduler/engine'
 import { scheduledTaskStore } from './agent/scheduler/store'
 
+declare const __APP_VERSION__: string
+
+// Branding (macOS app menu + About panel). Show "NicoSoft AI Studio" instead of the dev package id /
+// "Electron", with the app version (not the Electron runtime version) and the app icon. In packaged
+// builds electron-builder's productName already does this; this also fixes the unpackaged dev run.
+// setName is pinned back to the existing userData dir so the rename can't orphan the on-disk Chromium
+// profile (renderer localStorage / caches); the SQLite database lives in ~/.nsai and is unaffected.
+const userDataDir = app.getPath('userData')
+app.setName('NicoSoft AI Studio')
+app.setPath('userData', userDataDir)
+app.setAboutPanelOptions({
+  applicationName: 'NicoSoft AI Studio',
+  applicationVersion: __APP_VERSION__,
+  version: '',
+  copyright: 'Copyright © NicoSoft',
+  // In a packaged app the bundle icon is used automatically; in dev point at the source icon.
+  ...(app.isPackaged ? {} : { iconPath: join(app.getAppPath(), 'build', 'icon.png') })
+})
+
 // Privileged schemes MUST be declared before app.whenReady. nsai-media:// serves local image files
 // (media/storage.ts) so attachments load by reference instead of base64-inlining into the DB/DOM.
 protocol.registerSchemesAsPrivileged([MEDIA_PRIVILEGED_SCHEME])

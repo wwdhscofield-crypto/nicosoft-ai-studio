@@ -2,8 +2,10 @@
    NicoSoft AI Studio — app shell: Topbar + Sidebar
    ============================================================ */
 import { Fragment, useRef, useState } from 'react'
-import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactElement } from 'react'
+import type { CSSProperties, ReactElement } from 'react'
+import { createPortal } from 'react-dom'
 import { Icons } from '@/components/icons'
+import { useAnchoredMenu } from '@/lib/use-anchored-menu'
 import { Avatar } from '@/components/primitives'
 import { ConfirmDialog, PromptDialog } from '@/components/dialogs'
 import { STUDIO_DATA } from '@/data/studio-data'
@@ -31,6 +33,8 @@ export function Topbar({
   const [menu, setMenu] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [confirmDel, setConfirmDel] = useState(false)
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const { menuRef, style } = useAnchoredMenu(menu, btnRef, 'right')
   const doExport = (fmt: 'md' | 'json'): void => {
     setMenu(false)
     // export opens a native save dialog: a truthy path = exported, a falsy value = the user cancelled
@@ -55,19 +59,20 @@ export function Topbar({
               <Icons.panelRight size={17} />
             </button>
             <div className="conv-menu-wrap">
-              <button className="icon-btn" title="Actions" onClick={() => setMenu((s) => !s)}>
+              <button ref={btnRef} className="icon-btn" title="Actions" onClick={() => setMenu((s) => !s)}>
                 <Icons.more size={17} />
               </button>
-              {menu && (
+              {menu && createPortal(
                 <>
                   <div className="menu-backdrop" onClick={() => setMenu(false)} />
-                  <div className="row-menu right">
+                  <div ref={menuRef} className="row-menu right" style={style}>
                     <div className="rm-item" onClick={() => { setMenu(false); setRenaming(true) }}><Icons.edit size={14} /> Rename</div>
                     <div className="rm-item" onClick={() => doExport('md')}><Icons.download size={14} /> Export Markdown</div>
                     <div className="rm-item" onClick={() => doExport('json')}><Icons.download size={14} /> Export JSON</div>
                     <div className="rm-item danger" onClick={() => { setMenu(false); setConfirmDel(true) }}><Icons.trash size={14} /> Delete</div>
                   </div>
-                </>
+                </>,
+                document.body
               )}
             </div>
           </>
@@ -123,6 +128,8 @@ export function RoleRow({
   const [menu, setMenu] = useState(false)
   const [confirm, setConfirm] = useState(false)
   const canToggle = !expert.coordinator
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const { menuRef, style } = useAnchoredMenu(menu, btnRef, 'down')
   return (
     <div className={"role-row" + (active ? " active" : "")} style={{ "--row-color": expert.color } as CSSProperties}>
       {expert.coordinator
@@ -134,13 +141,13 @@ export function RoleRow({
         <span className="role-sub">{expert.specialty}</span>
       </div>
       {active && <span className="active-dot" />}
-      <button className="role-more" onClick={(e) => { e.stopPropagation(); setMenu((s) => !s); }}>
+      <button ref={btnRef} className="role-more" onClick={(e) => { e.stopPropagation(); setMenu((s) => !s); }}>
         <Icons.more size={15} />
       </button>
-      {menu && (
+      {menu && createPortal(
         <>
           <div className="menu-backdrop" onClick={(e) => { e.stopPropagation(); setMenu(false); }} />
-          <div className="row-menu" onClick={(e) => e.stopPropagation()}>
+          <div ref={menuRef} className="row-menu" style={style} onClick={(e) => e.stopPropagation()}>
             <div className="rm-item" onClick={() => { setMenu(false); onProfile(); }}><Icons.user size={14} /> Open profile</div>
             <div className="rm-item" onClick={() => { setMenu(false); onChat(); }}><Icons.message size={14} /> Start a conversation</div>
             {canToggle
@@ -148,7 +155,8 @@ export function RoleRow({
               : <div className="rm-note">Primary role · always on</div>}
             {expert.custom && <div className="rm-item danger" onClick={() => { setMenu(false); setConfirm(true); }}><Icons.trash size={14} /> Delete role</div>}
           </div>
-        </>
+        </>,
+        document.body
       )}
       {confirm && (
         <ConfirmDialog title={`Delete ${expert.name}?`}
@@ -175,9 +183,6 @@ function DisabledRow({ expert, onProfile }: { expert: Expert; onProfile: () => v
 }
 
 // One History row: select on click; a ⋯ menu for pin / rename / archive / delete.
-// Approx. height of the 4-item actions menu; used to decide flip direction.
-const HIST_MENU_HEIGHT = 160
-
 function HistRow({
   conv,
   active,
@@ -191,33 +196,21 @@ function HistRow({
 }): ReactElement {
   const chat = useChat()
   const [menu, setMenu] = useState(false)
-  const [menuUp, setMenuUp] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [confirmDel, setConfirmDel] = useState(false)
   const moreRef = useRef<HTMLButtonElement>(null)
-  // Flip the menu upward when the row sits too low in the scroll area for the
-  // menu to fit below it — otherwise sidebar-scroll's overflow clips the menu.
-  const toggleMenu = (e: ReactMouseEvent): void => {
-    e.stopPropagation()
-    const btn = moreRef.current
-    const scroll = btn?.closest('.sidebar-scroll')
-    if (btn && scroll) {
-      const below = scroll.getBoundingClientRect().bottom - btn.getBoundingClientRect().bottom
-      setMenuUp(below < HIST_MENU_HEIGHT)
-    }
-    setMenu((s) => !s)
-  }
+  const { menuRef, style } = useAnchoredMenu(menu, moreRef, 'right')
   return (
     <div className={'hist-row' + (active ? ' active' : '')} onClick={() => onSelect(conv.id)}>
       <span className="hist-dot" style={{ background: expert?.color ?? 'var(--text-4)' }} />
       <span className="hist-title">{conv.title || 'Untitled'}</span>
-      <button ref={moreRef} className="hist-more" title="Actions" onClick={toggleMenu}>
+      <button ref={moreRef} className="hist-more" title="Actions" onClick={(e) => { e.stopPropagation(); setMenu((s) => !s) }}>
         <Icons.more size={14} />
       </button>
-      {menu && (
+      {menu && createPortal(
         <>
           <div className="menu-backdrop" onClick={(e) => { e.stopPropagation(); setMenu(false) }} />
-          <div className={'row-menu right' + (menuUp ? ' up' : '')} onClick={(e) => e.stopPropagation()}>
+          <div ref={menuRef} className="row-menu right" style={style} onClick={(e) => e.stopPropagation()}>
             <div className="rm-item" onClick={() => { setMenu(false); void chat.setPinned(conv.id, !conv.pinned).catch(() => toast.error('Couldn’t update')) }}>
               <Icons.pin size={14} /> {conv.pinned ? 'Unpin' : 'Pin'}
             </div>
@@ -231,7 +224,8 @@ function HistRow({
               <Icons.trash size={14} /> Delete
             </div>
           </div>
-        </>
+        </>,
+        document.body
       )}
       {renaming && (
         <PromptDialog

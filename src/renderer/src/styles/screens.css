@@ -979,11 +979,11 @@
 .input.nudge:not(:focus) { border-color: var(--border-2); }
 
 /* custom dropdown */
-.dropdown-backdrop { position: fixed; inset: 0; z-index: 40; }
+.dropdown-backdrop { position: fixed; inset: 0; z-index: 150; }
 .dropdown-pop {
-  position: absolute; top: calc(100% + 5px); left: 0; right: 0; z-index: 41;
+  position: absolute; top: calc(100% + 5px); left: 0; right: 0; z-index: 151;
   background: var(--bg-2); border: 1px solid var(--border-2); border-radius: var(--r-md);
-  box-shadow: var(--shadow-float); overflow: hidden; padding: 4px;
+  box-shadow: var(--shadow-float); max-height: 300px; overflow-y: auto; padding: 4px;
   animation: dialog-in 0.12s both;
 }
 .dropdown-item {

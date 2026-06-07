@@ -2,11 +2,13 @@
    NicoSoft AI Studio — User profile / "About you"
    Shared context that helps every expert understand the user.
    ============================================================ */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
+import { createPortal } from 'react-dom'
 import { Icons } from '@/components/icons'
 import { STUDIO_DATA } from '@/data/studio-data'
 import { toast } from '@/stores/toast'
+import { useAnchoredMenu } from '@/lib/use-anchored-menu'
 
 interface DropdownOption {
   v: string
@@ -69,37 +71,48 @@ export function Dropdown({
   icon
 }: SelectControlProps & { icon?: string }): ReactElement {
   const [open, setOpen] = useState(false)
+  const [width, setWidth] = useState<number>()
+  const triggerRef = useRef<HTMLDivElement>(null)
+  // Portal the popup to <body> with fixed positioning so it escapes every overflow-clipping ancestor
+  // (the Roles table scrolls horizontally and clips a plain absolute popup, esp. on the last row).
+  const { menuRef, style } = useAnchoredMenu(open, triggerRef, 'down')
   const norm: DropdownOption[] = options.map((o) => (typeof o === 'string' ? { v: o, l: o } : o))
   // Never index into an empty list — a caller passing no options must not crash the dropdown.
   const current = norm.find((o) => o.v === value) || norm[0] || { v: '', l: '—' }
   const I = icon ? Icons[icon] : null
+  const toggle = (): void => {
+    if (!open) setWidth(triggerRef.current?.offsetWidth) // match the popup to the trigger width
+    setOpen((s) => !s)
+  }
   return (
-    <div className="dropdown" style={{ position: 'relative' }}>
-      <div className="select-box" style={{ width: '100%' }} onClick={() => setOpen((s) => !s)}>
+    <div className="dropdown">
+      <div ref={triggerRef} className="select-box" style={{ width: '100%' }} onClick={toggle}>
         {I && <I size={14} style={{ color: 'var(--text-4)' }} />}
         <span>{current.l}</span>
         <Icons.chevronDown size={14} className="chev" />
       </div>
-      {open && (
-        <>
-          <div className="dropdown-backdrop" onClick={() => setOpen(false)} />
-          <div className="dropdown-pop">
-            {norm.map((o) => (
-              <div
-                key={o.v}
-                className={'dropdown-item' + (o.v === value ? ' active' : '')}
-                onClick={() => {
-                  onChange(o.v)
-                  setOpen(false)
-                }}
-              >
-                <span>{o.l}</span>
-                {o.v === value && <Icons.check size={14} />}
-              </div>
-            ))}
-          </div>
-        </>
-      )}
+      {open &&
+        createPortal(
+          <>
+            <div className="dropdown-backdrop" onClick={() => setOpen(false)} />
+            <div ref={menuRef} className="dropdown-pop" style={{ ...style, width }}>
+              {norm.map((o) => (
+                <div
+                  key={o.v}
+                  className={'dropdown-item' + (o.v === value ? ' active' : '')}
+                  onClick={() => {
+                    onChange(o.v)
+                    setOpen(false)
+                  }}
+                >
+                  <span>{o.l}</span>
+                  {o.v === value && <Icons.check size={14} />}
+                </div>
+              ))}
+            </div>
+          </>,
+          document.body
+        )}
     </div>
   )
 }

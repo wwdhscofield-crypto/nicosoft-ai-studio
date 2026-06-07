@@ -2,9 +2,11 @@
    NicoSoft AI Studio — Settings
    Profile · Memory · Endpoints · Roles · General · Privacy · About
    ============================================================ */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
+import { createPortal } from 'react-dom'
 import { Icons } from '@/components/icons'
+import { useAnchoredMenu } from '@/lib/use-anchored-menu'
 import { Avatar, HealthDot } from '@/components/primitives'
 import { STUDIO_DATA } from '@/data/studio-data'
 import { useRoles } from '@/stores/roles'
@@ -57,17 +59,20 @@ function SettingsNav({
 /* — Endpoints (stateful CRUD) — */
 function EndpointRowMenu({ onEdit, onDelete }: { onEdit: () => void; onDelete: () => void }): ReactElement {
   const [open, setOpen] = useState(false);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const { menuRef, style } = useAnchoredMenu(open, btnRef, 'right');
   return (
     <span className="ep-menu">
-      <button className="icon-btn" onClick={() => setOpen((s) => !s)}><Icons.more size={16} /></button>
-      {open && (
+      <button ref={btnRef} className="icon-btn" onClick={() => setOpen((s) => !s)}><Icons.more size={16} /></button>
+      {open && createPortal(
         <>
           <div className="menu-backdrop" onClick={() => setOpen(false)} />
-          <div className="row-menu right">
+          <div ref={menuRef} className="row-menu right" style={style}>
             <div className="rm-item" onClick={() => { setOpen(false); onEdit(); }}><Icons.edit size={14} /> Edit</div>
             <div className="rm-item danger" onClick={() => { setOpen(false); onDelete(); }}><Icons.trash size={14} /> Delete</div>
           </div>
-        </>
+        </>,
+        document.body
       )}
     </span>
   );
