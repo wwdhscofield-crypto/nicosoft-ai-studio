@@ -22,10 +22,10 @@ A desktop app where **nine named AI experts** work for you — each with its own
 
 | Expert | Role | Best-fit model |
 |---|---|---|
-| **Danny** | Coordinator — routes your request to the right expert(s) and merges their answers | Claude |
+| **Danny** | Coordinator — routes your request to the right expert(s) and merges their answers | anthropic |
 | **Amélie** | Generalist — chat, brainstorming, anything not specialized | GPT |
-| **Flynn** | Backend engineer — APIs, servers, data | Claude |
-| **Shuri** | Frontend engineer — UI, React, CSS | Claude |
+| **Flynn** | Backend engineer — APIs, servers, data | anthropic |
+| **Shuri** | Frontend engineer — UI, React, CSS | anthropic |
 | **Georgia** | Designer — images & posters | Gemini |
 | **Louise** | Translator — any language pair | Gemini |
 | **Miranda** | Editor — summarize & condense | Gemini |
