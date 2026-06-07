@@ -491,8 +491,14 @@
 .role-bind-row:last-child { border-bottom: none; }
 .role-bind-row:hover { background: var(--bg-2); }
 .role-bind-row.disabled { opacity: 0.6; }
-.role-bind-row .rb-role { width: 150px; flex: 0 0 150px; display: flex; align-items: center; gap: 9px; }
-.role-bind-row .rb-role .rb-name { font-size: 13.5px; color: var(--text-1); font-weight: 500; }
+.role-bind-row .rb-role { width: 184px; flex: 0 0 184px; display: flex; align-items: center; gap: 9px; }
+.role-bind-row .rb-role-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.role-bind-row .rb-role .rb-name { font-size: 13.5px; color: var(--text-1); font-weight: 500; line-height: 1.25; }
+.role-bind-row .rb-fit { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-4); white-space: nowrap; }
+.role-bind-row .rb-fit-dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; }
+.role-bind-row .rb-fit-dot.anthropic { background: oklch(0.76 0.10 50); }
+.role-bind-row .rb-fit-dot.openai { background: oklch(0.75 0.10 158); }
+.role-bind-row .rb-fit-dot.gemini { background: oklch(0.74 0.10 250); }
 .role-bind-row .rb-binding { flex: 1; display: flex; align-items: center; gap: 9px; min-width: 0; }
 .proto-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 3px 9px; border-radius: 5px; font-weight: 500; }
 .proto-chip .pc-dot { width: 6px; height: 6px; border-radius: 50%; }

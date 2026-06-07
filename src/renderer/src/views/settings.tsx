@@ -127,7 +127,16 @@ function RoleBindRow({ expert }: { expert: Expert }): ReactElement {
     <div className="role-bind-row">
       <div className="rb-role">
         <Avatar expert={expert} size={26} />
-        <span className="rb-name">{expert.name}</span>
+        <div className="rb-role-text">
+          <span className="rb-name">{expert.name}</span>
+          {/* Recommended (best-fit) model family for this expert — guidance for binding. Custom roles
+              without a declared family don't get a recommendation. */}
+          {expert.family && (
+            <span className="rb-fit" title={`${expert.name} works best on the ${FAMILY_LABEL[expert.family]} family`}>
+              <span className={'rb-fit-dot ' + expert.family} /> Best fit · {FAMILY_LABEL[expert.family]}
+            </span>
+          )}
+        </div>
       </div>
       <div className="rb-binding">
         {/* Mirror ExpertDetail's InlineBinding guards: b.endpoints is [] on the first async frame (and
@@ -182,7 +191,7 @@ function RolesPage({ onAddEndpoint }: { onAddEndpoint: () => void }): ReactEleme
   return (
     <div className="sc-wrap sc-wide">
       <div className="settings-title">Roles</div>
-      <div className="settings-desc">Bind each expert to the endpoint and model best suited to its job. Three protocol families, each doing what it's best at.</div>
+      <div className="settings-desc">Bind each expert to the endpoint and model best suited to its job. The recommended model family is shown under each name — a starting point you can always override.</div>
       <div className="family-legend">
         <div className="fl-item"><span className="proto-chip anthropic"><span className="pc-dot" /> Anthropic</span> reasoning &amp; code</div>
         <div className="fl-item"><span className="proto-chip openai"><span className="pc-dot" /> OpenAI</span> general &amp; analysis</div>
