@@ -477,7 +477,15 @@ export function ChatView({ expert, onOpenSettings, onBackToProject }: { expert: 
   const { byId: expertById } = useAllExperts()
   const activeConv = chat.activeConv
   const messages = activeConv ? (chat.byConversation[activeConv] ?? []) : []
-  const baseTokens = activeConv ? (chat.contextTokens[activeConv] ?? 0) : 0
+  // Live ↑/↓ readout reads the REAL CUMULATIVE usage (liveInput/liveOutput) streamed during the turn — NOT
+  // contextTokens (the current-context "/ window" measure). Conflating them made ↑ here show the window
+  // ratio's numerator (millions over a long agent turn). Until the first live ping lands, fall back to the
+  // current context (contextTokens) so ↑ is visible immediately instead of blank — providers that report
+  // usage late (Gemini) would otherwise show no ↑ for the first chunks. The composer's "/ window" indicator
+  // reads contextTokens directly and is unaffected by this fallback (see Composer.usedTokens).
+  const liveIn = activeConv ? (chat.liveInput[activeConv] ?? 0) : 0
+  const ctxIn = activeConv ? (chat.contextTokens[activeConv] ?? 0) : 0
+  const baseIn = liveIn || ctxIn
   const baseOut = activeConv ? (chat.liveOutput[activeConv] ?? 0) : 0
   const convStreaming = activeConv ? (chat.streaming[activeConv] ?? false) : false
   const retry = activeConv ? chat.retry[activeConv] : null
@@ -587,7 +595,7 @@ export function ChatView({ expert, onOpenSettings, onBackToProject }: { expert: 
               return (
                 <Fragment key={m.id}>
                   {showBadge ? <DispatchBadge chain={m.dispatch as string[]} /> : null}
-                  <ChatSegment msg={m} expert={expert} expertById={expertById} onOpenImage={openImage} inputTokens={baseTokens} outputTokens={baseOut} />
+                  <ChatSegment msg={m} expert={expert} expertById={expertById} onOpenImage={openImage} inputTokens={baseIn} outputTokens={baseOut} />
                 </Fragment>
               )
             })
@@ -596,7 +604,7 @@ export function ChatView({ expert, onOpenSettings, onBackToProject }: { expert: 
           messages.length > 0 &&
           !messages[messages.length - 1].streaming &&
           !messages[messages.length - 1].tools?.some((t) => t.status === 'running') ? (
-            <PendingReadout expert={expert} inputTokens={baseTokens} outputTokens={baseOut} />
+            <PendingReadout expert={expert} inputTokens={baseIn} outputTokens={baseOut} />
           ) : null}
           {retry ? <RetryReadout attempt={retry.attempt} max={retry.max} since={retry.since} /> : null}
           {error ? (

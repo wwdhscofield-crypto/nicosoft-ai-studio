@@ -85,7 +85,12 @@ export function registerCoordinatorHandlers(): void {
             const ev: CoordinatorStepDone = { streamId, roleId, text, inputTokens, outputTokens }
             send('coordinator:step:done', ev)
           },
-          onUsage: (inputTokens, outputTokens) => broadcastUsage(sender, input.convId, inputTokens, outputTokens),
+          // The coordinator fires onUsage from up-front count_tokens (input only → current context, the "/
+          // window" indicator) and from streaming live usage — both the tool-less llmChat path and a
+          // dispatched expert's cumulative loop usage (input+output → the live ↑/↓ readout). Presence of
+          // outputTokens distinguishes the current-context ping from the cumulative live one.
+          onUsage: (inputTokens, outputTokens) =>
+            broadcastUsage(sender, input.convId, outputTokens === undefined ? 'context' : 'live', inputTokens, outputTokens),
           onToolImage: (attachment) => broadcastConvImage(sender, input.convId, attachment),
           // Agent-dispatched experts run a tool-using loop — forward their tool activity + approvals,
           // tagged with roleId, to the coordinator UI (doc 19 §11 phase 2). Mirrors agent.handler's bridge.

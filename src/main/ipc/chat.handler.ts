@@ -26,7 +26,11 @@ export function registerChatHandlers(): void {
           onDelta: (text) => {
             if (!sender.isDestroyed()) sender.send('chat:delta', { streamId, text })
           },
-          onUsage: (inputTokens, outputTokens) => broadcastUsage(sender, input.convId, inputTokens, outputTokens),
+          // chat.service fires onUsage from two sources: the up-front per-turn count_tokens (input only →
+          // current context, drives the "/ window" indicator) and the streaming live usage (input+output →
+          // the live ↑/↓ readout). The presence of outputTokens distinguishes them.
+          onUsage: (inputTokens, outputTokens) =>
+            broadcastUsage(sender, input.convId, outputTokens === undefined ? 'context' : 'live', inputTokens, outputTokens),
           onRetry: (info) => {
             if (!sender.isDestroyed()) sender.send('chat:retry', { streamId, ...info })
           }

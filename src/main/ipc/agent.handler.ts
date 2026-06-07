@@ -66,7 +66,9 @@ export function registerAgentHandlers(): void {
           onStream: (ev) => {
             if (ev.type === 'text') send('agent:delta', { streamId, text: ev.delta })
             else if (ev.type === 'tool_use_start') send('agent:tool:start', { streamId, id: ev.id, name: ev.name })
-            else if (ev.type === 'usage') broadcastUsage(sender, input.convId, ev.inputTokens, ev.outputTokens)
+            // Streaming usage is CUMULATIVE (sums every upstream request this turn) → 'live' readout only,
+            // never the context indicator.
+            else if (ev.type === 'usage') broadcastUsage(sender, input.convId, 'live', ev.inputTokens, ev.outputTokens)
           },
           onRetry: (info) => send('agent:retry', { streamId, ...info }),
           onEvent: (ev) => {
@@ -103,7 +105,9 @@ export function registerAgentHandlers(): void {
               send('agent:results', { streamId, results })
             }
           },
-          onUsage: (inputTokens) => broadcastUsage(sender, input.convId, inputTokens),
+          // The up-front per-turn count is the CURRENT context (count_tokens of what's being sent) → drives
+          // the composer's "/ window" indicator.
+          onUsage: (inputTokens) => broadcastUsage(sender, input.convId, 'context', inputTokens),
           onToolImage: (attachment) => broadcastConvImage(sender, input.convId, attachment),
           requestPermission: (req, signal) =>
             new Promise<PermissionDecision>((resolve) => {

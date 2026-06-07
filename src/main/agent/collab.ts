@@ -161,33 +161,67 @@ export class CollabSession {
 
   private async runExpert(e: ExpertRunner, signal: AbortSignal): Promise<void> {
     const handle = this.buildHandle(e.spec.roleId)
-    while (!signal.aborted) {
-      // 1. Inject unread mail as a single user turn so the expert sees who said what.
-      const mail = e.mailbox.splice(0)
-      if (mail.length) {
-        const body = mail.map((m) => `[from ${this.experts.get(m.from)?.spec.name ?? m.from}] ${m.text}`).join('\n\n')
-        e.messages.push(userTurn(body))
+    try {
+      while (!signal.aborted) {
+        // 1. Inject unread mail as a single user turn so the expert sees who said what.
+        const mail = e.mailbox.splice(0)
+        if (mail.length) {
+          const body = mail.map((m) => `[from ${this.experts.get(m.from)?.spec.name ?? m.from}] ${m.text}`).join('\n\n')
+          e.messages.push(userTurn(body))
+        }
+
+        // 2. Run one agent loop turn (to end_turn). consult tools mutate mailboxes via the handle mid-turn.
+        e.status = 'running'
+        e.waitRequested = false
+        this.onEvent({ kind: 'turn', roleId: e.spec.roleId })
+        e.messages = await e.spec.runTurn(e.messages, handle, signal)
+        if (signal.aborted) break
+
+        // 3. Decide what's next. New mail arrived mid-turn → loop immediately (don't park).
+        if (e.mailbox.length) continue
+
+        // wait() requested → park with a timeout; otherwise park idle (a peer may still assign us). Both
+        // resolve on quiescence (everyone parked + all mailboxes empty) so the session can end.
+        e.waitUntil = e.waitRequested ? this.clock() + DEFAULT_WAIT_MS : 0
+        const reason = await this.park(e)
+        if (reason === 'quiescent') break
+        // woken (assigned, or a queued send picked up by the quiescence sweep) → loop and process mail.
       }
-
-      // 2. Run one agent loop turn (to end_turn). consult tools mutate mailboxes via the handle mid-turn.
-      e.status = 'running'
-      e.waitRequested = false
-      this.onEvent({ kind: 'turn', roleId: e.spec.roleId })
-      e.messages = await e.spec.runTurn(e.messages, handle, signal)
-      if (signal.aborted) break
-
-      // 3. Decide what's next. New mail arrived mid-turn → loop immediately (don't park).
-      if (e.mailbox.length) continue
-
-      // wait() requested → park with a timeout; otherwise park idle (a peer may still assign us). Both
-      // resolve on quiescence (everyone parked + all mailboxes empty) so the session can end.
-      e.waitUntil = e.waitRequested ? this.clock() + DEFAULT_WAIT_MS : 0
-      const reason = await this.park(e)
-      if (reason === 'quiescent') break
-      // woken (assigned, or a queued send picked up by the quiescence sweep) → loop and process mail.
+    } catch (err) {
+      // ISOLATE a single expert's failure: an upstream error in ONE expert's turn (bad key, exhausted
+      // retries, model error) must NOT sink the whole collaboration. run() awaits all experts with
+      // Promise.all, so a rethrow here would reject the session the instant any one expert dies — killing
+      // the SURVIVING experts' still-streaming work and firing a premature coordinator:error (Stop button
+      // vanishes mid-run). Instead this expert stops here, contributing whatever it produced so far; the
+      // session reaches quiescence on the rest and synthesizes the survivors (parallel/council already
+      // tolerate per-branch failures the same way). A real abort (chat.stop / renderer-gone) surfaces as a
+      // thrown abort too — it exits identically, and every expert's loop unwinds via the shared signal.
+      if (!signal.aborted) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(`[collab] expert "${e.spec.roleId}" turn failed — dropping it from the session, continuing with the others:`, msg)
+      }
     }
     e.status = 'parked'
+    // Mark this expert parked + drained so the quiescence sweep doesn't keep waiting on it. A peer parked in
+    // wait() on a reply from this expert resolves via the global quiescence check (all parked → end), so a
+    // mid-collaboration failure can't wedge the session.
     this.onEvent({ kind: 'done', roleId: e.spec.roleId })
+    this.settleQuiescence()
+  }
+
+  // After an expert leaves the loop (done or failed), re-check global quiescence so a peer parked waiting on
+  // it isn't left hanging: if everyone is now parked, end the session (or wake anyone holding unread mail to
+  // drain it). Without this, a failed expert that a peer was waiting on could leave that peer parked until
+  // its wait timeout (or forever, if it parked idle). Mirrors the check park() runs when an expert parks.
+  private settleQuiescence(): void {
+    const runners = [...this.experts.values()]
+    if (runners.some((r) => r.status === 'running')) return // someone is still actively working
+    const withMail = runners.find((r) => r.mailbox.length > 0 && r.wake)
+    if (withMail) {
+      withMail.wake?.('woken') // drain a queued send that never triggered a turn
+      return
+    }
+    for (const r of runners) r.wake?.('quiescent') // everyone parked + no mail → end the session
   }
 
   // Park the expert until it's woken (assign / quiescence sweep) or its wait times out. Each time an

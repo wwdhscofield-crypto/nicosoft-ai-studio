@@ -116,7 +116,8 @@ interface ChatState {
   permission: Record<string, PermissionPrompt | null> // per-conversation (future: parallel agent runs)
   question: Record<string, QuestionPrompt | null> // per-conversation AskUserQuestion prompt
   approvals: Record<string, ApprovalCard[]> // per-conversation coordinator approval cards (yellow notes + red pending)
-  contextTokens: Record<string, number> // per-conversation exact prompt tokens of the last sent turn
+  contextTokens: Record<string, number> // per-conversation CURRENT context size (count_tokens of the last sent turn) — drives the composer "/ window" indicator
+  liveInput: Record<string, number> // per-conversation REAL CUMULATIVE input tokens, streamed live during a turn (↑ readout) — climbs across a long multi-request agent turn; NOT the context indicator
   liveOutput: Record<string, number> // per-conversation REAL output tokens, streamed live during a turn (↓ readout)
   streamStartedAt: Record<string, number> // per-conversation epoch ms when the current turn started; read only while streaming (Overview "In progress" elapsed). Overwritten each send, left stale after (never read when not streaming)
   retry: Record<string, { attempt: number; max: number; since: number } | null> // per-conversation transient-failure retry status ("retrying (N/M)"); null/absent when not retrying
@@ -409,17 +410,25 @@ export const useChat = create<ChatState>((set, get) => {
         }
       }))
     })
-    // Unified live ↑ readout for EVERY path (chat / agent / coordinator / image): each path broadcasts its
-    // real prompt size up front and as the turn grows, keyed by convId, so the working indicator shows ↑
-    // tokens during thinking + between-turns gaps no matter which path runs. Output stays a live estimate
-    // (its real value lands on each path's done event); this channel carries only the real ↑ input.
+    // Per-conversation usage, broadcast by EVERY path (chat / agent / coordinator / image). Two kinds ride
+    // this channel and must NOT be conflated (see ConvUsage / BUG 1):
+    //   • 'context' — the CURRENT context size (count_tokens of the turn being sent), measured up front per
+    //     turn → contextTokens, which the composer's "/ window" indicator reads. Roughly constant per turn,
+    //     bounded by the model window.
+    //   • 'live'    — the REAL CUMULATIVE ↑input/↓output streamed per chunk → liveInput / liveOutput, which
+    //     feed the live ↑/↓ readout only. liveInput climbs without bound across a long multi-request agent
+    //     turn; routing it into contextTokens is exactly what made the indicator read 4M/1M.
     window.api.onConvUsage((d) => {
-      set((s) => ({
-        contextTokens: { ...s.contextTokens, [d.convId]: d.inputTokens },
-        // Real output only rides the streaming pings; the input-only ping (start / between turns) keeps the
-        // last value, so ↓ stays visible next to ↑ across the whole turn instead of flickering to an estimate.
-        liveOutput: typeof d.outputTokens === 'number' ? { ...s.liveOutput, [d.convId]: d.outputTokens } : s.liveOutput
-      }))
+      if (d.kind === 'context') {
+        set((s) => ({ contextTokens: { ...s.contextTokens, [d.convId]: d.inputTokens } }))
+      } else {
+        set((s) => ({
+          liveInput: { ...s.liveInput, [d.convId]: d.inputTokens },
+          // Real output only rides the streaming pings that carry it; one without output keeps the last value
+          // so ↓ stays visible next to ↑ across the whole turn instead of flickering to an estimate.
+          liveOutput: typeof d.outputTokens === 'number' ? { ...s.liveOutput, [d.convId]: d.outputTokens } : s.liveOutput
+        }))
+      }
     })
 
     // Live generated images from an in-flight agent turn (Georgia's ns_generate_image, code_execution
@@ -645,6 +654,7 @@ export const useChat = create<ChatState>((set, get) => {
     question: {},
     approvals: {},
     contextTokens: {},
+    liveInput: {},
     liveOutput: {},
     streamStartedAt: {},
     retry: {},
@@ -723,6 +733,11 @@ export const useChat = create<ChatState>((set, get) => {
           },
           streaming: { ...s.streaming, [cid]: true },
           streamStartedAt: { ...s.streamStartedAt, [cid]: Date.now() },
+          // Reset the live ↑/↓ readout for the new turn so it doesn't briefly show the PRIOR turn's final
+          // cumulative usage before the first live ping lands. contextTokens is left intact — it's the
+          // current-context seed for the "/ window" indicator and is overwritten by the turn's own count.
+          liveInput: { ...s.liveInput, [cid]: 0 },
+          liveOutput: { ...s.liveOutput, [cid]: 0 },
           error: { ...s.error, [cid]: null }
         }
       })
