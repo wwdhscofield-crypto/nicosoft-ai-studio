@@ -30,6 +30,8 @@ import { LSPManager } from '../agent/lsp/manager'
 import { startServiceTool, stopServiceTool, serviceLogsTool, listServicesTool } from '../agent/tools/service'
 import { agentSpawnTool, agentSendTool, agentWaitTool, agentCloseTool, agentBatchTool } from '../agent/tools/async-subagent'
 import { lspTool } from '../agent/tools/lsp'
+import { e2eBrowserTool } from '../agent/tools/e2e-browser'
+import { e2eRequestTool } from '../agent/tools/e2e-request'
 import type { Tool } from '../agent/tool'
 import type { AgentRunInput, MessageAttachmentDto, ToolCallDto, RunTranscript } from '../ipc/contracts'
 import * as keychain from '../keychain/keychain'
@@ -91,6 +93,7 @@ const PLAN_TOOLS = [enterPlanModeTool, exitPlanModeTool] as unknown as Tool[]
 // so they run dev servers via start_service — detached + readiness-probed + tree-killed — instead of a
 // blocking `Bash ... &` that wedges the loop and leaks the process.
 const SERVICE_TOOLS = [startServiceTool, stopServiceTool, serviceLogsTool, listServicesTool] as unknown as Tool[]
+const E2E_TOOLS = [e2eBrowserTool, e2eRequestTool] as unknown as Tool[]
 // Async sub-agent tools (batch 3) — only on top-level dev-role runs, which reach ctx.subAgents (set by
 // runAgentLoop). Sub-agents and collab experts don't get them: their ctx.subAgents is undefined (the loop
 // also strips agent_* from the child tool set), so a child can't spawn children (depth 1).
@@ -147,7 +150,7 @@ export async function run(
   // Tools scoped to this agent role: a CORE subset (doc 16 §5) + MCP + Skill, by roleId + scope.
   const roleId = input.roleId ?? ENGINEER_ROLE_ID
   let tools = toolsForAgentRole(roleId)
-  if (DEV_ROLES.has(roleId)) tools = [...tools, ...SERVICE_TOOLS, ...SUBAGENT_TOOLS, lspTool as unknown as Tool]
+  if (DEV_ROLES.has(roleId)) tools = [...tools, ...SERVICE_TOOLS, ...E2E_TOOLS, ...SUBAGENT_TOOLS, lspTool as unknown as Tool]
   // Read needs a folder boundary; without a cwd, drop it for non-dev roles so the model can't read the
   // process working dir. Dev roles (Flynn/Shuri) always have a cwd (required in the composer).
   if (!input.cwd && !DEV_ROLES.has(roleId)) tools = tools.filter((t) => t.name !== 'Read')
@@ -507,10 +510,10 @@ export async function runDispatchedAgent(
     // read-only Read/Grep/Glob/Bash verifier that runs the project checks without the implementer's write
     // tools or a non-dev role's Bash-less kit. No DEV augmentation; cwd is required for these.
     const allow = new Set(d.toolNames)
-    tools = CORE_TOOLS.filter((t) => allow.has(t.name))
+    tools = [...CORE_TOOLS, ...E2E_TOOLS].filter((t) => allow.has(t.name))
   } else {
     tools = toolsForAgentRole(d.roleId)
-    if (DEV_ROLES.has(d.roleId)) tools = [...tools, ...SERVICE_TOOLS, ...SUBAGENT_TOOLS, lspTool as unknown as Tool]
+    if (DEV_ROLES.has(d.roleId)) tools = [...tools, ...SERVICE_TOOLS, ...E2E_TOOLS, ...SUBAGENT_TOOLS, lspTool as unknown as Tool]
     if (!d.cwd && !DEV_ROLES.has(d.roleId)) tools = tools.filter((t) => t.name !== 'Read' && t.name !== 'Glob')
   }
   const serverTools: ServerToolSchema[] = d.protocol === 'openai' ? [{ type: 'web_search', name: 'web_search' }] : []
@@ -648,7 +651,7 @@ export async function runCollabSession(
       stopServiceTool,
       serviceLogsTool,
       listServicesTool,
-      ...(DEV_ROLES.has(x.roleId) ? [lspTool as unknown as Tool] : [])
+      ...(DEV_ROLES.has(x.roleId) ? [lspTool as unknown as Tool, ...E2E_TOOLS] : [])
     ]
     const serverTools: ServerToolSchema[] = x.protocol === 'openai' ? [{ type: 'web_search', name: 'web_search' }] : []
     const system = buildCollabSystem(
