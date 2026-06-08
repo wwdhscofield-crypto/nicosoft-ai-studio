@@ -14,6 +14,7 @@ export interface EndpointRow {
   defaultModel: string | null
   availableModels: ModelInfo[]
   enabled: boolean
+  cacheEnabled: boolean
   createdAt: string
 }
 
@@ -24,6 +25,7 @@ export interface EndpointCreateInput {
   defaultModel?: string
   availableModels?: ModelInfo[]
   enabled?: boolean
+  cacheEnabled?: boolean
 }
 
 export interface EndpointUpdatePatch {
@@ -33,6 +35,7 @@ export interface EndpointUpdatePatch {
   defaultModel?: string | null
   availableModels?: ModelInfo[]
   enabled?: boolean
+  cacheEnabled?: boolean
 }
 
 interface EndpointRaw {
@@ -43,6 +46,7 @@ interface EndpointRaw {
   default_model: string | null
   available_models: string
   enabled: number
+  cache_enabled: number
   created_at: string
 }
 
@@ -74,6 +78,7 @@ function mapRow(raw: EndpointRaw): EndpointRow {
     defaultModel: raw.default_model,
     availableModels: parseModels(raw.available_models),
     enabled: raw.enabled === 1,
+    cacheEnabled: raw.cache_enabled === 1,
     createdAt: raw.created_at
   }
 }
@@ -97,10 +102,11 @@ export function create(input: EndpointCreateInput): EndpointRow {
   const createdAt = new Date().toISOString()
   const availableModels = JSON.stringify(input.availableModels ?? [])
   const enabled = (input.enabled ?? true) ? 1 : 0
+  const cacheEnabled = (input.cacheEnabled ?? false) ? 1 : 0
   getDb()
     .prepare(
-      `INSERT INTO endpoints (id, name, protocol, base_url, default_model, available_models, enabled, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO endpoints (id, name, protocol, base_url, default_model, available_models, enabled, cache_enabled, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id,
@@ -110,6 +116,7 @@ export function create(input: EndpointCreateInput): EndpointRow {
       input.defaultModel ?? null,
       availableModels,
       enabled,
+      cacheEnabled,
       createdAt
     )
   return {
@@ -120,6 +127,7 @@ export function create(input: EndpointCreateInput): EndpointRow {
     defaultModel: input.defaultModel ?? null,
     availableModels: input.availableModels ?? [],
     enabled: input.enabled ?? true,
+    cacheEnabled: input.cacheEnabled ?? false,
     createdAt
   }
 }
@@ -150,6 +158,10 @@ export function update(id: string, patch: EndpointUpdatePatch): EndpointRow | nu
   if (patch.enabled !== undefined) {
     sets.push('enabled = ?')
     args.push(patch.enabled ? 1 : 0)
+  }
+  if (patch.cacheEnabled !== undefined) {
+    sets.push('cache_enabled = ?')
+    args.push(patch.cacheEnabled ? 1 : 0)
   }
   if (sets.length > 0) {
     args.push(id)

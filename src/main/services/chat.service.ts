@@ -62,6 +62,10 @@ export async function send(
           apiKey: key,
           model: input.model,
           messages,
+          cacheEnabled: ep.cacheEnabled,
+          conversationId: input.convId,
+          endpointId: input.endpointId,
+          roleId: input.roleId,
           thinking: input.thinking,
           signal
         },

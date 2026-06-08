@@ -210,6 +210,9 @@ export async function run(
       model: input.model,
       system,
       seed,
+      cacheEnabled: ep.cacheEnabled,
+      conversationId: convId,
+      endpointId: input.endpointId,
       tools,
       serverTools,
       cwd: input.cwd,
@@ -282,6 +285,9 @@ export interface AgentLoopInput {
   apiKey: string
   model: string
   system: string
+  cacheEnabled?: boolean
+  conversationId?: string
+  endpointId?: string
   seed: AgentMessage[]
   tools: readonly Tool[]
   serverTools: ServerToolSchema[]
@@ -364,6 +370,10 @@ export async function runAgentLoop(
     apiKey: loop.apiKey,
     model: loop.model,
     system: loop.system,
+    cacheEnabled: loop.cacheEnabled,
+    conversationId: loop.convId,
+    endpointId: loop.endpointId,
+    roleId: loop.roleId,
     messages: loop.seed,
     tools: loop.tools,
     serverTools: loop.serverTools,
@@ -462,6 +472,8 @@ export interface DispatchedAgentInput {
   baseUrl: string
   apiKey: string
   model: string
+  endpointId?: string
+  cacheEnabled?: boolean
   contextWindow?: number
   thinking?: AgentRunInput['thinking']
   // The user's per-expert permission mode, threaded from the renderer so a coordinator-dispatched expert
@@ -510,6 +522,9 @@ export async function runDispatchedAgent(
       model: d.model,
       system,
       seed,
+      cacheEnabled: d.cacheEnabled,
+      conversationId: d.convId,
+      endpointId: d.endpointId,
       tools,
       serverTools,
       cwd: d.cwd,

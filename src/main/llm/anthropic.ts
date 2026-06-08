@@ -9,9 +9,13 @@ import { USER_AGENT } from '../user-agent'
 const PROVIDER = 'anthropic'
 const MAX_TOKENS = 4096
 
+interface CacheControl {
+  type: 'ephemeral'
+}
 interface TextBlock {
   type: 'text'
   text: string
+  cache_control?: CacheControl
 }
 interface ImageSourceBase64 {
   type: 'base64'
@@ -38,7 +42,7 @@ interface MessagesBody {
   messages: AnthropicMessage[]
   max_tokens: number
   stream: true
-  system?: string
+  system?: string | TextBlock[]
   thinking?: { type: 'enabled'; budget_tokens: number }
 }
 
@@ -76,6 +80,36 @@ function toSystem(messages: ChatMessage[]): string | undefined {
   return parts.length > 0 ? parts.join('\n\n') : undefined
 }
 
+function hasCacheControl(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false
+  if ('cache_control' in value) return true
+  if (Array.isArray(value)) return value.some(hasCacheControl)
+  return Object.values(value as Record<string, unknown>).some(hasCacheControl)
+}
+
+function applyAnthropicCacheControls(body: MessagesBody): MessagesBody {
+  // NSAI upstream Claude OAuth may already inject cache controls and skips when cache controls exist,
+  // so avoiding duplicates here prevents conflict while preserving that upstream behavior.
+  if (hasCacheControl(body)) return body
+  let count = 0
+  if (typeof body.system === 'string' && body.system.trim().length > 0) {
+    body.system = [{ type: 'text', text: body.system, cache_control: { type: 'ephemeral' } }]
+    count++
+  }
+  for (let i = body.messages.length - 1; i >= 0 && count < 3; i--) {
+    const msg = body.messages[i]
+    if (msg.role !== 'user') continue
+    for (let j = msg.content.length - 1; j >= 0; j--) {
+      const block = msg.content[j]
+      if (block.type === 'text' && block.text.length > 0) {
+        block.cache_control = { type: 'ephemeral' }
+        return body
+      }
+    }
+  }
+  return body
+}
+
 function buildBody(req: ChatRequest): MessagesBody {
   const body: MessagesBody = {
     model: req.model,
@@ -92,6 +126,7 @@ function buildBody(req: ChatRequest): MessagesBody {
     body.thinking = { type: 'enabled', budget_tokens: budget }
     body.max_tokens = budget + MAX_TOKENS
   }
+  if (req.cacheEnabled) applyAnthropicCacheControls(body)
   return body
 }
 

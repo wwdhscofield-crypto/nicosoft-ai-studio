@@ -59,6 +59,11 @@ export interface ChatRequest {
   apiKey: string
   model: string
   messages: ChatMessage[]
+  cacheEnabled?: boolean
+  conversationId?: string
+  threadId?: string
+  endpointId?: string
+  roleId?: string
   thinking?: ThinkingParam // only sent for models that support it (resolved by the thinking engine)
   tools?: ToolDeclaration[] // function-calling declarations (Gemini-only for now; others ignore)
   signal?: AbortSignal

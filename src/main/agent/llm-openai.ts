@@ -110,6 +110,7 @@ interface ResponsesToolBody {
   store: false
   reasoning?: { effort: string }
   include?: string[]
+  prompt_cache_key?: string
 }
 
 // Responses SSE event — only the fields we read.
@@ -119,6 +120,12 @@ interface RespEvent {
   item_id?: string
   item?: { type?: string; id?: string; call_id?: string; name?: string; arguments?: string; content?: unknown; [k: string]: unknown }
   response?: { usage?: { input_tokens?: number; output_tokens?: number } }
+}
+
+function stablePromptCacheKey(req: AgentLlmRequest): string {
+  const primary = req.conversationId ?? req.threadId
+  if (primary && primary.length > 0) return primary
+  return [req.endpointId, req.roleId, req.model, req.baseUrl].filter((v): v is string => Boolean(v)).join(':')
 }
 
 export async function* callWithToolsOpenAI(
@@ -141,6 +148,7 @@ export async function* callWithToolsOpenAI(
     body.reasoning = { effort: req.thinking.effort }
     body.include = ['reasoning.encrypted_content']
   }
+  if (req.cacheEnabled) body.prompt_cache_key = stablePromptCacheKey(req)
   // Assemble content in output order. function_call args stream via .delta keyed by item_id; output_text
   // via .delta keyed by item_id; reasoning items arrive whole at output_item.done.
   const content: Array<TextBlock | ToolUseBlock | ServerBlock> = []

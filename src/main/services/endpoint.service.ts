@@ -17,6 +17,7 @@ function toDto(row: EndpointRow): EndpointDto {
     defaultModel: row.defaultModel,
     availableModels: row.availableModels,
     enabled: row.enabled,
+    cacheEnabled: row.cacheEnabled,
     createdAt: row.createdAt,
     hasKey: keychain.hasApiKey(row.id)
   }
@@ -40,7 +41,8 @@ export function add(input: EndpointInput): EndpointDto {
     baseUrl: normalizeBaseUrl(input.baseUrl),
     defaultModel: input.defaultModel ?? undefined,
     availableModels: input.availableModels ?? [],
-    enabled: input.enabled ?? true
+    enabled: input.enabled ?? true,
+    cacheEnabled: input.cacheEnabled ?? false
   })
   if (input.apiKey) keychain.setApiKey(row.id, input.apiKey)
   return toDto(row)
@@ -53,7 +55,8 @@ export function update(id: string, patch: Partial<EndpointInput>): EndpointDto |
     baseUrl: patch.baseUrl !== undefined ? normalizeBaseUrl(patch.baseUrl) : undefined,
     defaultModel: patch.defaultModel,
     availableModels: patch.availableModels,
-    enabled: patch.enabled
+    enabled: patch.enabled,
+    cacheEnabled: patch.cacheEnabled
   })
   if (!row) return null
   if (patch.apiKey) keychain.setApiKey(id, patch.apiKey)

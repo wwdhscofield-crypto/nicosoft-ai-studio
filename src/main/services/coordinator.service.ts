@@ -585,6 +585,8 @@ async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputT
         baseUrl: ep.baseUrl,
         apiKey,
         model: binding.model,
+        endpointId: binding.endpointId,
+        cacheEnabled: ep.cacheEnabled,
         includeHistory,
         memories,
         summary: summaryContent,
@@ -667,7 +669,7 @@ async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputT
 
   let text = ''
   const result = await llmChat(
-    { protocol: ep.protocol, baseUrl: ep.baseUrl, apiKey, model: binding.model, messages, signal },
+    { protocol: ep.protocol, baseUrl: ep.baseUrl, apiKey, model: binding.model, messages, cacheEnabled: ep.cacheEnabled, conversationId: convId, endpointId: binding.endpointId, roleId, signal },
     (d) => {
       if (d.text) {
         text += d.text

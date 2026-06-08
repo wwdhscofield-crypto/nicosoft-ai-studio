@@ -6,6 +6,7 @@ import { SCHEMA_SQL } from './schema'
 // IF NOT EXISTS won't alter an existing table. Future breaking changes gate behind PRAGMA user_version.
 export function runMigrations(db: DatabaseSync): void {
   db.exec(SCHEMA_SQL)
+  ensureColumn(db, 'endpoints', 'cache_enabled', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn(db, 'role_bindings', 'thinking_depth', 'TEXT')
   ensureColumn(db, 'role_bindings', 'image_model', 'TEXT')
   ensureColumn(db, 'messages', 'run_id', 'TEXT')

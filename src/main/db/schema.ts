@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS endpoints (
   default_model    TEXT,
   available_models TEXT NOT NULL DEFAULT '[]',    -- JSON string[]
   enabled          INTEGER NOT NULL DEFAULT 1,
+  cache_enabled    INTEGER NOT NULL DEFAULT 0,
   created_at       TEXT NOT NULL
 );
 

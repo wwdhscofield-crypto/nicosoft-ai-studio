@@ -31,6 +31,11 @@ export interface AgentLlmRequest {
   messages: AgentMessage[]
   tools: AnyToolSchema[]
   maxTokens: number
+  cacheEnabled?: boolean
+  conversationId?: string
+  threadId?: string
+  endpointId?: string
+  roleId?: string
   thinking?: ThinkingParam // Anthropic extended thinking (budgetTokens); lifts max_tokens above budget
   signal?: AbortSignal
 }
@@ -39,7 +44,7 @@ export interface AgentLlmRequest {
 interface AgentMessagesBody {
   model: string
   max_tokens: number
-  system: string
+  system: string | Array<{ type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }>
   messages: AgentMessage[]
   tools: AnyToolSchema[]
   stream: true
@@ -73,6 +78,44 @@ type Accum =
   // *_tool_result blocks, which arrive complete at content_block_start).
   | { type: 'server'; raw: Record<string, unknown>; json: string | null }
 
+function hasCacheControl(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false
+  if ('cache_control' in value) return true
+  if (Array.isArray(value)) return value.some(hasCacheControl)
+  return Object.values(value as Record<string, unknown>).some(hasCacheControl)
+}
+
+function applyAnthropicCacheControls(body: AgentMessagesBody): void {
+  // NSAI upstream Claude OAuth may already inject cache controls and skips when cache controls exist,
+  // so avoiding duplicates here prevents conflict while preserving that upstream behavior.
+  if (hasCacheControl(body)) return
+  let count = 0
+  if (body.tools.length > 0) {
+    const index = body.tools.length - 1
+    body.tools = [...body.tools]
+    body.tools[index] = { ...(body.tools[index] as Record<string, unknown>), cache_control: { type: 'ephemeral' } } as unknown as AnyToolSchema
+    count++
+  }
+  if (typeof body.system === 'string' && body.system.trim().length > 0 && count < 3) {
+    body.system = [{ type: 'text', text: body.system, cache_control: { type: 'ephemeral' } }]
+    count++
+  }
+  for (let i = body.messages.length - 1; i >= 0 && count < 3; i--) {
+    const msg = body.messages[i]
+    if (msg.role !== 'user') continue
+    for (let j = msg.content.length - 1; j >= 0; j--) {
+      const block = msg.content[j]
+      if (block.type === 'text' && typeof (block as TextBlock).text === 'string' && (block as TextBlock).text.length > 0) {
+        body.messages = [...body.messages]
+        const content = [...msg.content]
+        content[j] = { ...(block as TextBlock), cache_control: { type: 'ephemeral' } } as TextBlock
+        body.messages[i] = { ...msg, content }
+        return
+      }
+    }
+  }
+}
+
 // POST /v1/messages (Anthropic protocol) with tools. Yields each completed tool_use block as it
 // finishes (content_block_stop); returns the assembled AssistantTurn when the stream ends.
 async function* callWithToolsAnthropic(
@@ -94,6 +137,7 @@ async function* callWithToolsAnthropic(
     body.thinking = { type: 'enabled', budget_tokens: budget }
     if (req.maxTokens <= budget) body.max_tokens = budget + req.maxTokens
   }
+  if (req.cacheEnabled) applyAnthropicCacheControls(body)
   const blocks: (Accum | undefined)[] = []
   let stopReason: StopReason = null
   let inTokens = 0

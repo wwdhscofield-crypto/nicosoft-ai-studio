@@ -34,6 +34,7 @@ interface ResponsesBody {
   store: false
   instructions?: string
   reasoning?: { effort: 'minimal' | 'none' | 'low' | 'medium' | 'high' | 'xhigh' }
+  prompt_cache_key?: string
 }
 
 // Responses API discriminates the text part type by role: a user turn uses `input_text`, while an
@@ -72,6 +73,12 @@ function toInstructions(messages: ChatMessage[]): string | undefined {
   return parts.length > 0 ? parts.join('\n\n') : undefined
 }
 
+function stablePromptCacheKey(req: ChatRequest): string {
+  const primary = req.conversationId ?? req.threadId
+  if (primary && primary.length > 0) return primary
+  return [req.endpointId, req.roleId, req.model, req.baseUrl].filter((v): v is string => Boolean(v)).join(':')
+}
+
 function buildBody(req: ChatRequest): ResponsesBody {
   const body: ResponsesBody = {
     model: req.model,
@@ -86,6 +93,7 @@ function buildBody(req: ChatRequest): ResponsesBody {
   const instructions = toInstructions(req.messages)
   body.instructions = instructions ?? 'You are a helpful assistant.'
   if (req.thinking?.effort) body.reasoning = { effort: req.thinking.effort }
+  if (req.cacheEnabled) body.prompt_cache_key = stablePromptCacheKey(req)
   return body
 }
 

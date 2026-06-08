@@ -46,6 +46,7 @@ export function EndpointDialog({
   const [proto, setProto] = useState<Proto>(initial?.protocol ?? "openai")
   const [baseURL, setBaseURL] = useState(initial?.baseUrl || PROTO_BASE[initial?.protocol ?? 'openai'])
   const [apiKey, setApiKey] = useState("")
+  const [cacheEnabled, setCacheEnabled] = useState(initial?.cacheEnabled ?? false)
   const [showKey, setShowKey] = useState(false)
   const [models, setModels] = useState<ModelDraft[]>(
     initial?.availableModels && initial.availableModels.length > 0
@@ -74,6 +75,7 @@ export function EndpointDialog({
         availableModels: cleaned,
         defaultModel: cleaned[0]?.slug ?? null,
         enabled: true,
+        cacheEnabled: proto === 'gemini' ? false : cacheEnabled,
         ...(apiKey ? { apiKey } : {})
       },
       initial?.id ?? null
@@ -123,6 +125,28 @@ export function EndpointDialog({
             <label className="field-label">{t('ep.baseUrl')}</label>
             <input className="input mono" value={baseURL} onChange={(e) => setBaseURL(e.target.value)} />
           </div>
+          {proto === 'gemini' ? (
+            <div>
+              <label className="field-label">{t('ep.cacheLabel')}</label>
+              <div style={{ fontSize: 12, lineHeight: 1.45, color: 'var(--text-4)' }}>{t('ep.cacheGeminiNote')}</div>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
+              <div>
+                <label className="field-label" style={{ marginBottom: 3 }}>{t('ep.cacheLabel')}</label>
+                <div style={{ fontSize: 12, lineHeight: 1.45, color: 'var(--text-4)' }}>{t('ep.cacheHint')}</div>
+              </div>
+              <button
+                type="button"
+                className={`switch ${cacheEnabled ? 'on' : ''}`}
+                onClick={() => setCacheEnabled((v) => !v)}
+                aria-label={t('ep.cacheLabel')}
+                aria-pressed={cacheEnabled}
+              >
+                <span className="knob" />
+              </button>
+            </div>
+          )}
           <div>
             <label className="field-label">{t('ep.apiKey')}</label>
             <div className="key-input-wrap">

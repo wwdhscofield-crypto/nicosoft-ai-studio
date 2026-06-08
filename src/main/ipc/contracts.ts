@@ -11,6 +11,7 @@ export interface EndpointDto {
   defaultModel: string | null
   availableModels: ModelInfo[]
   enabled: boolean
+  cacheEnabled: boolean
   hasKey: boolean
   createdAt: string
 }
@@ -22,6 +23,7 @@ export interface EndpointInput {
   defaultModel?: string | null
   availableModels?: ModelInfo[]
   enabled?: boolean
+  cacheEnabled?: boolean
   apiKey?: string // written to the keychain, never stored in the table
 }
 

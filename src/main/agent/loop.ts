@@ -44,6 +44,11 @@ export interface RunAgentParams {
   serverTools?: readonly ServerToolSchema[]
   ctx: AgentContext
   maxTokens?: number
+  cacheEnabled?: boolean
+  conversationId?: string
+  threadId?: string
+  endpointId?: string
+  roleId?: string
   maxTurns?: number
   contextWindow?: number // model's context window, drives the autocompact threshold (default 200K)
   thinking?: ThinkingParam // extended thinking (budgetTokens), forwarded to every model call this run
@@ -263,7 +268,23 @@ export async function* runAgent(
       // Stream the turn: each tool_use block is yielded as it finishes, so execution starts
       // immediately (read-only tools batch in parallel) instead of waiting for the whole message.
       const gen = callWithTools(
-        { protocol: params.protocol, baseUrl, apiKey, model, system, messages, tools: toolSchemas, maxTokens, thinking: params.thinking, signal: ctx.signal },
+        {
+          protocol: params.protocol,
+          baseUrl,
+          apiKey,
+          model,
+          system,
+          messages,
+          tools: toolSchemas,
+          maxTokens,
+          cacheEnabled: params.cacheEnabled,
+          conversationId: params.conversationId,
+          threadId: params.threadId,
+          endpointId: params.endpointId,
+          roleId: params.roleId,
+          thinking: params.thinking,
+          signal: ctx.signal,
+        },
         params.onStream,
       )
       for (;;) {
