@@ -17,7 +17,9 @@ export type RunChild = (
   messages: AgentMessage[],
   signal: AbortSignal,
   readFileState: Map<string, ReadFileEntry>,
-  todos: TodoItem[]
+  todos: TodoItem[],
+  parentToolId?: string,
+  subAgentId?: string
 ) => Promise<AgentMessage[]>
 
 function userTurn(text: string): AgentMessage {
@@ -46,7 +48,13 @@ class AsyncSubAgent {
   status: 'running' | 'parked' | 'done' = 'running'
   private controller = new AbortController()
 
-  constructor(prompt: string, private runChild: RunChild, parentSignal: AbortSignal) {
+  constructor(
+    prompt: string,
+    private runChild: RunChild,
+    parentSignal: AbortSignal,
+    private parentToolId?: string,
+    private subAgentId?: string
+  ) {
     this.messages = [userTurn(prompt)]
     parentSignal.addEventListener('abort', () => this.close(), { once: true })
     void this.loop()
@@ -58,7 +66,7 @@ class AsyncSubAgent {
       while (!signal.aborted) {
         if (this.mailbox.length) this.messages.push(userTurn(this.mailbox.splice(0).join('\n\n')))
         this.status = 'running'
-        this.messages = await this.runChild(this.messages, signal, this.readFileState, this.todos)
+        this.messages = await this.runChild(this.messages, signal, this.readFileState, this.todos, this.parentToolId, this.subAgentId)
         if (signal.aborted) break
         this.emit(lastAssistantText(this.messages))
         if (!this.mailbox.length) {
@@ -122,10 +130,10 @@ export class AsyncSubAgentPool {
     this.runChild = fn
   }
 
-  spawn(prompt: string): string {
+  spawn(prompt: string, parentToolId?: string): string {
     if (!this.runChild) throw new Error('Background sub-agents are not available in this context.')
     const id = `sub-${++this.counter}`
-    this.agents.set(id, new AsyncSubAgent(prompt, this.runChild, this.parentSignal))
+    this.agents.set(id, new AsyncSubAgent(prompt, this.runChild, this.parentSignal, parentToolId, id))
     return id
   }
 

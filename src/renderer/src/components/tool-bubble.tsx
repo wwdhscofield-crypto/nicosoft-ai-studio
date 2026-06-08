@@ -50,19 +50,30 @@ function toolSummary(name: string, input: Record<string, unknown>): string {
   }
 }
 
-export function ToolBubble({ tool }: { tool: ToolCall }): ReactElement {
+function subToolSummary(tool: ToolCall, fallback: string): string {
+  const count = tool.subTools?.length ?? 0
+  if (count === 0) return fallback
+  const current = tool.subTools?.find((t) => t.status === 'running') ?? tool.subTools?.[count - 1]
+  const currentLabel = current ? `${current.name}${current.status === 'running' ? ' running' : ''}` : 'sub-tool'
+  const base = fallback ? `${fallback} · ` : ''
+  return `${base}${currentLabel} · ${count} ${count === 1 ? 'tool' : 'tools'}`
+}
+
+export function ToolBubble({ tool, depth = 0 }: { tool: ToolCall; depth?: number }): ReactElement {
   const [open, setOpen] = useState(false)
   const input = (tool.input ?? {}) as Record<string, unknown>
-  const summary = toolSummary(tool.name, input)
+  const baseSummary = toolSummary(tool.name, input)
+  const summary = subToolSummary(tool, baseSummary)
   const isDiff = DIFF_TOOLS.has(tool.name)
   const hasResult = !!tool.result && tool.status !== 'running'
   // Read's result is file contents → render it as a syntax-highlighted code block (language guessed from
   // the file extension). Edit/Write/MultiEdit keep the collapsed diff form (isDiff branch below).
   const isReadResult = tool.name === 'Read' && hasResult
-  const expandable = isDiff || hasResult
+  const hasSubTools = (tool.subTools?.length ?? 0) > 0
+  const expandable = isDiff || hasResult || hasSubTools
 
   return (
-    <div className={'tool-bubble ' + tool.status}>
+    <div className={'tool-bubble ' + tool.status} style={depth > 0 ? { marginLeft: 14 } : undefined}>
       <button className="tb-row" onClick={() => expandable && setOpen((o) => !o)} disabled={!expandable}>
         <span className="tb-status">
           {tool.status === 'done' && <Icons.check size={11} />}
@@ -79,6 +90,11 @@ export function ToolBubble({ tool }: { tool: ToolCall }): ReactElement {
       </button>
       {open && (
         <div className="tb-detail">
+          {hasSubTools ? (
+            <div className="tb-subtools">
+              {tool.subTools!.map((subTool) => <ToolBubble key={subTool.id} tool={subTool} depth={depth + 1} />)}
+            </div>
+          ) : null}
           {isDiff ? <DiffView name={tool.name} input={input} /> : null}
           {isReadResult ? (
             <div className="tb-code">

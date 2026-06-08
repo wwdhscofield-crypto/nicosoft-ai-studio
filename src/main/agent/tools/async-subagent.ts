@@ -28,7 +28,7 @@ export const agentSpawnTool = buildTool({
   isConcurrencySafe: () => true,
   async call(input, ctx) {
     if (!ctx.subAgents) throw new Error('Background sub-agents are not available in this context.')
-    const id = ctx.subAgents.spawn(input.prompt)
+    const id = ctx.subAgents.spawn(input.prompt, ctx.currentToolUseId)
     return {
       data:
         `Spawned ${id} (running in the background). Call agent_wait("${id}") to get its first reply, ` +
@@ -107,7 +107,7 @@ export const agentBatchTool = buildTool<
   async call(input, ctx) {
     const pool = ctx.subAgents
     if (!pool) throw new Error('Background sub-agents are not available in this context.')
-    const ids = input.prompts.map((p) => pool.spawn(p))
+    const ids = input.prompts.map((p) => pool.spawn(p, ctx.currentToolUseId))
     const results = await Promise.all(
       ids.map(async (id, i) => {
         const reply = await pool.wait(id)

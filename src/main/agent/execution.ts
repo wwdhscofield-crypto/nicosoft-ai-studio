@@ -81,7 +81,8 @@ export async function runOne(
     const decision = await checkPermission(tool, input, ctx)
     if (!decision.allow) return errorResult(toolUse.id, decision.message ?? 'Permission denied')
 
-    const result = await tool.call(decision.updatedInput ?? input, ctx)
+    const toolCtx: AgentContext = { ...ctx, currentToolUseId: toolUse.id }
+    const result = await tool.call(decision.updatedInput ?? input, toolCtx)
     const block = tool.mapResult(result.data, toolUse.id)
     return await persistLargeResult(block, tool.maxResultSizeChars, ctx.sessionDir)
   } catch (err) {

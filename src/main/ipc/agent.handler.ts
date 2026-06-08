@@ -66,6 +66,8 @@ export function registerAgentHandlers(): void {
           onStream: (ev) => {
             if (ev.type === 'text') send('agent:delta', { streamId, text: ev.delta })
             else if (ev.type === 'tool_use_start') send('agent:tool:start', { streamId, id: ev.id, name: ev.name })
+            else if (ev.type === 'sub_tool_start') send('agent:sub-tool:start', { streamId, ...ev })
+            else if (ev.type === 'sub_tool_done') send('agent:sub-tool:done', { streamId, ...ev })
             // Streaming usage is CUMULATIVE (sums every upstream request this turn) → 'live' readout only,
             // never the context indicator.
             else if (ev.type === 'usage') broadcastUsage(sender, input.convId, 'live', ev.inputTokens, ev.outputTokens)

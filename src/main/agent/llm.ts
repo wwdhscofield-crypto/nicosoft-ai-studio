@@ -57,6 +57,8 @@ export type AgentLlmEvent =
   | { type: 'text'; delta: string }
   | { type: 'tool_use_start'; id: string; name: string }
   | { type: 'tool_use_input'; id: string; delta: string }
+  | { type: 'sub_tool_start'; parentToolId: string; toolUseId: string; name: string; input?: Record<string, unknown>; subAgentId?: string }
+  | { type: 'sub_tool_done'; parentToolId: string; toolUseId: string; name: string; result?: unknown; isError?: boolean; subAgentId?: string }
   | { type: 'usage'; inputTokens: number; outputTokens: number } // cumulative REAL usage, streamed live per chunk
 
 interface StreamEvent {

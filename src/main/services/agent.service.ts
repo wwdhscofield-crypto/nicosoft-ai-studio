@@ -362,6 +362,7 @@ export async function runAgentLoop(
     services: registry,
     subAgents,
     lsp,
+    onSubAgentToolEvent: cb.onStream,
   }
 
   const gen = runAgent({
@@ -659,7 +660,8 @@ export async function runCollabSession(
           sessionDir,
           collab,
           services: registry,
-          lsp
+          lsp,
+          onSubAgentToolEvent: (ev) => hooks.onExpertStream(x.roleId, ev),
         }
         const gen = runAgent({
           protocol: x.protocol,

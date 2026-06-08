@@ -191,6 +191,23 @@ export interface AgentToolResults {
   streamId: string
   results: AgentResultDto[]
 }
+export interface AgentSubToolStart {
+  streamId: string
+  parentToolId: string
+  toolUseId: string
+  name: string
+  input?: unknown
+  subAgentId?: string
+}
+export interface AgentSubToolDone {
+  streamId: string
+  parentToolId: string
+  toolUseId: string
+  name: string
+  result?: unknown
+  isError?: boolean
+  subAgentId?: string
+}
 export interface AgentResultDto {
   toolUseId: string
   content: string
@@ -255,6 +272,7 @@ export interface ToolCallDto {
   input: unknown
   status: 'running' | 'done' | 'error'
   result?: string
+  subTools?: ToolCallDto[]
 }
 // One renderable unit of a rebuilt assistant run, in EMISSION order. A 'tool' block references a tool by
 // id in RunTranscript.tools. Lets a reopened conversation interleave reasoning text and tool cards exactly
@@ -344,6 +362,12 @@ export interface CoordinatorToolResults {
   streamId: string
   roleId: string
   results: AgentResultDto[]
+}
+export interface CoordinatorSubToolStart extends AgentSubToolStart {
+  roleId: string
+}
+export interface CoordinatorSubToolDone extends AgentSubToolDone {
+  roleId: string
 }
 // A dispatched-tool approval (phase 2 still pops to the user — doc 19 §14). The response reuses
 // AgentPermissionResponse (permissionId + allow + updatedInput); permissionId alone locates the pending prompt.

@@ -27,6 +27,7 @@ import type {
   AssistantTurn,
   ServerToolSchema,
   ToolSchema,
+  ToolResultBlock,
   ToolUseBlock,
   Usage,
 } from './types'
@@ -133,6 +134,50 @@ export async function* runAgent(
     llm: params.ctx.llm ?? { protocol: params.protocol, baseUrl, apiKey, smallModel, searchModel, imageModel: params.imageModel },
     setPermissionMode: setPlanMode,
   }
+  const childToolNames = new Map<string, string>()
+  const emitChildStream = (parentToolId?: string, subAgentId?: string) => (event: AgentLlmEvent): void => {
+    if (!parentToolId) return
+    if (event.type !== 'tool_use_start') return
+    childToolNames.set(event.id, event.name)
+    ctx.onSubAgentToolEvent?.({
+      type: 'sub_tool_start',
+      parentToolId,
+      toolUseId: event.id,
+      name: event.name,
+      subAgentId,
+    })
+  }
+  const emitChildStep = (step: AgentEvent, parentToolId?: string, subAgentId?: string): void => {
+    if (!parentToolId) return
+    if (step.type === 'assistant') {
+      for (const block of step.message.content) {
+        if (!isContentBlock(block) || block.type !== 'tool_use') continue
+        childToolNames.set(block.id, block.name)
+        ctx.onSubAgentToolEvent?.({
+          type: 'sub_tool_start',
+          parentToolId,
+          toolUseId: block.id,
+          name: block.name,
+          input: block.input,
+          subAgentId,
+        })
+      }
+      return
+    }
+    for (const block of step.message.content) {
+      if (!isContentBlock(block) || block.type !== 'tool_result') continue
+      const result = block as ToolResultBlock
+      ctx.onSubAgentToolEvent?.({
+        type: 'sub_tool_done',
+        parentToolId,
+        toolUseId: result.tool_use_id,
+        name: childToolNames.get(result.tool_use_id) ?? 'tool',
+        result: result.content,
+        isError: result.is_error,
+        subAgentId,
+      })
+    }
+  }
   // No fixed turn cap (common for coding agents): the loop is bounded by autocompact + microcompact
   // (token blow-up), the model ending its turn, and the abort/retry budgets — not a hardcoded count. A caller
   // MAY still pass maxTurns to bound a run explicitly; sub-agents inherit it (usually undefined → unbounded).
@@ -164,7 +209,7 @@ export async function* runAgent(
   const subAgentTools = tools.filter((t) => t.name !== 'Task')
   const makeSpawnSubAgent =
     (signal: AbortSignal): SpawnSubAgent =>
-    async ({ prompt }) => {
+    async ({ prompt, parentToolId }) => {
       const sub = runAgent({
         protocol: params.protocol,
         baseUrl,
@@ -176,6 +221,7 @@ export async function* runAgent(
         ctx: { ...ctx, signal, readFileState: new Map(), todos: [], spawnSubAgent: undefined },
         maxTokens,
         maxTurns,
+        onStream: emitChildStream(parentToolId),
       })
       let last = ''
       let result: AgentResult | undefined
@@ -185,6 +231,7 @@ export async function* runAgent(
           result = step.value
           break
         }
+        emitChildStep(step.value, parentToolId)
         if (step.value.type === 'assistant') {
           for (const b of step.value.message.content) if (isContentBlock(b) && b.type === 'text') last = b.text
         }
@@ -204,7 +251,7 @@ export async function* runAgent(
   // (depth 1) — threading the child's persisted readFileState/todos. Sub-agents get subAgents: undefined.
   if (ctx.subAgents instanceof AsyncSubAgentPool) {
     const asyncChildTools = tools.filter((t) => t.name !== 'Task' && !t.name.startsWith('agent_'))
-    const runChild: RunChild = async (childMessages, signal, readFileState, todos) => {
+    const runChild: RunChild = async (childMessages, signal, readFileState, todos, parentToolId, subAgentId) => {
       const sub = runAgent({
         protocol: params.protocol,
         baseUrl,
@@ -216,6 +263,7 @@ export async function* runAgent(
         ctx: { ...ctx, signal, readFileState, todos, spawnSubAgent: undefined, subAgents: undefined },
         maxTokens,
         maxTurns,
+        onStream: emitChildStream(parentToolId, subAgentId),
       })
       let result: AgentResult | undefined
       for (;;) {
@@ -224,6 +272,7 @@ export async function* runAgent(
           result = step.value
           break
         }
+        emitChildStep(step.value, parentToolId, subAgentId)
       }
       return result.messages
     }

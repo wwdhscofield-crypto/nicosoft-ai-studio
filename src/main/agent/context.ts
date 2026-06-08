@@ -49,14 +49,27 @@ export interface TodoItem {
 // For the Task tool: run an isolated sub-agent loop and return its final text. runAgent injects this
 // into the context tools see; the sub-agent gets a fresh readFileState/todos and no Task tool, so
 // recursion is bounded to one level.
-export type SpawnSubAgent = (input: { description: string; prompt: string }) => Promise<string>
+export interface SubAgentToolEvent {
+  type: 'sub_tool_start' | 'sub_tool_done'
+  parentToolId: string
+  toolUseId: string
+  name: string
+  input?: Record<string, unknown>
+  result?: unknown
+  isError?: boolean
+  subAgentId?: string
+}
+
+export type SubAgentToolEventHandler = (event: SubAgentToolEvent) => void
+
+export type SpawnSubAgent = (input: { description: string; prompt: string; parentToolId?: string }) => Promise<string>
 
 // Async sub-agent pool (batch 3 / doc 25). Where Task is synchronous (spawn → run → summary, blocking the
 // parent's turn), this lets the parent spawn PERSISTENT children that keep running in the background:
 // agent_spawn → handle id, agent_send messages it mid-flight, agent_wait pulls its next reply, agent_close
 // ends it. Set by runAgent; undefined inside a sub-agent (depth 1) and in collab experts → those tools no-op.
 export interface SubAgentPool {
-  spawn(prompt: string): string
+  spawn(prompt: string, parentToolId?: string): string
   send(id: string, msg: string): string
   wait(id: string): Promise<string>
   close(id: string): string
@@ -77,6 +90,8 @@ export interface AgentContext {
   askUser?: AskUser
   todos: TodoItem[] // the agent's working todo list (TodoWrite replaces it); UI renders it in H4
   spawnSubAgent?: SpawnSubAgent // set by runAgent for the Task tool; undefined inside a sub-agent
+  currentToolUseId?: string // tool_use id currently executing; lets tools tag child activity with their parent
+  onSubAgentToolEvent?: SubAgentToolEventHandler // bubbles depth-1 child tool events to the parent stream
   sessionDir: string // large tool results persist to <sessionDir>/tool-results/<tool_use_id>.txt
   // LLM access for tools that call a small/fast model (WebFetch content extraction, WebSearch's
   // isolated secondary request). Injected by runAgent from its own baseUrl/apiKey + a small model.

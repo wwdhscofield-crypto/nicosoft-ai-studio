@@ -36,6 +36,7 @@ export interface ToolCall {
   input: unknown
   status: 'running' | 'done' | 'error'
   result?: string
+  subTools?: ToolCall[]
 }
 // One renderable unit of an assistant turn, in EMISSION order. A 'tool' block references a tool by id in
 // msg.tools (so tool status/result updates flow through msg.tools without touching this list). This is what
@@ -144,6 +145,74 @@ interface ChatState {
 }
 
 const uid = (): string => globalThis.crypto.randomUUID()
+
+const upsertSubTool = (
+  tools: ToolCall[] | undefined,
+  parentToolId: string,
+  subTool: ToolCall
+): ToolCall[] | undefined => {
+  if (!tools) return tools
+  let changed = false
+  const next = tools.map((tool) => {
+    if (tool.id !== parentToolId) return tool
+    const subTools = tool.subTools ?? []
+    const idx = subTools.findIndex((t) => t.id === subTool.id)
+    const nextSubTools = idx >= 0
+      ? subTools.map((t, i) => i === idx ? { ...t, ...subTool, input: subTool.input ?? t.input } : t)
+      : [...subTools, subTool]
+    changed = true
+    return { ...tool, subTools: nextSubTools }
+  })
+  return changed ? next : tools
+}
+
+const updateSubTool = (
+  tools: ToolCall[] | undefined,
+  parentToolId: string,
+  toolUseId: string,
+  patch: Partial<ToolCall>
+): ToolCall[] | undefined => {
+  if (!tools) return tools
+  let changed = false
+  const next = tools.map((tool) => {
+    if (tool.id !== parentToolId) return tool
+    const subTools = tool.subTools ?? []
+    const idx = subTools.findIndex((t) => t.id === toolUseId)
+    const fallback: ToolCall = {
+      id: toolUseId,
+      name: typeof patch.name === 'string' ? patch.name : 'tool',
+      input: patch.input ?? {},
+      status: patch.status ?? 'done',
+      result: patch.result,
+    }
+    const nextSubTools = idx >= 0
+      ? subTools.map((t, i) => i === idx ? { ...t, ...patch } : t)
+      : [...subTools, fallback]
+    changed = true
+    return { ...tool, subTools: nextSubTools }
+  })
+  return changed ? next : tools
+}
+
+const summarizeValue = (v: unknown): string => {
+  if (typeof v === 'string') return v
+  try { return JSON.stringify(v) } catch { return String(v) }
+}
+
+const applySubToolStart = (message: ChatMessage, parentToolId: string, toolUseId: string, name: string, input: unknown): ChatMessage => {
+  const tools = upsertSubTool(message.tools, parentToolId, { id: toolUseId, name, input: input ?? {}, status: 'running' })
+  return tools === message.tools ? message : { ...message, tools }
+}
+
+const applySubToolDone = (message: ChatMessage, parentToolId: string, toolUseId: string, name: string, result: unknown, isError?: boolean): ChatMessage => {
+  const tools = updateSubTool(message.tools, parentToolId, toolUseId, {
+    name,
+    status: isError ? 'error' : 'done',
+    result: summarizeValue(result),
+  })
+  return tools === message.tools ? message : { ...message, tools }
+}
+
 // Server blocks shown as user-facing status rows (web_search). reasoning / thinking blocks are
 // round-tripped for context only, not shown. Extend when adding server tools (code_interpreter, image gen).
 const SHOWN_SERVER_BLOCKS = new Set(['web_search_call'])
@@ -313,6 +382,30 @@ export const useChat = create<ChatState>((set, get) => {
         return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
       })
     })
+    ag.onSubToolStart((d) => {
+      const meta = agentMeta.get(d.streamId)
+      if (!meta) return
+      set((s) => ({
+        byConversation: {
+          ...s.byConversation,
+          [meta.convId]: (s.byConversation[meta.convId] ?? []).map((m) =>
+            applySubToolStart(m, d.parentToolId, d.toolUseId, d.name, d.input)
+          ),
+        },
+      }))
+    })
+    ag.onSubToolDone((d) => {
+      const meta = agentMeta.get(d.streamId)
+      if (!meta) return
+      set((s) => ({
+        byConversation: {
+          ...s.byConversation,
+          [meta.convId]: (s.byConversation[meta.convId] ?? []).map((m) =>
+            applySubToolDone(m, d.parentToolId, d.toolUseId, d.name, d.result, d.isError)
+          ),
+        },
+      }))
+    })
     ag.onAssistant((d) => {
       const meta = agentMeta.get(d.streamId)
       if (!meta) return
@@ -328,9 +421,16 @@ export const useChat = create<ChatState>((set, get) => {
           .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
           .map((b) => b.text)
           .join('') // onAssistant is authoritative for the turn's text (deltas were a preview)
+        const existingTools = new Map((cur.tools ?? []).map((t) => [t.id, t]))
         cur.tools = d.blocks
           .filter((b): b is { type: 'tool_use'; id: string; name: string; input: unknown } => b.type === 'tool_use')
-          .map((b) => ({ id: b.id, name: b.name, input: b.input, status: 'running' as const }))
+          .map((b) => ({
+            id: b.id,
+            name: b.name,
+            input: b.input,
+            status: 'running' as const,
+            subTools: existingTools.get(b.id)?.subTools,
+          }))
         // Authoritative ORDER for the turn: rebuild the block list straight from d.blocks (text + tool_use in
         // emission order). This corrects whatever the delta/onToolStart preview accumulated — the renderer
         // now interleaves text and tool cards exactly as the model emitted them. (server blocks render
@@ -571,6 +671,34 @@ export const useChat = create<ChatState>((set, get) => {
         return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
       })
     })
+    at.onSubToolStart((d) => {
+      const meta = coordinatorMeta.get(d.streamId)
+      if (!meta) return
+      set((s) => {
+        const msgs = (s.byConversation[meta.convId] ?? []).map((m) => ({ ...m }))
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i].role === 'assistant' && msgs[i].expertId === d.roleId) {
+            msgs[i] = applySubToolStart(msgs[i], d.parentToolId, d.toolUseId, d.name, d.input)
+            break
+          }
+        }
+        return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
+      })
+    })
+    at.onSubToolDone((d) => {
+      const meta = coordinatorMeta.get(d.streamId)
+      if (!meta) return
+      set((s) => {
+        const msgs = (s.byConversation[meta.convId] ?? []).map((m) => ({ ...m }))
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i].role === 'assistant' && msgs[i].expertId === d.roleId) {
+            msgs[i] = applySubToolDone(msgs[i], d.parentToolId, d.toolUseId, d.name, d.result, d.isError)
+            break
+          }
+        }
+        return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
+      })
+    })
     at.onAssistant((d) => {
       const meta = coordinatorMeta.get(d.streamId)
       if (!meta) return
@@ -586,7 +714,7 @@ export const useChat = create<ChatState>((set, get) => {
             for (const b of d.blocks) {
               if (b.type === 'tool_use') {
                 const idx = tools.findIndex((t) => t.id === b.id)
-                if (idx !== -1) tools[idx] = { ...tools[idx], name: b.name, input: b.input }
+                if (idx !== -1) tools[idx] = { ...tools[idx], name: b.name, input: b.input, subTools: tools[idx].subTools }
                 else {
                   tools.push({ id: b.id, name: b.name, input: b.input, status: 'running' as const })
                   blocks.push({ kind: 'tool', id: b.id }) // a tool we hadn't seen via onToolStart → add to the order

@@ -24,7 +24,11 @@ export const taskTool = buildTool<typeof inputSchema, string>({
   isConcurrencySafe: () => true,
   async call(input, ctx) {
     if (!ctx.spawnSubAgent) throw new Error('Sub-agents are not available in this context.')
-    const result = await ctx.spawnSubAgent({ description: input.description, prompt: input.prompt })
+    const result = await ctx.spawnSubAgent({
+      description: input.description,
+      prompt: input.prompt,
+      parentToolId: ctx.currentToolUseId,
+    })
     return { data: result }
   },
   mapResult(out, toolUseId): ToolResultBlock {

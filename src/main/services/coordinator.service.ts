@@ -31,6 +31,7 @@ import * as agentService from './agent.service'
 import { classifyApproval } from '../agent/approval'
 import * as pendingRepo from '../repos/pending-approval.repo'
 import type { AgentEvent } from '../agent/loop'
+import type { AgentLlmEvent } from '../agent/llm'
 import { isContentBlock } from '../agent/types'
 import type { PermissionRequest, PermissionDecision, PermissionMode } from '../agent/context'
 import type { MemoryRow } from '../repos/memory.repo'
@@ -85,7 +86,7 @@ export interface CoordinatorCallbacks {
   // full tool-using loop — these surface its tool activity + approval prompts to the coordinator UI. Only the
   // coordinator-self synthesis/direct turn is tool-less and never fires them, so they're optional.
   onToolStart?: (roleId: string, id: string, name: string) => void
-  onToolEvent?: (roleId: string, ev: AgentEvent) => void
+  onToolEvent?: (roleId: string, ev: AgentEvent | AgentLlmEvent) => void
   // A dispatched expert's tool generated an image (Georgia's ns_generate_image) — surface it live, the same
   // nsai-media:// ref the loop persisted on the step message. Only image-capable agent roles fire it.
   onToolImage?: (attachment: MessageAttachmentDto) => void
@@ -564,6 +565,8 @@ async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputT
           cb.onDelta(roleId, ev.delta)
         } else if (ev.type === 'tool_use_start') {
           cb.onToolStart?.(roleId, ev.id, ev.name)
+        } else if (ev.type === 'sub_tool_start' || ev.type === 'sub_tool_done') {
+          cb.onToolEvent?.(roleId, ev)
         } else if (ev.type === 'usage') {
           cb.onUsage?.(ev.inputTokens, ev.outputTokens) // forward the agent loop's live ↑in+↓out to the conv readout
         }
