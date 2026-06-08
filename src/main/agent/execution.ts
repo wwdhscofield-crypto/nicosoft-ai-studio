@@ -32,8 +32,11 @@ async function checkPermission(
   input: Record<string, unknown>,
   ctx: AgentContext,
 ): Promise<{ allow: boolean; message?: string; updatedInput?: Record<string, unknown> }> {
-  if (ctx.permissionMode === 'bypass') return { allow: true }
-  if (ctx.permissionMode === 'plan' && !tool.isReadOnly(input)) {
+  // ExitPlanMode is the coordinator autonomy Gate A boundary. Even when the dispatched
+  // expert runs with bypass approvals, bypass must not directly approve its plan; route
+  // the submission through requestPermission so Danny/coordinator can independently review it.
+  if (ctx.permissionMode === 'bypass' && tool.name !== 'ExitPlanMode') return { allow: true }
+  if (ctx.permissionMode === 'plan' && !tool.isReadOnly(input) && tool.name !== 'ExitPlanMode') {
     return { allow: false, message: 'In plan mode — mutations are not allowed. Present a plan instead.' }
   }
 

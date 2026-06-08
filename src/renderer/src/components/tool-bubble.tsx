@@ -45,6 +45,10 @@ function toolSummary(name: string, input: Record<string, unknown>): string {
       return String(input.query ?? '')
     case 'Task':
       return String(input.description ?? '')
+    case 'DannyPlanReview':
+      return 'Danny independent plan review'
+    case 'IndependentVerifier':
+      return `verifier ${String(input.verifierRoleId ?? '')}${input.attempt ? ` · attempt ${String(input.attempt)}` : ''}`
     default:
       return ''
   }

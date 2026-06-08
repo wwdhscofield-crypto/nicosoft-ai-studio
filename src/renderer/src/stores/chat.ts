@@ -200,17 +200,42 @@ const summarizeValue = (v: unknown): string => {
 }
 
 const applySubToolStart = (message: ChatMessage, parentToolId: string, toolUseId: string, name: string, input: unknown): ChatMessage => {
-  const tools = upsertSubTool(message.tools, parentToolId, { id: toolUseId, name, input: input ?? {}, status: 'running' })
-  return tools === message.tools ? message : { ...message, tools }
+  const subTool: ToolCall = { id: toolUseId, name, input: input ?? {}, status: 'running' }
+  const tools = upsertSubTool(message.tools, parentToolId, subTool)
+  if (tools !== message.tools) return { ...message, tools }
+
+  // Coordinator gates are emitted as sub-tool events even though they are orchestration steps rather than
+  // children of an agent tool_use. Surface those orphan events as first-class tool cards so Danny's plan
+  // review + the independent verifier verdict are visible in the conversation stream.
+  const existing = message.tools?.some((tool) => tool.id === toolUseId)
+  if (existing) return message
+  return {
+    ...message,
+    tools: [...(message.tools ?? []), subTool],
+    blocks: [...(message.blocks ?? []), { kind: 'tool', id: toolUseId }],
+  }
 }
 
 const applySubToolDone = (message: ChatMessage, parentToolId: string, toolUseId: string, name: string, result: unknown, isError?: boolean): ChatMessage => {
-  const tools = updateSubTool(message.tools, parentToolId, toolUseId, {
+  const patch: Partial<ToolCall> = {
     name,
     status: isError ? 'error' : 'done',
     result: summarizeValue(result),
-  })
-  return tools === message.tools ? message : { ...message, tools }
+  }
+  const tools = updateSubTool(message.tools, parentToolId, toolUseId, patch)
+  if (tools !== message.tools) return { ...message, tools }
+
+  const existingIdx = message.tools?.findIndex((tool) => tool.id === toolUseId) ?? -1
+  if (existingIdx >= 0) {
+    const nextTools = (message.tools ?? []).map((tool, i) => i === existingIdx ? { ...tool, ...patch } : tool)
+    return { ...message, tools: nextTools }
+  }
+
+  return {
+    ...message,
+    tools: [...(message.tools ?? []), { id: toolUseId, name, input: {}, status: isError ? 'error' : 'done', result: summarizeValue(result) }],
+    blocks: [...(message.blocks ?? []), { kind: 'tool', id: toolUseId }],
+  }
 }
 
 // Server blocks shown as user-facing status rows (web_search). reasoning / thinking blocks are

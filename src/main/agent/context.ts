@@ -24,6 +24,7 @@ export interface PermissionRequest {
 export interface PermissionDecision {
   allow: boolean
   updatedInput?: Record<string, unknown>
+  message?: string
 }
 
 // The approval hook. When a tool's checkPermissions returns 'ask', the loop calls this; the UI shows

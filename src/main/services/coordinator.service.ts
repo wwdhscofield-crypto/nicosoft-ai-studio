@@ -47,6 +47,7 @@ import {
   COORDINATOR_PARALLEL_SYNTHESIS_PROMPT,
   COORDINATOR_ROUTER_PROMPT,
   COORDINATOR_SYNTHESIS_PROMPT,
+  COORDINATOR_PLAN_REVIEW_PROMPT,
   DISPATCHABLE_ROLE_IDS,
   buildRolePrompt,
   displayName,
@@ -61,6 +62,7 @@ export interface RouteDecision {
   // Coordinator's coordinating voice, shown as an Coordinator message before the expert(s) answer. Only present on
   // LLM-routed turns — @mention fast-path and config/error fallbacks have none (no LLM call to make it).
   intro?: string
+  needsPlan?: boolean
 }
 
 export interface CoordinatorRunInput {
@@ -113,6 +115,8 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
   const decision = await route(input.prompt, history, signal)
   if (signal.aborted) throw new LlmError('network', 'aborted before dispatch')
 
+  const gateEnabled = routeNeedsPlan(input.prompt, decision)
+
   if (decision.mode === 'direct') {
     // B0: Coordinator takes the turn himself — simple/general enough that a specialist would be overkill. His
     // own binding + the direct persona, full history for multi-turn continuity. No intro: the reply IS
@@ -139,7 +143,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
     // user-attached images) so it can answer multi-turn requests with continuity.
     cb.onDispatch([decision.role!], decision.reason)
     if (decision.intro) emitCoordinatorIntro(input.convId, decision.intro, cb)
-    const out = await runRoleStep({
+    const out = await runGatedRoleStep(decision.role!, input.prompt, {
       convId: input.convId,
       roleId: decision.role!,
       prompt: input.prompt,
@@ -149,7 +153,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
       permissionMode: input.modeByRole?.[decision.role!],
       cb,
       signal
-    })
+    }, { enabled: gateEnabled, originalPrompt: input.prompt }, signal)
     fireSideEffects(input.convId, decision.role!, out.endpointId, out.model, out.inputTokens)
     return { inputTokens: out.inputTokens, outputTokens: out.outputTokens }
   }
@@ -290,7 +294,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
     // the next role. Without the hand-off context, the next role tends to misread a prior expert's
     // output as a fresh user message and ask "what are you trying to do?" (observed in e2e).
     const stepPrompt = i === 0 ? input.prompt : buildHandoffPrompt(input.prompt, stepOutputs, roleId)
-    const out = await runRoleStep({
+    const out = await runGatedRoleStep(roleId, stepPrompt, {
       convId: input.convId,
       roleId,
       prompt: stepPrompt,
@@ -300,7 +304,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
       permissionMode: input.modeByRole?.[roleId],
       cb,
       signal
-    })
+    }, { enabled: gateEnabled, originalPrompt: input.prompt }, signal)
     if (!out.text) {
       // Empty step output would feed garbage downstream — better to surface the failure and let the
       // user retry than silently continue. Subsequent steps would have no real input to chain on.
@@ -336,7 +340,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
 export async function route(userInput: string, history: convRepo.MessageRow[], signal?: AbortSignal): Promise<RouteDecision> {
   const disabled = disabledRoleIds()
   const enabled = DISPATCHABLE_ROLE_IDS.filter((r) => !disabled.has(r))
-  if (enabled.length === 0) return { mode: 'single', role: 'generalist', reason: 'no roles enabled' }
+  if (enabled.length === 0) return { mode: 'single', role: 'generalist', reason: 'no roles enabled', needsPlan: isNonTrivialTask(userInput) }
 
   // 0. @mention 0-LLM fast path — user explicitly named a built-in role. Must be currently enabled;
   //    a disabled @mention falls through to the LLM router. v0.1 LIMITATION: custom roles cannot be
@@ -348,7 +352,7 @@ export async function route(userInput: string, history: convRepo.MessageRow[], s
   if (mention) {
     const id = roleIdFromName(mention[1]) // accepts the display name (@Flynn) or the raw id (@engineer)
     if (enabled.includes(id as (typeof enabled)[number])) {
-      return { mode: 'single', role: id, reason: 'explicit @mention' }
+      return { mode: 'single', role: id, reason: 'explicit @mention', needsPlan: isNonTrivialTask(userInput) }
     }
   }
 
@@ -398,7 +402,7 @@ function buildRouterMessages(
   // Reinforce the JSON contract on the LAST user message — OAuth gateways (nicosoft/*, with
   // identity injection) may overwrite system prompts, so the routing instructions MUST also live in a
   // user message to survive. (Lesson from Batch 2.)
-  const reinforcer = `\n\n---\nRoute the above. Respond with ONLY a JSON object — no markdown, no explanation, no leading text. Format:\n{"mode":"direct","reason":"<≤8 words>"}\nor\n{"mode":"single","role":"<name>","intro":"<one sentence to the user>","reason":"<≤8 words>"}\nor\n{"mode":"pipeline","roles":["<name>","<name>"],"intro":"<one sentence>","reason":"<≤8 words>"}`
+  const reinforcer = `\n\n---\nRoute the above. Respond with ONLY a JSON object — no markdown, no explanation, no leading text. Include needsPlan true for non-trivial multi-file/build work and false for simple one-line tasks. Format:\n{"mode":"direct","reason":"<≤8 words>","needsPlan":false}\nor\n{"mode":"single","role":"<name>","intro":"<one sentence to the user>","reason":"<≤8 words>","needsPlan":<boolean>}\nor\n{"mode":"pipeline","roles":["<name>","<name>"],"intro":"<one sentence>","reason":"<≤8 words>","needsPlan":<boolean>}`
   if (lastUserInHistory >= 0 && messages[lastUserInHistory].content === userInput) {
     messages[lastUserInHistory] = { ...messages[lastUserInHistory], content: userInput + reinforcer }
   } else {
@@ -421,26 +425,27 @@ export function parseRouteDecision(raw: string, enabled: readonly string[]): Rou
 
   for (const c of candidates) {
     try {
-      const obj = JSON.parse(c) as { mode?: string; role?: unknown; roles?: unknown; reason?: unknown; intro?: unknown }
+      const obj = JSON.parse(c) as { mode?: string; role?: unknown; roles?: unknown; reason?: unknown; intro?: unknown; needsPlan?: unknown }
       const reason = typeof obj.reason === 'string' ? obj.reason : 'routed'
       const intro = typeof obj.intro === 'string' && obj.intro.trim() ? obj.intro.trim() : undefined
+      const needsPlan = Boolean(obj.needsPlan)
       if (obj.mode === 'direct') {
-        return { mode: 'direct', reason }
+        return { mode: 'direct', reason, needsPlan: false }
       }
       if (obj.mode === 'single' && typeof obj.role === 'string') {
         const rid = roleIdFromName(obj.role)
-        if (enabled.includes(rid)) return { mode: 'single', role: rid, reason, intro }
+        if (enabled.includes(rid)) return { mode: 'single', role: rid, reason, intro, needsPlan }
       }
       if ((obj.mode === 'pipeline' || obj.mode === 'parallel') && Array.isArray(obj.roles)) {
         const rids = obj.roles.filter((r): r is string => typeof r === 'string').map(roleIdFromName)
         if (rids.length >= 2 && rids.length <= 3 && rids.every((r) => enabled.includes(r))) {
-          return { mode: obj.mode, roles: rids, reason, intro }
+          return { mode: obj.mode, roles: rids, reason, intro, needsPlan }
         }
       }
       if (obj.mode === 'council' && Array.isArray(obj.roles)) {
         const rids = obj.roles.filter((r): r is string => typeof r === 'string').map(roleIdFromName)
         if (rids.length >= 2 && rids.length <= 3 && rids.every((r) => enabled.includes(r))) {
-          return { mode: 'council', roles: rids, reason, intro }
+          return { mode: 'council', roles: rids, reason, intro, needsPlan }
         }
       }
       if (obj.mode === 'collaborate' && Array.isArray(obj.roles)) {
@@ -449,7 +454,7 @@ export function parseRouteDecision(raw: string, enabled: readonly string[]): Rou
         // other multi-expert modes. A non-agent role (designer/translator/…) can't run the collab loop, so
         // a decision naming one falls through to the lenient default below.
         if (rids.length >= 2 && rids.length <= 3 && rids.every((r) => enabled.includes(r) && agentService.AGENT_ROLE_IDS.has(r))) {
-          return { mode: 'collaborate', roles: rids, reason, intro }
+          return { mode: 'collaborate', roles: rids, reason, intro, needsPlan }
         }
       }
     } catch {
@@ -460,7 +465,26 @@ export function parseRouteDecision(raw: string, enabled: readonly string[]): Rou
   // dead-ends.
   const lower = trimmed.toLowerCase()
   const hit = enabled.find((r) => lower.includes(r) || lower.includes(displayName(r).toLowerCase()))
-  return { mode: 'single', role: hit ?? enabled[0] ?? 'generalist', reason: 'lenient parse' }
+  return { mode: 'single', role: hit ?? enabled[0] ?? 'generalist', reason: 'lenient parse', needsPlan: false }
+}
+
+function isNonTrivialTask(prompt: string): boolean {
+  const text = prompt.trim()
+  if (!text) return false
+  const lower = text.toLowerCase()
+  const trivialSignals = ['one-line', 'one line', 'typo', 'copy change', 'single file', 'small text']
+  const codingSignals = ['implement', 'build', 'refactor', 'migrate', 'backend', 'frontend', 'typecheck', 'test', 'architecture', 'dispatch flow', 'gate']
+  const lineCount = text.split(/\r?\n/).filter((l) => l.trim()).length
+  const fileMentions = text.match(/\b[\w./-]+\.(?:ts|tsx|js|jsx|go|py|rs|md)\b/g) ?? []
+  if (/\b(pipeline|collaborate|experts|flynn|shuri|backend\+frontend)\b/i.test(text)) return true
+  if (fileMentions.length >= 2 || lineCount > 3) return true
+  if (trivialSignals.some((s) => lower.includes(s)) && text.length < 220) return false
+  return codingSignals.some((s) => lower.includes(s)) && (text.length > 180 || /\b(across|plus|and then|fail loop|verify|gates?)\b/i.test(text))
+}
+
+function routeNeedsPlan(prompt: string, route: RouteDecision): boolean {
+  if (route.mode === 'direct') return false
+  return Boolean(route.needsPlan) || route.mode === 'pipeline' || route.mode === 'collaborate' || route.mode === 'council' || isNonTrivialTask(prompt)
 }
 
 // ------- Dispatch (per-role step) -------
@@ -576,7 +600,7 @@ async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputT
       onToolImage: (att) => cb.onToolImage?.(att), // a dispatched Georgia generated an image → surface it live
       // phase 4: coordinator self-approves via the safety classifier instead of popping the user (doc §8) —
       // green/yellow auto-run, red hard-denied + recorded for deferred approval.
-      requestPermission: (req) => Promise.resolve(coordinatorApproval(convId, roleId, cwd ?? '', req, cb))
+      requestPermission: (req) => Promise.resolve(coordinatorApproval(convId, roleId, cwd ?? '', req, cb, prompt))
     }
     const res = await agentService.runDispatchedAgent(
       {
@@ -704,13 +728,74 @@ async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputT
   return { text, inputTokens, outputTokens: result.usage.outTokens, endpointId: binding.endpointId, model: binding.model }
 }
 
+async function runGatedRoleStep(roleId: string, prompt: string, opts: RunStepOptions, gate: { enabled: boolean; originalPrompt: string; approvedPlan?: string }, signal?: AbortSignal): Promise<Awaited<ReturnType<typeof runRoleStep>>> {
+  const baseOpts: RunStepOptions = { ...opts, roleId, prompt, signal: signal ?? opts.signal }
+  if (!gate.enabled) return runRoleStep(baseOpts)
+
+  const planModeOpts: RunStepOptions = { ...baseOpts, permissionMode: 'plan' }
+  let result = await runRoleStep(planModeOpts)
+  gate.approvedPlan = result.text
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const verdict = await runVerifierStep(roleId, opts, gate, result.text, attempt, signal)
+    if (verdict.passed) return result
+    if (attempt === 2) throw new LlmError('bad_request', `Gate B verification failed after retry: ${verdict.feedback}`)
+    const fixPrompt = [
+      'Gate B independent verifier failed your implementation. Fix only the reported issues, do not broaden scope, then stop.',
+      `Verifier feedback:\n${verdict.feedback}`,
+      `Original task:\n${gate.originalPrompt}`,
+      gate.approvedPlan ? `Approved plan:\n${gate.approvedPlan}` : ''
+    ].filter(Boolean).join('\n\n')
+    result = await runRoleStep({ ...baseOpts, prompt: fixPrompt, includeHistory: true, permissionMode: opts.permissionMode })
+  }
+  return result
+}
+
+function chooseVerifierRole(implementerRoleId: string): string {
+  const candidates = ['analyst', 'engineer', 'generalist', 'coordinator'].filter((r) => r !== implementerRoleId)
+  return candidates.find((r) => rolesService.getBinding(r)?.endpointId) ?? candidates[0] ?? 'generalist'
+}
+
+async function runVerifierStep(implementerRoleId: string, opts: RunStepOptions, gate: { originalPrompt: string; approvedPlan?: string }, implementationText: string, attempt: number, signal?: AbortSignal): Promise<{ passed: boolean; feedback: string }> {
+  const verifierRoleId = chooseVerifierRole(implementerRoleId)
+  if (verifierRoleId === implementerRoleId) return { passed: false, feedback: 'Gate B rejected self-verification: verifier must be independent from implementer.' }
+  const toolId = `gate-b-verifier-${Date.now()}-${attempt}`
+  opts.cb.onToolEvent?.(implementerRoleId, { type: 'sub_tool_start', toolUseId: toolId, parentToolId: 'coordinator-gate-b', name: 'IndependentVerifier', input: { verifierRoleId, attempt } })
+  const verifierPrompt = [
+    'You are Gate B: an INDEPENDENT verifier. You are not the implementer and must not self-review.',
+    'Actually run the project checks exactly: npm run typecheck && npm run build.',
+    'Inspect the relevant diff/files as needed. If checks fail, return FAIL with exact failures and fixes needed. If green and the implementation matches the approved plan/task, return PASS.',
+    'Return a concise verdict line starting with PASS or FAIL, followed by evidence.',
+    `Original task:\n${gate.originalPrompt}`,
+    gate.approvedPlan ? `Approved plan:\n${gate.approvedPlan}` : '',
+    `Implementer role: ${implementerRoleId}`,
+    `Implementation summary:\n${implementationText}`
+  ].filter(Boolean).join('\n\n')
+  const verifier = await runRoleStep({
+    ...opts,
+    roleId: verifierRoleId,
+    prompt: verifierPrompt,
+    dispatch: [...(opts.dispatch ?? []), verifierRoleId],
+    permissionMode: 'default',
+    includeHistory: false,
+    signal: signal ?? opts.signal
+  })
+  const text = verifier.text.trim()
+  const passed = /^\s*PASS\b/i.test(text) && !/^\s*FAIL\b/i.test(text)
+  opts.cb.onToolEvent?.(implementerRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: 'coordinator-gate-b', name: 'IndependentVerifier', isError: !passed, result: text })
+  return { passed, feedback: text || 'Verifier returned no verdict.' }
+}
+
 // Coordinator's unattended approval (doc 19 §8). Safety policy = the rule classifier (red is a hard floor:
 // delete / privilege / network egress / out-of-cwd / dangerous commands). green + yellow auto-approve so
 // the team isn't blocked on every read/write; red HARD-DENIES + records a PendingApproval the user can
 // approve later (deferred approval) — the agent is told and moves on, never hangs. The LLM judgment doc
 // §8/§131 calls for lands at replay time (coordinator re-checks the action still applies before re-running),
 // not on every tool call — keeping unattended runs fast. 4b: yellow logs a chat note; red posts an alert.
-function coordinatorApproval(convId: string, roleId: string, cwd: string, req: PermissionRequest, cb: CoordinatorCallbacks): PermissionDecision {
+async function coordinatorApproval(convId: string, roleId: string, cwd: string, req: PermissionRequest, cb: CoordinatorCallbacks, taskPrompt = ''): Promise<PermissionDecision> {
+  if (req.toolName === 'ExitPlanMode') {
+    return reviewExitPlanMode(convId, roleId, req, cb, taskPrompt)
+  }
   const v = classifyApproval(req.toolName, req.input, cwd)
   if (v.zone === 'red') {
     const p = pendingRepo.create({ convId, roleId, toolName: req.toolName, toolInput: req.input, cwd, reason: v.reason })
@@ -719,6 +804,53 @@ function coordinatorApproval(convId: string, roleId: string, cwd: string, req: P
   }
   if (v.zone === 'yellow') cb.onApproval?.({ roleId, zone: 'yellow', toolName: req.toolName, reason: v.reason })
   return { allow: true }
+}
+
+async function reviewExitPlanMode(convId: string, planAuthorRoleId: string, req: PermissionRequest, cb: CoordinatorCallbacks, taskPrompt: string): Promise<PermissionDecision> {
+  const reviewerRoleId = 'coordinator'
+  const toolId = `gate-a-plan-review-${Date.now()}`
+  cb.onToolEvent?.(planAuthorRoleId, { type: 'sub_tool_start', toolUseId: toolId, parentToolId: 'coordinator-gate-a', name: 'DannyPlanReview', input: req.input as Record<string, unknown> })
+  if (planAuthorRoleId === reviewerRoleId) {
+    const feedback = 'Gate A rejected self-review: reviewer must be independent from the plan author.'
+    cb.onToolEvent?.(planAuthorRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: 'coordinator-gate-a', name: 'DannyPlanReview', isError: true, result: feedback })
+    return { allow: false, message: feedback }
+  }
+  const binding = rolesService.getBinding(reviewerRoleId)
+  if (!binding?.endpointId || !binding.model) return { allow: false, message: 'Gate A blocked: Danny has no model binding for independent plan review.' }
+  const ep = endpointRepo.getById(binding.endpointId)
+  if (!ep?.enabled) return { allow: false, message: 'Gate A blocked: Danny endpoint is disabled.' }
+  const apiKey = keychain.getApiKey(binding.endpointId)
+  if (!apiKey) return { allow: false, message: 'Gate A blocked: Danny endpoint API key is unavailable.' }
+
+  const reviewInput = [
+    `Task:\n${taskPrompt}`,
+    `Plan author role: ${planAuthorRoleId}`,
+    `ExitPlanMode submission JSON:\n${JSON.stringify(req.input, null, 2)}`,
+    'Remember: bypass is not approval. You are the independent adversarial reviewer.'
+  ].join('\n\n')
+  const result = await llmChat(
+    {
+      protocol: ep.protocol,
+      baseUrl: ep.baseUrl,
+      apiKey,
+      model: binding.model,
+      messages: [{ role: 'system', content: COORDINATOR_PLAN_REVIEW_PROMPT }, { role: 'user', content: reviewInput }],
+      cacheEnabled: ep.cacheEnabled,
+      signal: undefined
+    },
+    () => {}
+  )
+  let verdict: 'APPROVE' | 'REVISE' = /\bAPPROVE\b/i.test(result.text) && !/\bREVISE\b/i.test(result.text) ? 'APPROVE' : 'REVISE'
+  let feedback = result.text.trim()
+  try {
+    const parsed = JSON.parse(result.text) as { verdict?: string; feedback?: string }
+    verdict = parsed.verdict === 'APPROVE' ? 'APPROVE' : 'REVISE'
+    feedback = typeof parsed.feedback === 'string' && parsed.feedback.trim() ? parsed.feedback.trim() : feedback
+  } catch {
+    // tolerate non-JSON model output; default to REVISE unless it cleanly says APPROVE.
+  }
+  cb.onToolEvent?.(planAuthorRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: 'coordinator-gate-a', name: 'DannyPlanReview', isError: verdict !== 'APPROVE', result: `${verdict}: ${feedback}` })
+  return verdict === 'APPROVE' ? { allow: true } : { allow: false, message: `Danny plan review requested revision: ${feedback}` }
 }
 
 // Run a collaboration (collaborate mode — doc 19 §5): resolve each agent expert's binding, hand them all
@@ -792,7 +924,7 @@ async function runCollaboration(
     // auto-run (yellow worth surfacing), red hard-denied + recorded for the user to approve later. cwd is the
     // requesting expert's own (red-zone replay needs it).
     requestPermission: (roleId, req) =>
-      Promise.resolve(coordinatorApproval(input.convId, roleId, experts.find((e) => e.roleId === roleId)?.cwd ?? '', req, cb))
+      coordinatorApproval(input.convId, roleId, experts.find((e) => e.roleId === roleId)?.cwd ?? '', req, cb, input.prompt)
   }
   const results = await agentService.runCollabSession(input.convId, experts, hooks, signal, () => Date.now())
 
