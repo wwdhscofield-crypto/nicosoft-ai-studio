@@ -115,15 +115,19 @@ export interface AgentTextDelta {
 //   • 'live' — the REAL CUMULATIVE usage streamed per chunk where the provider reports it (anthropic's
 //     message_delta, gemini's usageMetadata): inputTokens climbs across a long agent turn (it sums every
 //     upstream request's prompt), outputTokens is the running output. Drives the live ↑/↓ readout ONLY.
+//   • 'turn-final' — exactly-once final provider usage for one LLM request. The renderer accumulates these
+//     into session totals; streaming 'live' pings must never be accumulated.
 // Keeping them separate is essential: the cumulative 'live' input can reach millions over a long
 // multi-request turn — feeding it into the context indicator would make it read 4M/1M (the BUG-1 symptom).
 // outputTokens is omitted on the initial / between-turns input-only ping (the renderer keeps the last real
 // output then); OpenAI, which only reports usage at the end, lands it once at done.
 export interface ConvUsage {
   convId: string
-  kind: 'context' | 'live'
+  kind: 'context' | 'live' | 'turn-final'
   inputTokens: number
   outputTokens?: number
+  cacheReadInputTokens?: number
+  cacheCreationInputTokens?: number
 }
 // A generated image surfaced live from an in-flight agent turn, keyed by convId (like ConvUsage). An agent
 // tool (ns_generate_image, code_execution charts, view_image) returned an image; the loop persisted it to

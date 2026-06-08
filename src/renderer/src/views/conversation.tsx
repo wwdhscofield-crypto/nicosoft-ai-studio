@@ -521,16 +521,17 @@ export function ChatView({ expert, onOpenSettings, onBackToProject }: { expert: 
   const { byId: expertById } = useAllExperts()
   const activeConv = chat.activeConv
   const messages = activeConv ? (chat.byConversation[activeConv] ?? []) : []
-  // Live ↑/↓ readout reads the REAL CUMULATIVE usage (liveInput/liveOutput) streamed during the turn — NOT
-  // contextTokens (the current-context "/ window" measure). Conflating them made ↑ here show the window
-  // ratio's numerator (millions over a long agent turn). Until the first live ping lands, fall back to the
-  // current context (contextTokens) so ↑ is visible immediately instead of blank — providers that report
-  // usage late (Gemini) would otherwise show no ↑ for the first chunks. The composer's "/ window" indicator
-  // reads contextTokens directly and is unaffected by this fallback (see Composer.usedTokens).
+  // Live ↑/↓ readout is cache-aware and avoids double-counting:
+  //   • session* totals accumulate only exactly-once turn-final usage.
+  //   • liveInput/liveOutput are the current request overlay from streaming pings and only overwrite.
+  //   • contextTokens is only a pre-usage fallback so the readout is visible before providers report usage.
   const liveIn = activeConv ? (chat.liveInput[activeConv] ?? 0) : 0
+  const liveOut = activeConv ? (chat.liveOutput[activeConv] ?? 0) : 0
   const ctxIn = activeConv ? (chat.contextTokens[activeConv] ?? 0) : 0
-  const baseIn = liveIn || ctxIn
-  const baseOut = activeConv ? (chat.liveOutput[activeConv] ?? 0) : 0
+  const sessionOut = activeConv ? (chat.sessionOutput[activeConv] ?? 0) : 0
+  const sessionFresh = activeConv ? (chat.sessionInputFresh[activeConv] ?? 0) : 0
+  const baseIn = sessionFresh + liveIn || ctxIn
+  const baseOut = sessionOut + liveOut
   const convStreaming = activeConv ? (chat.streaming[activeConv] ?? false) : false
   const retry = activeConv ? chat.retry[activeConv] : null
   const error = activeConv ? chat.error[activeConv] : null

@@ -128,7 +128,7 @@ interface GeminiPart {
 }
 interface GeminiChunk {
   candidates?: { content?: { parts?: GeminiPart[] } }[]
-  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number }
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; cachedContentTokenCount?: number }
 }
 
 // Concatenate all part texts across candidates in one chunk.
@@ -160,6 +160,7 @@ export const chatGemini: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Pr
   let text = ''
   let inTokens = 0
   let outTokens = 0
+  let cacheReadTokens = 0
   const toolCalls: ToolCall[] = []
 
   try {
@@ -189,6 +190,7 @@ export const chatGemini: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Pr
         // the live readout shows REAL ↑input + ↓output together during the turn.
         if (typeof u.promptTokenCount === 'number' && u.promptTokenCount > 0) inTokens = u.promptTokenCount
         if (typeof u.candidatesTokenCount === 'number' && u.candidatesTokenCount > 0) outTokens = u.candidatesTokenCount
+        if (typeof u.cachedContentTokenCount === 'number' && u.cachedContentTokenCount > 0) cacheReadTokens = u.cachedContentTokenCount
         onDelta({ usage: { inTokens, outTokens } })
       }
     }
@@ -196,5 +198,6 @@ export const chatGemini: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Pr
     throw toLlmError(PROVIDER, err)
   }
 
-  return { text, usage: { inTokens, outTokens }, model: req.model, ...(toolCalls.length ? { toolCalls } : {}) }
+  onDelta({ turnFinalUsage: { inTokens, outTokens, cacheReadTokens, cacheCreationTokens: 0 } })
+  return { text, usage: { inTokens, outTokens, cacheReadTokens }, model: req.model, ...(toolCalls.length ? { toolCalls } : {}) }
 }

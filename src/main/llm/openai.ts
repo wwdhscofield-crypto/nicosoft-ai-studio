@@ -113,11 +113,12 @@ export const chatOpenAI: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Pr
   let text = ''
   let inTokens = 0
   let outTokens = 0
+  let cacheReadTokens = 0
 
   try {
     for await (const payload of iterSSE(reader)) {
       const ev = parseJSON(payload) as
-        | { type?: string; delta?: string; response?: { usage?: { input_tokens?: number; output_tokens?: number } } }
+        | { type?: string; delta?: string; response?: { usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number } } } }
         | null
       if (!ev || typeof ev.type !== 'string') continue
       if (ev.type === 'response.output_text.delta') {
@@ -130,6 +131,7 @@ export const chatOpenAI: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Pr
         if (u) {
           inTokens = u.input_tokens ?? 0
           outTokens = u.output_tokens ?? 0
+          cacheReadTokens = u.input_tokens_details?.cached_tokens ?? 0
           onDelta({ usage: { inTokens, outTokens } }) // OpenAI reports usage only at the end — one correction
         }
       }
@@ -138,5 +140,6 @@ export const chatOpenAI: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Pr
     throw toLlmError(PROVIDER, err)
   }
 
-  return { text, usage: { inTokens, outTokens }, model: req.model }
+  onDelta({ turnFinalUsage: { inTokens, outTokens, cacheReadTokens, cacheCreationTokens: 0 } })
+  return { text, usage: { inTokens, outTokens, cacheReadTokens }, model: req.model }
 }

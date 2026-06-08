@@ -85,6 +85,7 @@ export interface CoordinatorCallbacks {
   onDelta: (roleId: string, text: string) => void
   onStepDone: (roleId: string, text: string, inputTokens: number, outputTokens?: number) => void
   onUsage?: (inputTokens: number, outputTokens?: number) => void // live ↑in + ↓out, streamed per chunk
+  onTurnFinalUsage?: (usage: { inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number }) => void
   // Agent-dispatched experts (engineer/shuri/generalist/analyst/scheduler/translator/editor/designer) run a
   // full tool-using loop — these surface its tool activity + approval prompts to the coordinator UI. Only the
   // coordinator-self synthesis/direct turn is tool-less and never fires them, so they're optional.
@@ -601,6 +602,8 @@ async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputT
           cb.onToolEvent?.(roleId, ev)
         } else if (ev.type === 'usage') {
           cb.onUsage?.(ev.inputTokens, ev.outputTokens) // forward the agent loop's live ↑in+↓out to the conv readout
+        } else if (ev.type === 'turn-final') {
+          cb.onTurnFinalUsage?.(ev.usage)
         }
       },
       onEvent: (ev) => cb.onToolEvent?.(roleId, ev),
@@ -713,6 +716,14 @@ async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputT
         cb.onDelta(roleId, d.text)
       }
       if (d.usage) cb.onUsage?.(d.usage.inTokens, d.usage.outTokens) // live ↑in+↓out for tool-less steps too
+      if (d.turnFinalUsage) {
+        cb.onTurnFinalUsage?.({
+          inputTokens: d.turnFinalUsage.inTokens,
+          outputTokens: d.turnFinalUsage.outTokens,
+          cacheReadInputTokens: d.turnFinalUsage.cacheReadTokens,
+          cacheCreationInputTokens: d.turnFinalUsage.cacheCreationTokens,
+        })
+      }
     }
   )
   // result.text is authoritative — onDelta accumulator is a partial preview.
@@ -926,6 +937,8 @@ async function runCollaboration(
     onExpertStream: (roleId, ev) => {
       if (ev.type === 'text') cb.onDelta(roleId, ev.delta)
       else if (ev.type === 'tool_use_start') cb.onToolStart?.(roleId, ev.id, ev.name)
+      else if (ev.type === 'usage') cb.onUsage?.(ev.inputTokens, ev.outputTokens)
+      else if (ev.type === 'turn-final') cb.onTurnFinalUsage?.(ev.usage)
     },
     onExpertEvent: (roleId, ev) => {
       // Tool-card timeline (doc 19): persist each expert tool call onto the project as it streams, so the

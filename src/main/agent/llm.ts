@@ -60,6 +60,14 @@ export type AgentLlmEvent =
   | { type: 'sub_tool_start'; parentToolId: string; toolUseId: string; name: string; input?: Record<string, unknown>; subAgentId?: string }
   | { type: 'sub_tool_done'; parentToolId: string; toolUseId: string; name: string; result?: unknown; isError?: boolean; subAgentId?: string }
   | { type: 'usage'; inputTokens: number; outputTokens: number } // cumulative REAL usage, streamed live per chunk
+  | { type: 'turn-final'; usage: FinalUsage } // exactly-once final usage for accumulation
+
+export interface FinalUsage {
+  inputTokens: number
+  outputTokens: number
+  cacheReadInputTokens: number
+  cacheCreationInputTokens: number
+}
 
 interface StreamEvent {
   type: string
@@ -256,6 +264,16 @@ async function* callWithToolsAnthropic(
     else if (b.type === 'tool_use') content.push({ type: 'tool_use', id: b.id, name: b.name, input: b.input ?? {} })
     else content.push(b.raw as ServerBlock)
   }
+  onEvent?.({
+    type: 'turn-final',
+    usage: {
+      inputTokens: inTokens + cacheReadTokens + cacheCreationTokens,
+      outputTokens: outTokens,
+      cacheReadInputTokens: cacheReadTokens,
+      cacheCreationInputTokens: cacheCreationTokens,
+    },
+  })
+
   return { content, stopReason, usage: { inTokens, outTokens, cacheReadTokens, cacheCreationTokens } }
 }
 

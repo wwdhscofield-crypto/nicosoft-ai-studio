@@ -72,6 +72,8 @@ export interface ChatRequest {
 export interface ChatUsage {
   inTokens: number
   outTokens: number
+  cacheReadTokens?: number
+  cacheCreationTokens?: number
 }
 
 export interface ChatResult {
@@ -113,7 +115,11 @@ export interface ToolResult {
 // Streaming delta callback — invoked per chunk: text to append, and/or cumulative REAL usage (input+output)
 // when the provider reports it live per chunk (gemini usageMetadata, anthropic message_delta), so the live
 // readout can show both ↑in and ↓out together during the turn instead of an estimate.
-export type OnDelta = (delta: { text?: string; usage?: { inTokens: number; outTokens: number } }) => void
+export type OnDelta = (delta: {
+  text?: string
+  usage?: { inTokens: number; outTokens: number }
+  turnFinalUsage?: { inTokens: number; outTokens: number; cacheReadTokens: number; cacheCreationTokens: number }
+}) => void
 
 // Every adapter implements this exact shape.
 export type ChatFn = (req: ChatRequest, onDelta: OnDelta) => Promise<ChatResult>

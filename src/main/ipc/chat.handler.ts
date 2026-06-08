@@ -31,6 +31,16 @@ export function registerChatHandlers(): void {
           // the live ↑/↓ readout). The presence of outputTokens distinguishes them.
           onUsage: (inputTokens, outputTokens) =>
             broadcastUsage(sender, input.convId, outputTokens === undefined ? 'context' : 'live', inputTokens, outputTokens),
+          onTurnFinalUsage: (usage) =>
+            broadcastUsage(
+              sender,
+              input.convId,
+              'turn-final',
+              usage.inputTokens,
+              usage.outputTokens,
+              usage.cacheReadInputTokens,
+              usage.cacheCreationInputTokens,
+            ),
           onRetry: (info) => {
             if (!sender.isDestroyed()) sender.send('chat:retry', { streamId, ...info })
           }

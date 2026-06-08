@@ -1,5 +1,5 @@
 // Single place every IPC path (chat / agent / coordinator / image) reports per-conversation usage from.
-// Two `kind`s flow through here (see ConvUsage):
+// Three `kind`s flow through here (see ConvUsage):
 //   • 'context' — the current context size (count_tokens of the turn being sent), measured up front per
 //     turn → drives the composer's "/ window" indicator.
 //   • 'live' — the real CUMULATIVE ↑input/↓output streamed per chunk → drives the live ↑/↓ readout only.
@@ -9,11 +9,23 @@
 import type { WebContents } from 'electron'
 import type { ConvUsage, MessageAttachmentDto } from './contracts'
 
-export function broadcastUsage(sender: WebContents, convId: string, kind: 'context' | 'live', inputTokens: number, outputTokens?: number): void {
+export function broadcastUsage(
+  sender: WebContents,
+  convId: string,
+  kind: ConvUsage['kind'],
+  inputTokens: number,
+  outputTokens?: number,
+  cacheReadInputTokens?: number,
+  cacheCreationInputTokens?: number,
+): void {
   if (sender.isDestroyed()) return
   // outputTokens omitted (input-only ping: the up-front 'context' count, or a 'live' ping that carried no
-  // output yet) → the renderer keeps the last real output; provided → it updates both.
-  const ev: ConvUsage = outputTokens === undefined ? { convId, kind, inputTokens } : { convId, kind, inputTokens, outputTokens }
+  // output yet) → the renderer keeps the last real output; provided → it updates both. turn-final carries
+  // cache details so the renderer can accumulate a cache-aware session total exactly once per request.
+  const ev: ConvUsage = { convId, kind, inputTokens }
+  if (outputTokens !== undefined) ev.outputTokens = outputTokens
+  if (cacheReadInputTokens !== undefined) ev.cacheReadInputTokens = cacheReadInputTokens
+  if (cacheCreationInputTokens !== undefined) ev.cacheCreationInputTokens = cacheCreationInputTokens
   sender.send('conv:usage', ev)
 }
 

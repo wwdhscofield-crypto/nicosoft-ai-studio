@@ -161,6 +161,8 @@ export const chatAnthropic: ChatFn = async (req: ChatRequest, onDelta: OnDelta):
   let text = ''
   let inTokens = 0
   let outTokens = 0
+  let cacheReadTokens = 0
+  let cacheCreationTokens = 0
 
   try {
     for await (const payload of iterSSE(reader)) {
@@ -178,10 +180,9 @@ export const chatAnthropic: ChatFn = async (req: ChatRequest, onDelta: OnDelta):
         // cache_read/cache_creation. Sum all three so inTokens reflects the full prompt actually sent
         // (else cache-heavy turns — e.g. collab doers — report a misleadingly tiny ↑).
         if (u) {
-          inTokens =
-            (u.input_tokens ?? 0) +
-            (u.cache_read_input_tokens ?? 0) +
-            (u.cache_creation_input_tokens ?? 0)
+          cacheReadTokens = u.cache_read_input_tokens ?? 0
+          cacheCreationTokens = u.cache_creation_input_tokens ?? 0
+          inTokens = (u.input_tokens ?? 0) + cacheReadTokens + cacheCreationTokens
         }
         if (u && typeof u.output_tokens === 'number') outTokens = u.output_tokens
         onDelta({ usage: { inTokens, outTokens } }) // live ↑in (real, incl. cache) from the very first event
@@ -196,5 +197,6 @@ export const chatAnthropic: ChatFn = async (req: ChatRequest, onDelta: OnDelta):
     throw toLlmError(PROVIDER, err)
   }
 
-  return { text, usage: { inTokens, outTokens }, model: req.model }
+  onDelta({ turnFinalUsage: { inTokens, outTokens, cacheReadTokens, cacheCreationTokens } })
+  return { text, usage: { inTokens, outTokens, cacheReadTokens, cacheCreationTokens }, model: req.model }
 }

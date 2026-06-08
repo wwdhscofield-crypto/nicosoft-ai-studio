@@ -91,6 +91,16 @@ export function registerCoordinatorHandlers(): void {
           // outputTokens distinguishes the current-context ping from the cumulative live one.
           onUsage: (inputTokens, outputTokens) =>
             broadcastUsage(sender, input.convId, outputTokens === undefined ? 'context' : 'live', inputTokens, outputTokens),
+          onTurnFinalUsage: (usage) =>
+            broadcastUsage(
+              sender,
+              input.convId,
+              'turn-final',
+              usage.inputTokens,
+              usage.outputTokens,
+              usage.cacheReadInputTokens,
+              usage.cacheCreationInputTokens,
+            ),
           onToolImage: (attachment) => broadcastConvImage(sender, input.convId, attachment),
           // Agent-dispatched experts run a tool-using loop — forward their tool activity + approvals,
           // tagged with roleId, to the coordinator UI (doc 19 §11 phase 2). Mirrors agent.handler's bridge.

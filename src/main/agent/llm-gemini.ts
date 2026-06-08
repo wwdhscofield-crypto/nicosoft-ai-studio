@@ -118,7 +118,7 @@ export function toGeminiTools(schemas: AnyToolSchema[]): unknown[] {
 
 interface GeminiChunk {
   candidates?: { content?: { parts?: GeminiPart[] } }[]
-  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number }
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; cachedContentTokenCount?: number }
 }
 
 export async function* callWithToolsGemini(
@@ -143,6 +143,7 @@ export async function* callWithToolsGemini(
   let textAcc = ''
   let inTokens = 0
   let outTokens = 0
+  let cacheReadTokens = 0
 
   const guard = streamIdleGuard(req.signal, LLM_STREAM_IDLE_MS)
   try {
@@ -179,6 +180,7 @@ export async function* callWithToolsGemini(
         // REAL ↑input + ↓output during the turn (gemini reports both every chunk), not a chars/4 estimate.
         if (typeof u.promptTokenCount === 'number' && u.promptTokenCount > 0) inTokens = u.promptTokenCount
         if (typeof u.candidatesTokenCount === 'number' && u.candidatesTokenCount > 0) outTokens = u.candidatesTokenCount
+        if (typeof u.cachedContentTokenCount === 'number' && u.cachedContentTokenCount > 0) cacheReadTokens = u.cachedContentTokenCount
         onEvent?.({ type: 'usage', inputTokens: inTokens, outputTokens: outTokens })
       }
     }
@@ -193,5 +195,14 @@ export async function* callWithToolsGemini(
   if (textAcc) content.unshift({ type: 'text', text: textAcc })
   const hasToolUse = content.some((b) => b.type === 'tool_use')
   const stopReason: StopReason = hasToolUse ? 'tool_use' : 'end_turn'
-  return { content, stopReason, usage: { inTokens, outTokens } }
+  onEvent?.({
+    type: 'turn-final',
+    usage: {
+      inputTokens: inTokens,
+      outputTokens: outTokens,
+      cacheReadInputTokens: cacheReadTokens,
+      cacheCreationInputTokens: 0,
+    },
+  })
+  return { content, stopReason, usage: { inTokens, outTokens, cacheReadTokens } }
 }

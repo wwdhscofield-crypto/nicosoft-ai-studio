@@ -71,6 +71,17 @@ export function registerAgentHandlers(): void {
             // Streaming usage is CUMULATIVE (sums every upstream request this turn) → 'live' readout only,
             // never the context indicator.
             else if (ev.type === 'usage') broadcastUsage(sender, input.convId, 'live', ev.inputTokens, ev.outputTokens)
+            else if (ev.type === 'turn-final') {
+              broadcastUsage(
+                sender,
+                input.convId,
+                'turn-final',
+                ev.usage.inputTokens,
+                ev.usage.outputTokens,
+                ev.usage.cacheReadInputTokens,
+                ev.usage.cacheCreationInputTokens,
+              )
+            }
           },
           onRetry: (info) => send('agent:retry', { streamId, ...info }),
           onEvent: (ev) => {

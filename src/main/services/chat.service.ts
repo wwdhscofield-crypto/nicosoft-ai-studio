@@ -22,6 +22,7 @@ export async function send(
   cb: {
     onDelta: (text: string) => void
     onUsage?: (inputTokens: number, outputTokens?: number) => void
+    onTurnFinalUsage?: (usage: { inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number }) => void
     onRetry?: (info: { attempt: number; max: number; code: string; waitMs: number }) => void
   },
   signal?: AbortSignal
@@ -75,6 +76,14 @@ export async function send(
             cb.onDelta(d.text)
           }
           if (d.usage) cb.onUsage?.(d.usage.inTokens, d.usage.outTokens)
+          if (d.turnFinalUsage) {
+            cb.onTurnFinalUsage?.({
+              inputTokens: d.turnFinalUsage.inTokens,
+              outputTokens: d.turnFinalUsage.outTokens,
+              cacheReadInputTokens: d.turnFinalUsage.cacheReadTokens,
+              cacheCreationInputTokens: d.turnFinalUsage.cacheCreationTokens,
+            })
+          }
         }
       )
       usageRepo.record({

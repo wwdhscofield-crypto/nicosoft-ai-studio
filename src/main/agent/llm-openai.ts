@@ -119,7 +119,7 @@ interface RespEvent {
   delta?: string
   item_id?: string
   item?: { type?: string; id?: string; call_id?: string; name?: string; arguments?: string; content?: unknown; [k: string]: unknown }
-  response?: { usage?: { input_tokens?: number; output_tokens?: number } }
+  response?: { usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number } } }
 }
 
 function stablePromptCacheKey(req: AgentLlmRequest): string {
@@ -156,6 +156,7 @@ export async function* callWithToolsOpenAI(
   const texts = new Map<string, string>() // item_id → accumulated output_text
   let inTokens = 0
   let outTokens = 0
+  let cacheReadTokens = 0
 
   // Idle-timeout: the fetch has no per-request timeout, so a hung upstream would wedge the loop forever.
   // Arm before opening (covers a hang before the first byte) + reset on every payload; dispose in finally.
@@ -233,6 +234,7 @@ export async function* callWithToolsOpenAI(
           if (u) {
             inTokens = u.input_tokens ?? 0
             outTokens = u.output_tokens ?? 0
+            cacheReadTokens = u.input_tokens_details?.cached_tokens ?? 0
             // OpenAI reports usage only at the end (no per-delta counts), so this is a single end-of-turn
             // correction; the live readout estimates ↓ until it lands.
             onEvent?.({ type: 'usage', inputTokens: inTokens, outputTokens: outTokens })
@@ -253,7 +255,16 @@ export async function* callWithToolsOpenAI(
   // best-effort mapping is enough.
   const hasToolUse = content.some((b) => b.type === 'tool_use')
   const stopReason: StopReason = hasToolUse ? 'tool_use' : 'end_turn'
-  return { content, stopReason, usage: { inTokens, outTokens } }
+  onEvent?.({
+    type: 'turn-final',
+    usage: {
+      inputTokens: inTokens,
+      outputTokens: outTokens,
+      cacheReadInputTokens: cacheReadTokens,
+      cacheCreationInputTokens: 0,
+    },
+  })
+  return { content, stopReason, usage: { inTokens, outTokens, cacheReadTokens } }
 }
 
 // Pull url_citation annotations off a message item — which web sources each part of the answer drew

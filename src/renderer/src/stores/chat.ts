@@ -125,8 +125,11 @@ interface ChatState {
   question: Record<string, QuestionPrompt | null> // per-conversation AskUserQuestion prompt
   approvals: Record<string, ApprovalCard[]> // per-conversation coordinator approval cards (yellow notes + red pending)
   contextTokens: Record<string, number> // per-conversation CURRENT context size (count_tokens of the last sent turn) — drives the composer "/ window" indicator
-  liveInput: Record<string, number> // per-conversation REAL CUMULATIVE input tokens, streamed live during a turn (↑ readout) — climbs across a long multi-request agent turn; NOT the context indicator
-  liveOutput: Record<string, number> // per-conversation REAL output tokens, streamed live during a turn (↓ readout)
+  liveInput: Record<string, number> // per-conversation REAL CUMULATIVE input tokens, streamed live during a turn (↑ readout) — overwritten by streaming pings; NOT accumulated
+  liveOutput: Record<string, number> // per-conversation REAL output tokens, streamed live during a turn (↓ readout) — overwritten by streaming pings; NOT accumulated
+  sessionOutput: Record<string, number> // per-conversation session output tokens accumulated from turn-final events only
+  sessionInputFresh: Record<string, number> // per-conversation fresh input tokens accumulated from turn-final events only
+  sessionCached: Record<string, number> // per-conversation cache-read + cache-creation input tokens accumulated from turn-final events only
   streamStartedAt: Record<string, number> // per-conversation epoch ms when the current turn started; read only while streaming (Overview "In progress" elapsed). Overwritten each send, left stale after (never read when not streaming)
   retry: Record<string, { attempt: number; max: number; since: number } | null> // per-conversation transient-failure retry status ("retrying (N/M)"); null/absent when not retrying
   loadConversations: () => Promise<void>
@@ -566,23 +569,37 @@ export const useChat = create<ChatState>((set, get) => {
         }
       }))
     })
-    // Per-conversation usage, broadcast by EVERY path (chat / agent / coordinator / image). Two kinds ride
-    // this channel and must NOT be conflated (see ConvUsage / BUG 1):
+    // Per-conversation usage, broadcast by EVERY path (chat / agent / coordinator / image). Three kinds ride
+    // this channel and must NOT be conflated (see ConvUsage / token accumulation spec):
     //   • 'context' — the CURRENT context size (count_tokens of the turn being sent), measured up front per
     //     turn → contextTokens, which the composer's "/ window" indicator reads. Roughly constant per turn,
     //     bounded by the model window.
     //   • 'live'    — the REAL CUMULATIVE ↑input/↓output streamed per chunk → liveInput / liveOutput, which
-    //     feed the live ↑/↓ readout only. liveInput climbs without bound across a long multi-request agent
-    //     turn; routing it into contextTokens is exactly what made the indicator read 4M/1M.
+    //     feed the current live overlay only. Streaming pings OVERWRITE within-request and must never accumulate.
+    //   • 'turn-final' — exactly-once final usage for a single LLM request → session accumulators.
     window.api.onConvUsage((d) => {
       if (d.kind === 'context') {
         set((s) => ({ contextTokens: { ...s.contextTokens, [d.convId]: d.inputTokens } }))
-      } else {
+      } else if (d.kind === 'live') {
         set((s) => ({
           liveInput: { ...s.liveInput, [d.convId]: d.inputTokens },
           // Real output only rides the streaming pings that carry it; one without output keeps the last value
           // so ↓ stays visible next to ↑ across the whole turn instead of flickering to an estimate.
           liveOutput: typeof d.outputTokens === 'number' ? { ...s.liveOutput, [d.convId]: d.outputTokens } : s.liveOutput
+        }))
+      } else if (d.kind === 'turn-final') {
+        const cacheRead = Math.max(0, d.cacheReadInputTokens ?? 0)
+        const cacheCreation = Math.max(0, d.cacheCreationInputTokens ?? 0)
+        const cached = cacheRead + cacheCreation
+        const fresh = Math.max(0, d.inputTokens - cached)
+        set((s) => ({
+          sessionOutput: { ...s.sessionOutput, [d.convId]: (s.sessionOutput[d.convId] ?? 0) + (d.outputTokens ?? 0) },
+          sessionInputFresh: { ...s.sessionInputFresh, [d.convId]: (s.sessionInputFresh[d.convId] ?? 0) + fresh },
+          sessionCached: { ...s.sessionCached, [d.convId]: (s.sessionCached[d.convId] ?? 0) + cached },
+          // This request is now booked into the session totals. Clear the live overlay so the readout does not
+          // show session + the same request's last streamed cumulative ping until the next request starts.
+          liveInput: { ...s.liveInput, [d.convId]: 0 },
+          liveOutput: { ...s.liveOutput, [d.convId]: 0 }
         }))
       }
     })
@@ -846,6 +863,9 @@ export const useChat = create<ChatState>((set, get) => {
     contextTokens: {},
     liveInput: {},
     liveOutput: {},
+    sessionOutput: {},
+    sessionInputFresh: {},
+    sessionCached: {},
     streamStartedAt: {},
     retry: {},
 
@@ -933,9 +953,10 @@ export const useChat = create<ChatState>((set, get) => {
           },
           streaming: { ...s.streaming, [cid]: true },
           streamStartedAt: { ...s.streamStartedAt, [cid]: Date.now() },
-          // Reset the live ↑/↓ readout for the new turn so it doesn't briefly show the PRIOR turn's final
-          // cumulative usage before the first live ping lands. contextTokens is left intact — it's the
-          // current-context seed for the "/ window" indicator and is overwritten by the turn's own count.
+          // Reset only the current live overlay for the new turn so it doesn't briefly show stale usage before
+          // the first live ping lands. Session totals stay intact and advance only on turn-final events.
+          // contextTokens is left intact — it's the current-context seed for the "/ window" indicator and is
+          // overwritten by the turn's own count.
           liveInput: { ...s.liveInput, [cid]: 0 },
           liveOutput: { ...s.liveOutput, [cid]: 0 },
           error: { ...s.error, [cid]: null }

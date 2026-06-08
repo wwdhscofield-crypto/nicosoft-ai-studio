@@ -316,6 +316,11 @@ export async function* runAgent(
     try {
       // Stream the turn: each tool_use block is yielded as it finishes, so execution starts
       // immediately (read-only tools batch in parallel) instead of waiting for the whole message.
+      const forwardLlmEvent: typeof params.onStream = (ev) => {
+        // Forward both streaming usage pings and exactly-once turn-final usage unchanged. Downstream
+        // services decide which channel overwrites live readout and which channel accumulates session totals.
+        params.onStream?.(ev)
+      }
       const gen = callWithTools(
         {
           protocol: params.protocol,
@@ -334,7 +339,7 @@ export async function* runAgent(
           thinking: params.thinking,
           signal: ctx.signal,
         },
-        params.onStream,
+        forwardLlmEvent,
       )
       for (;;) {
         const step = await gen.next()
