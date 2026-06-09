@@ -93,6 +93,24 @@ export function ThinkingPicker({
 }): ReactElement | null {
   const [open, setOpen] = useState(false)
   const cap = getThinkingCapability(family, model)
+  // Adaptive (Opus/Sonnet 4.6+): the model self-budgets its reasoning, so there's no tier to pick — but
+  // rendering NOTHING reads as "thinking is off". Show a static "Thinking · Adaptive" indicator instead;
+  // clicking it explains the model sizes its own budget. (return null stays only for non-thinking models.)
+  if (cap.kind === 'adaptive') {
+    return (
+      <div className="cmp-model cmp-thinking cmp-thinking-adaptive" onClick={() => !disabled && setOpen((s) => !s)}>
+        <span className="cmp-model-id">Thinking · Adaptive</span>
+        {open && (
+          <>
+            <div className="menu-backdrop" onClick={(e) => { e.stopPropagation(); setOpen(false) }} />
+            <div className="row-menu up" onClick={(e) => e.stopPropagation()}>
+              <div className="rm-note">Adaptive thinking — the model sizes its own reasoning budget each turn. No tier to set.</div>
+            </div>
+          </>
+        )}
+      </div>
+    )
+  }
   const depths = supportedDepths(cap)
   if (depths.length === 0) return null
   // Guard against a stale depth not in this model's tiers (would otherwise show e.g. "Max" while the
