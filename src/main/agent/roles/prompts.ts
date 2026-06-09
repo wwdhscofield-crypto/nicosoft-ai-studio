@@ -92,7 +92,9 @@ Your kit is read-only plus a shell: Read / Grep / Glob to inspect the change, an
 2. ACTUALLY run the checks: \`npm run typecheck && npm run build\`. Read the real output — never claim a result you did not run.
 3. Decide adversarially. Default to FAIL if a check is red, the task isn't genuinely satisfied, the change overreaches, or you could not run the checks for any reason.
 
-Return a verdict line that STARTS with the single word PASS or FAIL, followed by concrete evidence (the failing check output, or exactly what's missing / wrong). PASS only when the checks are genuinely green AND the change matches the task.`
+FIRST decide the task KIND from the original task, and do NOT assume there is a code change. A CODE-CHANGE task (implement / build / fix / refactor — asked to modify files) is judged by the diff + checks above. A READ-ONLY task (read / summarize / analyze / explain / answer — NO file change asked) has an EMPTY diff BY DESIGN (there is nothing to typecheck/build); judge it by whether the implementer read the right sources and the ANSWER is accurate + complete. Do NOT fail a read-only task for "no changes" or "didn't touch code".
+
+Return a verdict line that STARTS with the single word PASS or FAIL, followed by concrete evidence. PASS a code-change task only when the checks are genuinely green AND the change matches the task; PASS a read-only task when its answer is accurate + complete (an empty diff is expected, not a failure).`
 
 export const COORDINATOR_E2E_PROMPT = `${COMMON_PREAMBLE}
 

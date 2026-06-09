@@ -500,7 +500,7 @@ function buildRouterMessages(
   // Reinforce the JSON contract on the LAST user message — OAuth gateways (nicosoft/*, with
   // identity injection) may overwrite system prompts, so the routing instructions MUST also live in a
   // user message to survive. (Lesson from Batch 2.)
-  const reinforcer = `\n\n---\nRoute the above. Respond with ONLY a JSON object — no markdown, no explanation, no leading text. Include needsPlan true for non-trivial multi-file/build work and false for simple one-line tasks. Format:\n{"mode":"direct","reason":"<≤8 words>","needsPlan":false}\nor\n{"mode":"single","role":"<name>","intro":"<one sentence to the user>","reason":"<≤8 words>","needsPlan":<boolean>}\nor\n{"mode":"pipeline","roles":["<name>","<name>"],"intro":"<one sentence>","reason":"<≤8 words>","needsPlan":<boolean>}`
+  const reinforcer = `\n\n---\nRoute the above. Respond with ONLY a JSON object — no markdown, no explanation, no leading text. Include needsPlan true ONLY when the task asks to WRITE or CHANGE code (implement / build / fix / refactor, producing a diff worth verifying), and false for read-only work (read / summarize / analyze / explain / answer) and trivial edits, no matter how many files it touches. Format:\n{"mode":"direct","reason":"<≤8 words>","needsPlan":false}\nor\n{"mode":"single","role":"<name>","intro":"<one sentence to the user>","reason":"<≤8 words>","needsPlan":<boolean>}\nor\n{"mode":"pipeline","roles":["<name>","<name>"],"intro":"<one sentence>","reason":"<≤8 words>","needsPlan":<boolean>}`
   if (lastUserInHistory >= 0 && messages[lastUserInHistory].content === userInput) {
     messages[lastUserInHistory] = { ...messages[lastUserInHistory], content: userInput + reinforcer }
   } else {
@@ -574,7 +574,8 @@ function isNonTrivialTask(prompt: string): boolean {
   const codingSignals = ['implement', 'build', 'refactor', 'migrate', 'backend', 'frontend', 'typecheck', 'test', 'architecture', 'dispatch flow', 'gate']
   const lineCount = text.split(/\r?\n/).filter((l) => l.trim()).length
   const fileMentions = text.match(/\b[\w./-]+\.(?:ts|tsx|js|jsx|go|py|rs|md)\b/g) ?? []
-  if (/\b(pipeline|collaborate|experts|flynn|shuri|backend\+frontend)\b/i.test(text)) return true
+  // Role names / dispatch modes are deliberately NOT a signal — "let Flynn READ a file" is a read-only ask,
+  // not coding work. Only genuine non-trivial signals below (multiple files, many lines, coding verbs).
   if (fileMentions.length >= 2 || lineCount > 3) return true
   if (trivialSignals.some((s) => lower.includes(s)) && text.length < 220) return false
   return codingSignals.some((s) => lower.includes(s)) && (text.length > 180 || /\b(across|plus|and then|fail loop|verify|gates?)\b/i.test(text))
@@ -603,7 +604,12 @@ function detectE2EIntent(prompt: string): boolean {
 
 function routeNeedsPlan(prompt: string, route: RouteDecision): boolean {
   if (route.mode === 'direct') return false
-  return Boolean(route.needsPlan) || route.mode === 'pipeline' || route.mode === 'collaborate' || route.mode === 'council' || isNonTrivialTask(prompt)
+  // Danny (the router LLM) decides per task whether it needs plan + verification: code-change work → true;
+  // read-only / summarize / analyze → false. We do NOT hard-force it by dispatch mode or role-name keyword
+  // anymore — "let Flynn READ a file" is a read-only ask that mis-fired Gate B just because it said
+  // "pipeline" / "Flynn". The agent judges; the @mention / no-LLM fallback still uses isNonTrivialTask
+  // (which no longer keys off role names) as a structural estimate when there's no router decision to read.
+  return Boolean(route.needsPlan)
 }
 
 // ------- Dispatch (per-role step) -------
