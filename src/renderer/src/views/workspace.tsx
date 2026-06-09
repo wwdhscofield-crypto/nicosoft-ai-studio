@@ -7,13 +7,34 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { Icons } from '@/components/icons'
 import { ImageViewer, type ViewerImage } from '@/components/image-viewer'
-import { useChat } from '@/stores/chat'
+import { useChat, type ToolCall } from '@/stores/chat'
 import { useWorkspace } from '@/stores/workspace'
 import { toast } from '@/stores/toast'
 
 const basename = (p: string): string => p.split(/[\\/]/).pop() || p
 // Tools that CREATE/CHANGE a file on disk — only these count as "produced" (Read is excluded by design).
 const PRODUCE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'WritePdf'])
+// What the agent is doing RIGHT NOW, from the in-flight tool. input is {} at tool-start (the renderer gets
+// only id+name live — the full args land in the DB transcript after the tool finishes), so this leans on the
+// tool NAME; a file_path/pattern fills in when present. Keeps the read phase from looking idle.
+function activityLabel(t: ToolCall): string {
+  const p = (t.input ?? null) as { file_path?: string; pattern?: string; description?: string } | null
+  const file = p?.file_path ? ` ${basename(p.file_path)}` : ''
+  switch (t.name) {
+    case 'Read': return `Reading${file}`
+    case 'Write': return `Writing${file}`
+    case 'Edit':
+    case 'MultiEdit': return `Editing${file}`
+    case 'Bash': return p?.description || 'Running command'
+    case 'Grep': return p?.pattern ? `Searching: ${p.pattern}` : 'Searching'
+    case 'Glob': return 'Finding files'
+    case 'TodoWrite': return 'Updating tasks'
+    case 'WebFetch': return 'Fetching page'
+    case 'WebSearch': return 'Searching the web'
+    case 'Task': return p?.description ? `Sub-agent: ${p.description}` : 'Running sub-agent'
+    default: return t.name
+  }
+}
 // Agent TodoWrite statuses → the existing .task-status pill class + a readable label.
 const TASK: Record<string, { cls: string; label: string }> = {
   pending: { cls: 'todo', label: 'To do' },
@@ -43,6 +64,20 @@ export function WorkspaceDrawer({ onClose, activeConv }: { onClose: () => void; 
   const streaming = useChat((s) => (activeConv ? !!s.streaming[activeConv] : false))
   const conv = useChat((s) => s.conversations.find((c) => c.id === activeConv))
   const cwd = useWorkspace((s) => (conv?.primaryRoleId ? s.cwdByExpert[conv.primaryRoleId] : undefined))
+  // Current activity for the Workspace, shown the whole time a run streams so the read phase is never blank:
+  // the in-flight tool ("Reading", "Running command") when one is executing, else "Thinking" while the model
+  // generates between tool calls (which is most of the wall-clock — a tool fires for <1s, the reply takes
+  // seconds). Drawn from the LIVE message tree (chat store), not the DB transcript (which only lands after a
+  // tool finishes). Returns a stable string so the selector doesn't churn renders; null only when idle.
+  const activity = useChat((s) => {
+    if (!activeConv || !s.streaming[activeConv]) return null
+    const msgs = s.byConversation[activeConv] ?? []
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const tools = msgs[i].tools
+      if (tools) for (let j = tools.length - 1; j >= 0; j--) if (tools[j].status === 'running') return activityLabel(tools[j])
+    }
+    return 'Thinking'
+  })
 
   // media.save opens a native save dialog: a truthy path = saved, a falsy value = the user cancelled
   // (stay silent), a thrown error = a real failure.
@@ -112,6 +147,12 @@ export function WorkspaceDrawer({ onClose, activeConv }: { onClose: () => void; 
         </button>
       </div>
       <div className="ws-scroll">
+        {activity ? (
+          <div className="ws-activity">
+            <span className="ws-activity-dot" />
+            <span className="ws-activity-text">{activity}…</span>
+          </div>
+        ) : null}
         <div className="ws-section">
           <button className="ws-section-head" onClick={() => setCollapsed((c) => ({ ...c, files: !c.files }))}>
             <span className={'ws-chev' + (collapsed.files ? ' collapsed' : '')}><Icons.chevronDown size={11} /></span>
