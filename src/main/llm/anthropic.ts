@@ -43,7 +43,7 @@ interface MessagesBody {
   max_tokens: number
   stream: true
   system?: string | TextBlock[]
-  thinking?: { type: 'enabled'; budget_tokens: number }
+  thinking?: { type: 'enabled'; budget_tokens: number } | { type: 'adaptive' }
 }
 
 // Turn a single attachment into an Anthropic image block. data: URLs are split into base64 source;
@@ -119,12 +119,17 @@ function buildBody(req: ChatRequest): MessagesBody {
   }
   const system = toSystem(req.messages)
   if (system) body.system = system
-  // Extended thinking: budget_tokens must be < max_tokens, so lift max_tokens to leave room for the
-  // visible answer on top of the thinking allowance.
-  const budget = req.thinking?.budgetTokens
-  if (typeof budget === 'number' && budget > 0) {
-    body.thinking = { type: 'enabled', budget_tokens: budget }
-    body.max_tokens = budget + MAX_TOKENS
+  // Extended thinking. Adaptive (Opus/Sonnet 4.6+): the model self-budgets — send { type: 'adaptive' } with
+  // no token count (mirrors claude-code). Legacy budget: budget_tokens must be < max_tokens, so lift
+  // max_tokens to leave room for the visible answer on top of the thinking allowance.
+  if (req.thinking?.adaptive) {
+    body.thinking = { type: 'adaptive' }
+  } else {
+    const budget = req.thinking?.budgetTokens
+    if (typeof budget === 'number' && budget > 0) {
+      body.thinking = { type: 'enabled', budget_tokens: budget }
+      body.max_tokens = budget + MAX_TOKENS
+    }
   }
   if (req.cacheEnabled) applyAnthropicCacheControls(body)
   return body

@@ -49,14 +49,27 @@ function clamp(depth: Depth, supported: Depth[]): Depth | undefined {
   return supported.includes(depth) ? depth : supported[supported.length - 1]
 }
 
+// Opus 4.6+ / Sonnet 4.6+ are trained on adaptive thinking — the model self-budgets, so we hand it
+// { adaptive: true } and let it decide, instead of a fixed budget_tokens. Mirrors claude-code's
+// modelSupportsAdaptiveThinking (Opus/Sonnet 4.6+; Haiku never thinks adaptively).
+function supportsAdaptiveThinking(slug: string): boolean {
+  if (slug.includes('haiku')) return false
+  const m = /(opus|sonnet)-4[.\-](\d+)/.exec(slug) // claude-opus-4-8 / claude-sonnet-4.6
+  return m ? parseInt(m[2], 10) >= 6 : false
+}
+
 // Resolve a stored depth string into the directive sent to the model. undefined = no thinking (model can't
 // think, or depth unset). budgetTokens (Anthropic / Gemini 2.5) XOR effort (OpenAI / Gemini 3), never both.
 export function resolveDepth(protocol: string, slug: string, depth: string | null | undefined): ThinkingParam | undefined {
-  if (!depth) return undefined
   const s = (slug || '').toLowerCase()
+  // Anthropic 4.6+ thinks adaptively, ON by default — resolve to adaptive even when no depth tier is set
+  // (mirrors claude-code: these models run adaptive thinking and the budget tier does not apply to them).
+  if (protocol === 'anthropic' && supportsAdaptiveThinking(s)) return { adaptive: true }
+  if (!depth) return undefined
   const d = depth as Depth
 
   if (protocol === 'anthropic') {
+    // Older Claude (< 4.6): depth→budget table.
     const eff = clamp(d, anthropicDepths(s))
     const budget = eff ? ANTHROPIC_BUDGET[eff] : undefined
     return budget !== undefined ? { budgetTokens: budget } : undefined

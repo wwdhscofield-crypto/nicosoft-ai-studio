@@ -22,11 +22,13 @@ export type ThinkingCapability =
   | { kind: 'none' }
   | { kind: 'effort'; depths: ThinkingDepth[] }
   | { kind: 'budget'; mapping: Partial<Record<ThinkingDepth, number>> }
+  | { kind: 'adaptive' } // Anthropic 4.6+ — model self-budgets, no tier picker (claude-code adaptive thinking)
 
 // Resolved directive sent to the backend (mirrors llm/types ThinkingParam). Exactly one field set.
 export interface ThinkingParam {
   effort?: EffortLevel
   budgetTokens?: number
+  adaptive?: boolean // Anthropic 4.6+ adaptive thinking — model self-budgets, no token count / effort
 }
 
 export interface ThinkingOption {
@@ -88,6 +90,14 @@ function anthropicDepths(slug: string): ThinkingDepth[] {
   return tiers
 }
 
+// Opus 4.6+ / Sonnet 4.6+ are trained on adaptive thinking — the model self-budgets, so the UI offers no
+// tier and the backend sends { adaptive: true }. Mirrors claude-code modelSupportsAdaptiveThinking.
+function supportsAdaptiveThinking(slug: string): boolean {
+  if (slug.includes('haiku')) return false
+  const m = /(opus|sonnet)-4[.\-](\d+)/.exec(slug) // claude-opus-4-8 / claude-sonnet-4.6
+  return m ? parseInt(m[2], 10) >= 6 : false
+}
+
 function pickBudget(depths: ThinkingDepth[]): Partial<Record<ThinkingDepth, number>> {
   const out: Partial<Record<ThinkingDepth, number>> = {}
   for (const d of depths) {
@@ -105,6 +115,7 @@ export function getThinkingCapability(family: Family, slug: string): ThinkingCap
   const s = (slug || '').toLowerCase()
   if (!s) return { kind: 'none' }
   if (family === 'anthropic') {
+    if (supportsAdaptiveThinking(s)) return { kind: 'adaptive' } // 4.6+ self-budgets — no tier picker
     const depths = anthropicDepths(s)
     return depths.length === 0 ? { kind: 'none' } : { kind: 'budget', mapping: pickBudget(depths) }
   }
@@ -127,7 +138,7 @@ export function getThinkingCapability(family: Family, slug: string): ThinkingCap
 
 // Depths a model actually offers (for the picker). [] when it can't think.
 export function supportedDepths(cap: ThinkingCapability): ThinkingDepth[] {
-  if (cap.kind === 'none') return []
+  if (cap.kind === 'none' || cap.kind === 'adaptive') return [] // adaptive = no tier choice (model decides)
   if (cap.kind === 'effort') return cap.depths
   return (Object.keys(cap.mapping) as ThinkingDepth[]).filter((d) => cap.mapping[d] !== undefined)
 }
@@ -135,6 +146,7 @@ export function supportedDepths(cap: ThinkingCapability): ThinkingDepth[] {
 // Resolve a chosen depth into the backend directive. null when the model can't think.
 export function resolveThinking(cap: ThinkingCapability, depth: ThinkingDepth): ThinkingParam | null {
   if (cap.kind === 'none') return null
+  if (cap.kind === 'adaptive') return { adaptive: true } // model self-budgets; depth tier doesn't apply
   if (cap.kind === 'effort') {
     // 'max' is Anthropic-only — clamp it for effort models. Every other tier passes through (the
     // picker only ever offers depths the model supports).

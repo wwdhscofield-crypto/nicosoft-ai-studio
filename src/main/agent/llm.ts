@@ -48,7 +48,7 @@ interface AgentMessagesBody {
   messages: AgentMessage[]
   tools: AnyToolSchema[]
   stream: true
-  thinking?: { type: 'enabled'; budget_tokens: number }
+  thinking?: { type: 'enabled'; budget_tokens: number } | { type: 'adaptive' }
 }
 
 // Text/tool-call lifecycle events surfaced to the caller for UI progress (not the loop's data path —
@@ -141,11 +141,16 @@ async function* callWithToolsAnthropic(
     tools: req.tools,
     stream: true,
   }
-  // Extended thinking: budget_tokens must be < max_tokens; lift max_tokens to leave room for output.
-  const budget = req.thinking?.budgetTokens
-  if (typeof budget === 'number' && budget > 0) {
-    body.thinking = { type: 'enabled', budget_tokens: budget }
-    if (req.maxTokens <= budget) body.max_tokens = budget + req.maxTokens
+  // Extended thinking. Adaptive (Opus/Sonnet 4.6+): the model self-budgets — send { type: 'adaptive' } with
+  // no token count. Legacy budget: budget_tokens must be < max_tokens; lift max_tokens to leave room.
+  if (req.thinking?.adaptive) {
+    body.thinking = { type: 'adaptive' }
+  } else {
+    const budget = req.thinking?.budgetTokens
+    if (typeof budget === 'number' && budget > 0) {
+      body.thinking = { type: 'enabled', budget_tokens: budget }
+      if (req.maxTokens <= budget) body.max_tokens = budget + req.maxTokens
+    }
   }
   if (req.cacheEnabled) applyAnthropicCacheControls(body)
   const blocks: (Accum | undefined)[] = []

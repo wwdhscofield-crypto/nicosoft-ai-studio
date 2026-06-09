@@ -51,6 +51,9 @@ export interface ChatMessage {
 export interface ThinkingParam {
   effort?: 'minimal' | 'none' | 'low' | 'medium' | 'high' | 'xhigh'
   budgetTokens?: number
+  // Anthropic adaptive thinking (Opus/Sonnet 4.6+): the model self-budgets — no token count, no effort.
+  // Mutually exclusive with budgetTokens/effort. Mirrors claude-code's { type: 'adaptive' } selection.
+  adaptive?: boolean
 }
 
 export interface ChatRequest {
