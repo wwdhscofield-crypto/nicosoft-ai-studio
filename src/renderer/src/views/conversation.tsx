@@ -343,6 +343,62 @@ function ChatSegment({
   )
 }
 
+// — Cross-turn explore folding ————————————————————————————————————————————————————————————————————
+// Claude runs ONE tool per turn, so a burst of Read/Grep/Glob arrives as a RUN of separate assistant messages
+// (each its own avatar + readout = the real source of "tool spam"). Per-message folding can't catch that.
+// These fold at the LIST level: a run of ≥2 consecutive same-expert explore turns becomes one ExploreSegment.
+
+// An explore turn: a finished assistant message whose tools are ALL read-only探索 (Read/Grep/Glob/LS); it may
+// carry narration text. Streaming turns are excluded so the live one keeps its own ThinkingReadout. A turn
+// with any write/exec tool (or none) breaks the run → side effects + real answers always render on their own.
+function isExploreTurn(m: ChatMessage): boolean {
+  return m.role === 'assistant' && !m.streaming && !!m.tools?.length && m.tools.every((t) => EXPLORE_TOOL_NAMES.has(t.name))
+}
+
+type RenderUnit = { kind: 'explore'; msgs: ChatMessage[] } | { kind: 'single'; msg: ChatMessage }
+// Fold runs of ≥2 consecutive same-expert explore turns into one unit; everything else passes through as a
+// single message. The run breaks on a non-explore turn, a streaming turn, or an expert change (so concurrent
+// coordinator experts never merge into one another's fold). A lone explore turn stays a normal segment.
+function groupMessages(messages: ChatMessage[]): RenderUnit[] {
+  const units: RenderUnit[] = []
+  let run: ChatMessage[] = []
+  const flush = (): void => {
+    if (run.length >= 2) units.push({ kind: 'explore', msgs: run })
+    else for (const m of run) units.push({ kind: 'single', msg: m })
+    run = []
+  }
+  for (const m of messages) {
+    if (isExploreTurn(m) && (run.length === 0 || run[0].expertId === m.expertId)) run.push(m)
+    else { flush(); units.push({ kind: 'single', msg: m }) }
+  }
+  flush()
+  return units
+}
+
+// One ExploreSegment for a run of explore turns: a single avatar/name, body = one collapsible ExploreGroup
+// over ALL their tools + narration. Folds to "Explored N steps" (the run is all finished turns), click to
+// expand the full list — each inner tool still opens to its own result/diff.
+function ExploreSegment({ msgs, expert, expertById }: { msgs: ChatMessage[]; expert: Expert; expertById: Record<string, Expert> }): ReactElement {
+  const first = msgs[0]
+  const renderExpert: Expert = (first.expertId ? expertById[first.expertId] : undefined) ?? expert
+  const allBlocks: MsgBlock[] = msgs.flatMap((m) => m.blocks ?? [])
+  const allTools: ToolCall[] = msgs.flatMap((m) => m.tools ?? [])
+  const byId = (id: string): ToolCall | undefined => allTools.find((t) => t.id === id)
+  return (
+    <div className="segment" style={{ '--seg-color': renderExpert.color } as CSSProperties}>
+      <div className="seg-head">
+        <Avatar expert={renderExpert} you={false} size={28} streaming={false} />
+        <div className="seg-meta">
+          <NameChip expert={renderExpert} />
+        </div>
+      </div>
+      <div className="seg-body">
+        <ExploreGroup blocks={allBlocks} byId={byId} />
+      </div>
+    </div>
+  )
+}
+
 // Conversation-level "working" readout for the gap BETWEEN turns: the agent has finished a step (tool done /
 // prior turn complete) and is thinking about the next one, with nothing streaming yet — so the per-message
 // readout has nowhere to live (no streaming message, no running tool). Without this a long thinking phase
@@ -712,20 +768,26 @@ export function ChatView({ expert, onOpenSettings, onBackToProject }: { expert: 
           {messages.length === 0 ? (
             <EmptyState expert={expert} onChip={setValue} />
           ) : (
-            messages.map((m, i) => {
-              // Show the dispatch badge above the FIRST message of each pipeline turn — detected by a
-              // non-empty dispatch chain that differs from the previous message's chain (or the
-              // previous message has none). Single-mode coordinator turns have dispatch=null → no badge.
-              const prev = i > 0 ? messages[i - 1] : null
+            groupMessages(messages).map((unit, ui, units) => {
+              const firstMsg = unit.kind === 'explore' ? unit.msgs[0] : unit.msg
+              // Dispatch badge above the FIRST message of each pipeline turn — detected by a non-empty
+              // dispatch chain differing from the previous RENDER UNIT's last message (an explore fold is one
+              // unit, so the badge still lands on the run's start). Single-mode turns have dispatch=null → none.
+              const prevUnit = ui > 0 ? units[ui - 1] : null
+              const prevMsg = prevUnit ? (prevUnit.kind === 'explore' ? prevUnit.msgs[prevUnit.msgs.length - 1] : prevUnit.msg) : null
               const showBadge =
-                m.role === 'assistant' &&
-                Array.isArray(m.dispatch) &&
-                m.dispatch.length > 0 &&
-                !sameChain(prev?.dispatch, m.dispatch)
+                firstMsg.role === 'assistant' &&
+                Array.isArray(firstMsg.dispatch) &&
+                firstMsg.dispatch.length > 0 &&
+                !sameChain(prevMsg?.dispatch, firstMsg.dispatch)
               return (
-                <Fragment key={m.id}>
-                  {showBadge ? <DispatchBadge chain={m.dispatch as string[]} /> : null}
-                  <ChatSegment msg={m} expert={expert} expertById={expertById} onOpenImage={openImage} inputTokens={baseIn} outputTokens={baseOut} />
+                <Fragment key={firstMsg.id}>
+                  {showBadge ? <DispatchBadge chain={firstMsg.dispatch as string[]} /> : null}
+                  {unit.kind === 'explore' ? (
+                    <ExploreSegment msgs={unit.msgs} expert={expert} expertById={expertById} />
+                  ) : (
+                    <ChatSegment msg={unit.msg} expert={expert} expertById={expertById} onOpenImage={openImage} inputTokens={baseIn} outputTokens={baseOut} />
+                  )}
                 </Fragment>
               )
             })
