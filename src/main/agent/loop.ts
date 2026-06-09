@@ -206,7 +206,9 @@ export async function* runAgent(
   // per-turn AbortController in the loop) so a reactive-compaction abort tears down an in-flight
   // child too, instead of leaving it running detached. Inside a sub-agent spawnSubAgent is undefined
   // (and Task is filtered out), so it can't recurse further.
-  const subAgentTools = tools.filter((t) => t.name !== 'Task')
+  // Drop plan-mode tools too: a sub-agent returns a summary, it doesn't need plan-approval semantics, and its
+  // EnterPlanMode/ExitPlanMode would otherwise flip the PARENT's plan state / hit the parent's Gate A.
+  const subAgentTools = tools.filter((t) => t.name !== 'Task' && t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode')
   const makeSpawnSubAgent =
     (signal: AbortSignal): SpawnSubAgent =>
     async ({ prompt, parentToolId }) => {
@@ -250,7 +252,7 @@ export async function* runAgent(
   // runChild that runs one of a child's turns with the sub-agent tool set — no Task, no nested agent_*
   // (depth 1) — threading the child's persisted readFileState/todos. Sub-agents get subAgents: undefined.
   if (ctx.subAgents instanceof AsyncSubAgentPool) {
-    const asyncChildTools = tools.filter((t) => t.name !== 'Task' && !t.name.startsWith('agent_'))
+    const asyncChildTools = tools.filter((t) => t.name !== 'Task' && !t.name.startsWith('agent_') && t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode')
     const runChild: RunChild = async (childMessages, signal, readFileState, todos, parentToolId, subAgentId) => {
       const sub = runAgent({
         protocol: params.protocol,
@@ -311,7 +313,7 @@ export async function* runAgent(
     // ctx.signal wired through, and the composite is GC'd once the turn ends.
     const turnAbort = new AbortController()
     const turnSignal = AbortSignal.any([ctx.signal, turnAbort.signal])
-    const turnCtx: AgentContext = { ...ctx, permissionMode: planMode, signal: turnSignal, spawnSubAgent: makeSpawnSubAgent(turnSignal) }
+    const turnCtx: AgentContext = { ...ctx, permissionMode: planMode, priorPermissionMode: params.ctx.permissionMode, signal: turnSignal, spawnSubAgent: makeSpawnSubAgent(turnSignal) }
     const streamExec = new StreamingToolExecutor(tools, turnCtx)
     try {
       // Stream the turn: each tool_use block is yielded as it finishes, so execution starts

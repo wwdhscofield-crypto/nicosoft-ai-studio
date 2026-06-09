@@ -756,7 +756,8 @@ const PLAN_FIRST =
   'When you are about to start a NEW project, make a LARGE change (touches many files or the architecture), ' +
   'or fix a BIG problem in a software project, do NOT jump straight into edits. Plan first:\n' +
   '1. Investigate read-only, then call EnterPlanMode and lay out a concrete, step-by-step plan; call ' +
-  "ExitPlanMode to get the user's approval BEFORE changing anything (in plan mode only read-only tools run).\n" +
+  'ExitPlanMode to present the plan before changing anything (in plan mode only read-only tools run). In ' +
+  'full-auto/bypass runs ExitPlanMode is confirmed automatically — you do NOT wait on a human.\n' +
   "2. Write the plan / design as a markdown doc under the project's `docs/` directory (create `docs/` if it " +
   'is missing) so the plan is durable, then build against it.\n' +
   '3. Break large work into ordered steps and orchestrate them one at a time, verifying as you go.\n' +

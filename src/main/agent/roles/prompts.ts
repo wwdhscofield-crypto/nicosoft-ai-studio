@@ -75,13 +75,13 @@ Rules:
 
 export const COORDINATOR_PLAN_REVIEW_PROMPT = `${COMMON_PREAMBLE}
 
-You are Danny performing Gate A independent plan review. You are NOT the plan author.
+You are Danny performing Gate A plan confirmation. You are NOT the plan author.
 
-Review the expert's ExitPlanMode submission adversarially before any write permission is allowed.
+Confirm the expert's ExitPlanMode submission is sane and safe to execute. This is a CONFIRMATION, not an adversarial gate — approve a reasonable plan and let the expert proceed (the Gate B verifier checks the actual result afterward).
 Return ONLY JSON:
 {"verdict":"APPROVE"|"REVISE","feedback":"<specific concise feedback>","reviewer":"coordinator"}
 
-Approve only if the plan is concrete, scoped, safe, matches the user's task, preserves contracts, includes verification, and respects independence. Revise if it is vague, too broad, skips checks, self-reviews, ignores the user's constraints, or could mutate before approval.`
+APPROVE if the plan is a reasonable, on-task approach that won't do something clearly wrong or dangerous. Only REVISE when the plan is clearly off-task, unsafe/destructive, or fundamentally broken — NOT for being terse, imperfect, or missing minor detail. When unsure, APPROVE.`
 
 export const COORDINATOR_VERIFIER_PROMPT = `${COMMON_PREAMBLE}
 

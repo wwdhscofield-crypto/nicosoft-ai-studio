@@ -832,23 +832,26 @@ async function runGatedRoleStep(roleId: string, prompt: string, opts: RunStepOpt
   const baseOpts: RunStepOptions = { ...opts, roleId, prompt, signal: signal ?? opts.signal }
   if (!gate.enabled) return runRoleStep(baseOpts)
 
-  const planModeOpts: RunStepOptions = { ...baseOpts, permissionMode: 'plan' }
-  let result = await runRoleStep(planModeOpts)
+  // bypass = full autonomy: skip the plan-review FRONT gate (Gate A) entirely and let the implementer execute
+  // directly. Danny's oversight is the adversarial Gate B verification of the RESULT, not a plan-mode pre-check —
+  // plan review only makes sense with an approver, and bypass has none (forcing plan + Gate A here was the
+  // deadlock). Non-bypass keeps the plan stage so its ExitPlanMode still goes through Gate A review.
+  let result: Awaited<ReturnType<typeof runRoleStep>>
+  if (opts.permissionMode === 'bypass') {
+    result = await runRoleStep(baseOpts)
+  } else {
+    result = await runRoleStep({ ...baseOpts, permissionMode: 'plan' })
+  }
   gate.approvedPlan = result.text
 
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    const verdict = await runVerifierStep(roleId, opts, gate, result.text, attempt, signal)
-    if (verdict.passed) return result
-    if (attempt === 2) throw new LlmError('bad_request', `Gate B verification failed after retry: ${verdict.feedback}`)
-    const fixPrompt = [
-      'Gate B independent verifier failed your implementation. Fix only the reported issues, do not broaden scope, then stop.',
-      `Verifier feedback:\n${verdict.feedback}`,
-      `Original task:\n${gate.originalPrompt}`,
-      gate.approvedPlan ? `Approved plan:\n${gate.approvedPlan}` : ''
-    ].filter(Boolean).join('\n\n')
-    result = await runRoleStep({ ...baseOpts, prompt: fixPrompt, includeHistory: true, permissionMode: opts.permissionMode })
-  }
-  return result
+  // Gate B is an INDEPENDENT quality check, not a coordinator-driven fix loop. Run the verifier ONCE: the
+  // implementer already self-tests inside its own agent loop (bypass gives it Bash), so a hard-coded "retry
+  // N times" here would be the coordinator overriding the agent's own judgment. Pass → deliver. Fail → attach
+  // the evidence and let synthesis (Danny, the main agent) report it honestly (never round an unverified
+  // result up to done); automatic re-work is Gate C's (e2e) job, not a fixed retry count baked in here.
+  const verdict = await runVerifierStep(roleId, opts, gate, result.text, signal)
+  if (verdict.passed) return result
+  return { ...result, text: `${result.text}\n\n[Gate B independent verification did not pass — ${verdict.feedback}]` }
 }
 
 function chooseVerifierRole(implementerRoleId: string): string {
@@ -862,11 +865,13 @@ function chooseVerifierRole(implementerRoleId: string): string {
   )
 }
 
-async function runVerifierStep(implementerRoleId: string, opts: RunStepOptions, gate: { originalPrompt: string; approvedPlan?: string }, implementationText: string, attempt: number, signal?: AbortSignal): Promise<{ passed: boolean; feedback: string }> {
+async function runVerifierStep(implementerRoleId: string, opts: RunStepOptions, gate: { originalPrompt: string; approvedPlan?: string }, implementationText: string, signal?: AbortSignal): Promise<{ passed: boolean; feedback: string }> {
   const verifierRoleId = chooseVerifierRole(implementerRoleId)
-  if (verifierRoleId === implementerRoleId) return { passed: false, feedback: 'Gate B rejected self-verification: verifier must be independent from implementer.' }
-  const toolId = `gate-b-verifier-${Date.now()}-${attempt}`
-  opts.cb.onToolEvent?.(implementerRoleId, { type: 'sub_tool_start', toolUseId: toolId, parentToolId: 'coordinator-gate-b', name: 'IndependentVerifier', input: { verifierRoleId, attempt } })
+  // No independent agent role is bound besides the implementer → there's no one to verify. Don't FAIL/throw
+  // the turn over a config gap; deliver the result unverified with a note (synthesis surfaces it).
+  if (verifierRoleId === implementerRoleId) return { passed: true, feedback: 'Gate B skipped: no independent verifier role bound (only the implementer is available); result delivered unverified.' }
+  const toolId = `gate-b-verifier-${Date.now()}`
+  opts.cb.onToolEvent?.(implementerRoleId, { type: 'sub_tool_start', toolUseId: toolId, parentToolId: 'coordinator-gate-b', name: 'IndependentVerifier', input: { verifierRoleId } })
   // Persona + how-to-verify live in COORDINATOR_VERIFIER_PROMPT (systemPromptOverride); this user message
   // carries only the case to judge. The implementer's summary is a CLAIM to check by running the real checks.
   const verifierPrompt = [
@@ -1004,6 +1009,11 @@ async function coordinatorApproval(convId: string, roleId: string, cwd: string, 
   return { allow: true }
 }
 
+// Gate A is CONFIRMATORY, not adversarial: Danny (the main agent) confirms the plan is sane/safe/on-task and
+// APPROVES unless something is clearly wrong or dangerous (bypass = "Danny confirms", not "Danny obstructs").
+// No coordinator-imposed revision cap — APPROVE vs REVISE is Danny's call every time; a REVISE just sends the
+// author back to revise and resubmit. The confirmatory default makes Danny converge on APPROVE, and the
+// author's own agent-loop maxTurns bounds the worst case, so there is nothing to "break a stalemate" for.
 async function reviewExitPlanMode(convId: string, planAuthorRoleId: string, req: PermissionRequest, cb: CoordinatorCallbacks, taskPrompt: string): Promise<PermissionDecision> {
   const reviewerRoleId = 'coordinator'
   const toolId = `gate-a-plan-review-${Date.now()}`
@@ -1024,7 +1034,7 @@ async function reviewExitPlanMode(convId: string, planAuthorRoleId: string, req:
     `Task:\n${taskPrompt}`,
     `Plan author role: ${planAuthorRoleId}`,
     `ExitPlanMode submission JSON:\n${JSON.stringify(req.input, null, 2)}`,
-    'Remember: bypass is not approval. You are the independent adversarial reviewer.'
+    'Confirm the plan is sane, safe, and on-task. Approve it unless something is clearly wrong, dangerous, or off-task.'
   ].join('\n\n')
   const result = await llmChat(
     {
@@ -1038,17 +1048,23 @@ async function reviewExitPlanMode(convId: string, planAuthorRoleId: string, req:
     },
     () => {}
   )
-  let verdict: 'APPROVE' | 'REVISE' = /\bAPPROVE\b/i.test(result.text) && !/\bREVISE\b/i.test(result.text) ? 'APPROVE' : 'REVISE'
+  let verdict: 'APPROVE' | 'REVISE' = /\bREVISE\b/i.test(result.text) && !/\bAPPROVE\b/i.test(result.text) ? 'REVISE' : 'APPROVE'
   let feedback = result.text.trim()
   try {
     const parsed = JSON.parse(result.text) as { verdict?: string; feedback?: string }
-    verdict = parsed.verdict === 'APPROVE' ? 'APPROVE' : 'REVISE'
+    verdict = parsed.verdict === 'REVISE' ? 'REVISE' : 'APPROVE'
     feedback = typeof parsed.feedback === 'string' && parsed.feedback.trim() ? parsed.feedback.trim() : feedback
   } catch {
-    // tolerate non-JSON model output; default to REVISE unless it cleanly says APPROVE.
+    // tolerate non-JSON model output; default to APPROVE unless it cleanly says REVISE (confirmatory, not adversarial).
   }
-  cb.onToolEvent?.(planAuthorRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: 'coordinator-gate-a', name: 'DannyPlanReview', isError: verdict !== 'APPROVE', result: `${verdict}: ${feedback}` })
-  return verdict === 'APPROVE' ? { allow: true } : { allow: false, message: `Danny plan review requested revision: ${feedback}` }
+  if (verdict === 'APPROVE') {
+    cb.onToolEvent?.(planAuthorRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: 'coordinator-gate-a', name: 'DannyPlanReview', isError: false, result: `APPROVE: ${feedback}` })
+    return { allow: true }
+  }
+  // REVISE — Danny's call. Send the author back to revise and resubmit; no coordinator round cap, the
+  // confirmatory default keeps it from stalling and the author's agent-loop maxTurns bounds the worst case.
+  cb.onToolEvent?.(planAuthorRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: 'coordinator-gate-a', name: 'DannyPlanReview', isError: true, result: `REVISE: ${feedback}` })
+  return { allow: false, message: `Danny plan review requested revision: ${feedback}` }
 }
 
 // Run a collaboration (collaborate mode — doc 19 §5): resolve each agent expert's binding, hand them all

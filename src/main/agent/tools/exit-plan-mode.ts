@@ -29,7 +29,7 @@ export const exitPlanModeTool = buildTool<typeof inputSchema, { approved: boolea
       ctx.signal
     )
     if (decision.allow) {
-      ctx.setPermissionMode?.('default') // approved → execution mode; mutations allowed from next turn
+      ctx.setPermissionMode?.(ctx.priorPermissionMode ?? 'default') // approved → restore the ORIGINAL run mode (bypass stays bypass, not downgraded to 'default')
       return { data: { approved: true } }
     }
     return { data: { approved: false } }

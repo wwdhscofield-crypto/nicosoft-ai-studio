@@ -82,6 +82,9 @@ export interface AgentContext {
   signal: AbortSignal // cancellation — threaded into bash spawns and sub-agents
   readFileState: Map<string, ReadFileEntry> // keyed by absolute path; powers stale-write detection
   permissionMode: PermissionMode
+  // The run's ORIGINAL mode, captured before any EnterPlanMode flipped it. ExitPlanMode restores to this
+  // (so a bypass run stays bypass instead of being silently downgraded to 'default'). Set per-turn by runAgent.
+  priorPermissionMode?: PermissionMode
   // EnterPlanMode/ExitPlanMode flip the mode at runtime (doc 17); set by runAgent so the change
   // persists across turns (the loop re-reads it when assembling each turn's context).
   setPermissionMode?: (mode: PermissionMode) => void
