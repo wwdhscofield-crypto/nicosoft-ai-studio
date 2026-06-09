@@ -413,6 +413,46 @@ export interface PendingApprovalDto {
   createdAt: string
 }
 
+// === Gate C e2e verification surfaced to the renderer (Block 3) ===
+// Gate C runs AFTER the turn's `coordinator:done`, so its activity can NOT ride the per-stream tool
+// channels (the renderer has already torn the stream's tool state down). These events are keyed by
+// convId on dedicated channels: `verify:progress` (round begins), `verify:tool` (each e2e action), and
+// `verify:done` (the final verdict). The chat store routes them to the conversation's e2e timeline + toast.
+export type E2EVerdictKind = 'PASS' | 'FAIL' | 'BLOCKED' | 'SKIP'
+// A verification round begins. round is 1-based; phase 'fix' means the implementer first re-ran to fix the
+// previous FAIL, then re-verifies. maxRounds is GATE_C_MAX_ROUNDS so the UI can render "N/3".
+export interface VerifyProgressEvent {
+  convId: string
+  round: number
+  maxRounds: number
+  phase: 'verify' | 'fix'
+}
+// One e2e tool action from the Gate C verifier (e2e_browser / e2e_request: launch/goto/click/fill/
+// screenshot/assert/get/post). Mirrors the sub_tool start/done shape so the ToolCard timeline can render
+// it. screenshotPath (when present) is an absolute path to a PNG the verifier captured.
+export interface VerifyToolEvent {
+  convId: string
+  round: number
+  phase: 'start' | 'done'
+  toolUseId: string
+  name: string
+  input?: unknown
+  result?: string
+  isError?: boolean
+  screenshotPath?: string
+}
+// The final verdict for a conversation's e2e run. needsUser is true when the verifier exhausted all rounds
+// still FAILing — the renderer surfaces a "needs you" toast + the main process fires a desktop notification.
+export interface VerifyDoneEvent {
+  convId: string
+  kind: E2EVerdictKind
+  rounds: number
+  maxRounds: number
+  detail: string
+  needsUser: boolean
+  screenshots: string[]
+}
+
 // === Roles (expert → endpoint/model binding + per-role state) ===
 // A role's binding: which endpoint/model it runs on + its default thinking depth (applied when a task
 // is dispatched to it; the chat composer can still override per-conversation). null = provider default.

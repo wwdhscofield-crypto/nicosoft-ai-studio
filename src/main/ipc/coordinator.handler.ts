@@ -5,6 +5,9 @@
 // (id + AbortController + sender lifetime cleanup); the service does the orchestration.
 
 import { ipcMain, type WebContents } from 'electron'
+import { readFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join, resolve, sep } from 'node:path'
 import { ulid } from 'ulid'
 import type { PermissionDecision } from '../agent/context'
 import { isContentBlock } from '../agent/types'
@@ -26,6 +29,9 @@ import type {
   CoordinatorApprovalEvent,
   ProjectUpdatedEvent,
   ProjectServiceEvent,
+  VerifyProgressEvent,
+  VerifyToolEvent,
+  VerifyDoneEvent,
   AgentBlockDto,
   AgentResultDto,
   AgentPermissionResponse
@@ -183,7 +189,14 @@ export function registerCoordinatorHandlers(): void {
           onServices: (projectId, services) => {
             const ev: ProjectServiceEvent = { streamId, projectId, services }
             send('project:service', ev)
-          }
+          },
+          // Block 3 — Gate C e2e verification, on conv-scoped channels. These fire AFTER `coordinator:done`
+          // (Gate C runs in the background queue), so they intentionally carry convId, not streamId: the
+          // renderer routes them to the conversation's e2e timeline + verdict toast regardless of stream.
+          // `send` guards isDestroyed(), so a closed window is a safe no-op.
+          onE2EProgress: (e: VerifyProgressEvent) => send('verify:progress', e),
+          onE2EToolEvent: (e: VerifyToolEvent) => send('verify:tool', e),
+          onE2EVerdict: (e: VerifyDoneEvent) => send('verify:done', e)
         },
         controller.signal
       )
@@ -220,5 +233,22 @@ export function registerCoordinatorHandlers(): void {
   // so a late answer after the turn ended (sweep already denied it) is a harmless no-op.
   ipcMain.handle('coordinator:permission:respond', (_e, resp: AgentPermissionResponse) => {
     pendingPermissions.get(resp.permissionId)?.({ allow: resp.allow, updatedInput: resp.updatedInput })
+  })
+
+  // Block 3 — serve a Gate C e2e screenshot as a data URL so the renderer can show timeline / toast
+  // thumbnails. The verifier saves PNGs under ~/.nsai/sessions/<convId>/…; we hard-guard to that root (a
+  // resolved path that escapes it, or isn't a .png, is rejected) so this can't be turned into an arbitrary
+  // file read. Returns null on any miss rather than throwing, so a stale path just renders no thumbnail.
+  ipcMain.handle('verify:screenshot', async (_e, filePath: string): Promise<string | null> => {
+    try {
+      if (typeof filePath !== 'string' || !filePath.toLowerCase().endsWith('.png')) return null
+      const root = resolve(join(homedir(), '.nsai', 'sessions'))
+      const abs = resolve(filePath)
+      if (abs !== root && !abs.startsWith(root + sep)) return null
+      const buf = await readFile(abs)
+      return `data:image/png;base64,${buf.toString('base64')}`
+    } catch {
+      return null
+    }
   })
 }

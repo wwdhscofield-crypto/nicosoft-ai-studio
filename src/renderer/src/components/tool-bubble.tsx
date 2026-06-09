@@ -8,9 +8,28 @@ import { useState } from 'react'
 import type { ReactElement } from 'react'
 import { Icons } from '@/components/icons'
 import { CodeBlock, extToLang } from '@/components/markdown'
+import { VerifyScreenshot } from '@/components/verify-screenshot'
 import type { ToolCall, ServerNote } from '@/stores/chat'
 
 const DIFF_TOOLS = new Set(['Edit', 'Write', 'MultiEdit'])
+
+// e2e_browser / e2e_request actions (launch/click/screenshot/assert/…) run as sub-tools and their result is
+// a JSON object { sessionId, ok, pass?, screenshotPath?, detail }. Parse it so the ToolCard can render an
+// assert PASS/FAIL badge + a screenshot thumbnail, and so a FAILED assertion — which returns
+// { ok: true, pass: false } and therefore isError=false — is still shown as a failure, not a success.
+function e2eMeta(tool: ToolCall): { pass?: boolean; screenshotPath?: string } | null {
+  if (tool.status === 'running' || !tool.result) return null
+  try {
+    const obj = JSON.parse(tool.result) as { sessionId?: unknown; pass?: unknown; screenshotPath?: unknown }
+    if (typeof obj.sessionId !== 'string') return null
+    return {
+      pass: typeof obj.pass === 'boolean' ? obj.pass : undefined,
+      screenshotPath: typeof obj.screenshotPath === 'string' ? obj.screenshotPath : undefined
+    }
+  } catch {
+    return null
+  }
+}
 
 // Read returns its file contents framed `cat -n` style: a 1-based line number (6-wide, space-padded) + a
 // TAB + the line. Strip that framing so the code block shows the raw source (and Shiki highlights it). The
@@ -74,18 +93,30 @@ export function ToolBubble({ tool, depth = 0 }: { tool: ToolCall; depth?: number
   // the file extension). Edit/Write/MultiEdit keep the collapsed diff form (isDiff branch below).
   const isReadResult = tool.name === 'Read' && hasResult
   const hasSubTools = (tool.subTools?.length ?? 0) > 0
-  const expandable = isDiff || hasResult || hasSubTools
+  const e2e = e2eMeta(tool)
+  // A failed assertion comes back with status 'done' (isError=false) — fold pass===false into the failure
+  // styling so the row is iconed/colored as a failure.
+  const e2eFailed = e2e?.pass === false
+  const showError = tool.status === 'error' || e2eFailed
+  const showCheck = tool.status === 'done' && !e2eFailed
+  const expandable = isDiff || hasResult || hasSubTools || !!e2e?.screenshotPath
 
   return (
-    <div className={'tool-bubble ' + tool.status} style={depth > 0 ? { marginLeft: 14 } : undefined}>
+    <div
+      className={'tool-bubble ' + tool.status + (e2eFailed ? ' error' : '')}
+      style={depth > 0 ? { marginLeft: 14 } : undefined}
+    >
       <button className="tb-row" onClick={() => expandable && setOpen((o) => !o)} disabled={!expandable}>
         <span className="tb-status">
-          {tool.status === 'done' && <Icons.check size={11} />}
-          {tool.status === 'error' && <Icons.x size={11} />}
+          {showCheck && <Icons.check size={11} />}
+          {showError && <Icons.x size={11} />}
           {tool.status === 'running' && <span className="tb-dot" />}
         </span>
         <span className="tb-name">{tool.name}</span>
         <span className="tb-summary">{summary}</span>
+        {e2e?.pass !== undefined && (
+          <span className={'tb-assert' + (e2e.pass ? ' pass' : ' fail')}>{e2e.pass ? 'PASS' : 'FAIL'}</span>
+        )}
         {expandable && (
           <span className={'tb-chevron' + (open ? ' open' : '')}>
             <Icons.chevronDown size={13} />
@@ -97,6 +128,11 @@ export function ToolBubble({ tool, depth = 0 }: { tool: ToolCall; depth?: number
           {hasSubTools ? (
             <div className="tb-subtools">
               {tool.subTools!.map((subTool) => <ToolBubble key={subTool.id} tool={subTool} depth={depth + 1} />)}
+            </div>
+          ) : null}
+          {e2e?.screenshotPath ? (
+            <div className="tb-shot">
+              <VerifyScreenshot path={e2e.screenshotPath} />
             </div>
           ) : null}
           {isDiff ? <DiffView name={tool.name} input={input} /> : null}

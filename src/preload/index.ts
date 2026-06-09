@@ -78,7 +78,10 @@ import type {
   ProjectServiceEvent,
   ScheduledTask,
   CreateTaskInput,
-  ScheduledFiredEvent
+  ScheduledFiredEvent,
+  VerifyProgressEvent,
+  VerifyToolEvent,
+  VerifyDoneEvent
 } from '../main/ipc/contracts'
 
 // Typed bridge exposed to the renderer as `window.api`. Window controls (Batch 0) + Batch 1
@@ -203,6 +206,16 @@ const api = {
     onPermissionCancel: (cb: (d: CoordinatorPermissionCancel) => void): (() => void) => agentListen('coordinator:permission:cancel', cb),
     respondPermission: (resp: AgentPermissionResponse): Promise<void> => ipcRenderer.invoke('coordinator:permission:respond', resp),
     onApproval: (cb: (d: CoordinatorApprovalEvent) => void): (() => void) => agentListen('coordinator:approval', cb)
+  },
+
+  // Gate C e2e verification (keyed by convId): the verifier runs in a background queue AFTER coordinator:done,
+  // streaming round progress + each e2e action, then a final verdict. screenshot loads a captured PNG as a
+  // data URL (sessions dir isn't served by nsai-media://).
+  verify: {
+    onProgress: (cb: (d: VerifyProgressEvent) => void): (() => void) => agentListen('verify:progress', cb),
+    onTool: (cb: (d: VerifyToolEvent) => void): (() => void) => agentListen('verify:tool', cb),
+    onDone: (cb: (d: VerifyDoneEvent) => void): (() => void) => agentListen('verify:done', cb),
+    screenshot: (path: string): Promise<string | null> => ipcRenderer.invoke('verify:screenshot', path)
   },
 
   // Deferred approval of red-zone actions (doc 19 §8): list a conversation's pending actions, then approve

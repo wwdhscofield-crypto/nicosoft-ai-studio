@@ -1603,3 +1603,20 @@
 .toast-success { border-color: color-mix(in oklch, var(--success) 45%, var(--border-2)); }
 .toast-error { border-color: color-mix(in oklch, var(--error) 45%, var(--border-2)); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+
+/* Gate C verdict toast — verdict-colored, clickable to expand detail + screenshot thumbnails.
+   The `verify-<kind>` class (agent.css) sets `color` (the accent) which the border/icon/kind inherit. */
+.toast-verdict { flex-direction: column; align-items: stretch; cursor: default; padding: 0; overflow: hidden; }
+.toast-verdict.verify-pass { border-color: color-mix(in oklch, var(--success) 50%, var(--border-2)); }
+.toast-verdict.verify-fail { border-color: color-mix(in oklch, var(--error) 50%, var(--border-2)); }
+.toast-verdict.verify-blocked { border-color: color-mix(in oklch, var(--warning) 50%, var(--border-2)); }
+.toast-verdict.verify-skip { border-color: var(--border-2); }
+.toast-verdict-head { display: flex; align-items: center; gap: 9px; padding: 10px 13px; cursor: pointer; }
+.toast-verdict-head .toast-ic { color: currentColor; }
+.toast-verdict-head .toast-msg { flex: 1; color: var(--text-1); }
+.toast-verdict-head .toast-msg b { color: currentColor; }
+.toast-x { flex: 0 0 auto; display: inline-flex; color: var(--text-4); padding: 2px; border-radius: var(--r-sm); }
+.toast-x:hover { color: var(--text-1); background: var(--bg-3); }
+.toast-verdict-body { border-top: 1px solid var(--border-1); padding: 10px 13px; display: flex; flex-direction: column; gap: 9px; }
+.toast-verdict-detail { font-size: 12.5px; color: var(--text-2); white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow: auto; }
+.toast-verdict-shots { display: flex; flex-wrap: wrap; gap: 7px; }

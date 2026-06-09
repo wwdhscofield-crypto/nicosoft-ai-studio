@@ -29,6 +29,7 @@ export const todoTool = buildTool<typeof inputSchema, TodoOutput>({
   isConcurrencySafe: () => false, // mutates shared ctx.todos → serialize
   async call(input, ctx) {
     ctx.todos = input.todos
+    ctx.setTodos?.(input.todos) // propagate to the shared conv-level list so a pipeline's experts share ONE
     const done = input.todos.filter((t) => t.status === 'completed').length
     return { data: { count: input.todos.length, done } }
   },

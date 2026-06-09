@@ -29,15 +29,16 @@ import * as compressionService from './compression.service'
 import { chat as llmChat } from '../llm/client'
 import { resolveDepth } from '../llm/thinking'
 import * as agentService from './agent.service'
-import { backgroundVerifyQueue, type E2ERoundResult, type E2EVerdict } from '../agent/background-verify-queue'
+import { backgroundVerifyQueue, GATE_C_MAX_ROUNDS, type E2ERoundResult, type E2EVerdict } from '../agent/background-verify-queue'
+import { Notification } from 'electron'
 import { classifyApproval } from '../agent/approval'
 import * as pendingRepo from '../repos/pending-approval.repo'
 import type { AgentEvent } from '../agent/loop'
 import type { AgentLlmEvent } from '../agent/llm'
 import { isContentBlock } from '../agent/types'
-import type { PermissionRequest, PermissionDecision, PermissionMode } from '../agent/context'
+import type { PermissionRequest, PermissionDecision, PermissionMode, AgentContext } from '../agent/context'
 import type { MemoryRow } from '../repos/memory.repo'
-import type { MessageAttachmentDto } from '../ipc/contracts'
+import type { MessageAttachmentDto, VerifyProgressEvent, VerifyToolEvent, VerifyDoneEvent } from '../ipc/contracts'
 import { countContext } from './token-count.service'
 import { pickSmallModel } from './model-select'
 import { LlmError, type ChatAttachment, type ChatMessage } from '../llm/types'
@@ -112,14 +113,27 @@ export interface CoordinatorCallbacks {
   onProjectUpdated?: (projectId: string) => void
   // phase 5c-C3: live dev services the collaboration started, for the project workbench's service chips.
   onServices?: (projectId: string, services: { name: string; port: number | null; status: string }[]) => void
+  // Block 3 — Gate C e2e verification, surfaced to the renderer on conv-scoped channels (Gate C runs after
+  // the turn's `coordinator:done`, so it can't use the per-stream tool channels). onE2EProgress: a round
+  // begins; onE2EToolEvent: one e2e action (launch/click/screenshot/assert…) with optional screenshotPath;
+  // onE2EVerdict: the final verdict (drives the toast + desktop notification + verdict re-injection).
+  onE2EProgress?: (e: VerifyProgressEvent) => void
+  onE2EToolEvent?: (e: VerifyToolEvent) => void
+  onE2EVerdict?: (e: VerifyDoneEvent) => void
 }
 
 const ROUTER_HISTORY_LIMIT = 4 // last N messages handed to the router for context
+// Pipeline-shared todos, keyed by convId: a coordinator turn's dispatched experts (Flynn → Shuri → …) all
+// read + write this ONE list, so the team's TodoWrite progress is continuous instead of each expert keeping a
+// private list that strands the others' tasks (Shuri's run inherits Flynn's items + updates the SAME ones).
+// Reset at the start of each coordinator run (a new turn = a new pipeline).
+const pipelineTodos = new Map<string, AgentContext['todos']>()
 
 // Top-level entrypoint. Always called from coordinator.handler; the user turn is already persisted by the
 // renderer (chat-path style — see chat store `send`). Throws on configuration errors so the handler
 // turns them into a single `coordinator:error` event.
 export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, signal: AbortSignal): Promise<{ inputTokens: number; outputTokens: number }> {
+  pipelineTodos.delete(input.convId) // a new coordinator turn = a new pipeline → start its shared todo list fresh
   const history = convRepo.listByConversation(input.convId)
   const decision = await route(input.prompt, history, signal)
   if (signal.aborted) throw new LlmError('network', 'aborted before dispatch')
@@ -366,6 +380,9 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
     // Carries the previous round's FAIL verdict + evidence into the next round so the implementer fix is
     // grounded in what actually broke (spec §20: "verdict + 证据拼 fixPrompt").
     let lastFailDetail = ''
+    // Every screenshot the verifier captured across all rounds, in order — handed to the renderer on the
+    // final verdict so the toast can show the run's evidence thumbnails.
+    const e2eScreenshots: string[] = []
     backgroundVerifyQueue.submit({
       convId: input.convId,
       prompt: input.prompt,
@@ -374,21 +391,41 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
       // the queue imports nothing from this file — no import cycle. On rounds > 1 (the previous round FAILed)
       // this first dispatches the implementer to fix, THEN re-verifies.
       runVerify: async (round): Promise<E2ERoundResult> => {
-        if (round > 1 && lastFailDetail) {
-          await runE2EImplementerFix(input.convId, input.prompt, e2eCwd, implementerRoleId, round, lastFailDetail, gateCAbort.signal)
+        const isFix = round > 1 && !!lastFailDetail
+        // Tell the renderer a round is starting so the ToolCard timeline can render "round N/3" before any
+        // tool events arrive. A fix round shows phase 'fix' (implementer re-runs first, then re-verify).
+        cb.onE2EProgress?.({ convId: input.convId, round, maxRounds: GATE_C_MAX_ROUNDS, phase: isFix ? 'fix' : 'verify' })
+        if (isFix) {
+          await runE2EImplementerFix(input.convId, input.prompt, e2eCwd, implementerRoleId, round, lastFailDetail, gateCAbort.signal, cb, e2eScreenshots)
         }
-        const r = await runE2EVerify(input.convId, input.prompt, e2eCwd, round, gateCAbort.signal)
+        const r = await runE2EVerify(input.convId, input.prompt, e2eCwd, round, gateCAbort.signal, cb, e2eScreenshots)
         lastFailDetail = r.kind === 'FAIL' ? r.detail : ''
         return r
       },
+      // BLOCK 3 HOOK POINT — close the loop. The verdict now drives three things:
+      //   ① UI/IPC: emit `verify:done` so the renderer shows the verdict toast + finalizes the e2e timeline.
+      //   ② Desktop notification: on PASS (success) and on a needsUser final-FAIL (the user must step in).
+      //   ③ Verdict re-injection (回灌): persist a coordinator note into the conversation so the NEXT turn's
+      //      history carries the verified outcome — a PASS as confirmed context, a needsUser FAIL as a
+      //      visible "needs you" message the user sees and the model reads.
       onDone: (verdict: E2EVerdict): void => {
-        // Block 2 stops at this callback (spec §31). We only LOG the verdict here.
-        // BLOCK 3 HOOK POINT: this is where the UI/IPC lives — a PASS injects the verified result as the
-        // next-turn context, a FAIL with needsUser surfaces a notification asking the user to step in. Do
-        // NOT send any `verify:done` IPC from here in Block 2.
         console.log(
           `[gate-c] e2e verdict for conv=${input.convId}: ${verdict.kind} (rounds=${verdict.rounds}${verdict.needsUser ? ', needsUser' : ''}) — ${verdict.detail}`
         )
+        const needsUser = verdict.needsUser ?? false
+        cb.onE2EVerdict?.({
+          convId: input.convId,
+          kind: verdict.kind,
+          rounds: verdict.rounds,
+          maxRounds: GATE_C_MAX_ROUNDS,
+          detail: verdict.detail,
+          needsUser,
+          screenshots: e2eScreenshots.slice()
+        })
+        notifyE2EVerdict(verdict)
+        reinjectE2EVerdict(input.convId, verdict).catch((err) => {
+          console.error('[gate-c] verdict re-injection failed:', err)
+        })
       }
     })
   }
@@ -721,7 +758,11 @@ async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputT
         // dispatched-expert coding system. Gate B's verifier passes its own persona via opts.systemPromptOverride.
         // Undefined for real dispatches → buildAgentSystem as before.
         systemPromptOverride: opts.systemPromptOverride ?? (isDirect ? withCoordinatorContext(COORDINATOR_DIRECT_PROMPT, memories, summaryContent) : undefined),
-        thinking
+        thinking,
+        // Pipeline-shared todos: this expert reads + writes the conv's ONE todo list (see pipelineTodos), so
+        // Flynn's list carries into Shuri's run and Shuri updates the SAME items — continuous team progress.
+        initialTodos: pipelineTodos.get(convId),
+        onTodosChange: (todos) => pipelineTodos.set(convId, todos)
       },
       agentCb,
       signal
@@ -737,12 +778,12 @@ async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputT
         content: text,
         attachments: res.attachments,
         dispatch: dispatch ?? undefined,
-        inputTokens: res.freshInTokens, // DISPLAY: non-cached real sent (not cache-inflated). Billing below uses total.
+        inputTokens: res.contextTokens, // DISPLAY: current context size (last turn, not accumulated). Billing below uses total.
         outputTokens: res.outTokens
       })
     }
     usageRepo.record({ conversationId: convId, expertId: roleId, model: binding.model, provider: ep.protocol, inTokens: res.inTokens, outTokens: res.outTokens })
-    cb.onStepDone(roleId, text, res.freshInTokens, res.outTokens)
+    cb.onStepDone(roleId, text, res.contextTokens, res.outTokens)
     return { text, inputTokens: res.inTokens, outputTokens: res.outTokens, endpointId: binding.endpointId, model: binding.model }
   }
 
@@ -915,14 +956,49 @@ async function runVerifierStep(implementerRoleId: string, opts: RunStepOptions, 
 // SKIP. This is the executor INJECTED into backgroundVerifyQueue — the queue owns the FAIL→retry loop, this
 // owns running one round. It runs AFTER run() returned (the turn is over), so it uses a silent no-op callback
 // set rather than the live renderer callbacks.
-async function runE2EVerify(convId: string, prompt: string, cwd: string | undefined, round: number, signal: AbortSignal): Promise<E2ERoundResult> {
-  const verifierRoleId = chooseVerifierRole('shuri')
-  const silentCb: CoordinatorCallbacks = {
+// Forwards the verifier/implementer agent's depth-1 tool events (the e2e_browser / e2e_request actions:
+// launch/goto/click/fill/screenshot/assert/get/post) up to the renderer as conv-scoped `verify:tool` events,
+// so the ENTIRE e2e run is visible in the ToolCard timeline even though it happens after the turn's stream
+// closed. Captured screenshot paths are also pushed into `shots` so the final verdict toast can show them.
+// All other coordinator callbacks are intentional no-ops — the parent turn is over, so steps/deltas/usage
+// have nowhere to render; only the e2e timeline + verdict are live.
+function makeE2EForwardCb(convId: string, round: number, cb: CoordinatorCallbacks, shots: string[]): CoordinatorCallbacks {
+  return {
     onDispatch: () => {},
     onStepStart: () => {},
     onDelta: () => {},
-    onStepDone: () => {}
+    onStepDone: () => {},
+    onToolEvent: (_roleId, ev) => {
+      if (ev.type === 'sub_tool_start') {
+        cb.onE2EToolEvent?.({ convId, round, phase: 'start', toolUseId: ev.toolUseId, name: ev.name, input: ev.input })
+      } else if (ev.type === 'sub_tool_done') {
+        const raw = ev.result
+        let screenshotPath: string | undefined
+        if (raw && typeof raw === 'object' && 'screenshotPath' in raw) {
+          const p = (raw as { screenshotPath?: unknown }).screenshotPath
+          if (typeof p === 'string') {
+            screenshotPath = p
+            shots.push(p)
+          }
+        }
+        cb.onE2EToolEvent?.({
+          convId,
+          round,
+          phase: 'done',
+          toolUseId: ev.toolUseId,
+          name: ev.name,
+          result: typeof raw === 'string' ? raw : raw != null ? JSON.stringify(raw) : undefined,
+          isError: ev.isError,
+          screenshotPath
+        })
+      }
+    }
   }
+}
+
+async function runE2EVerify(convId: string, prompt: string, cwd: string | undefined, round: number, signal: AbortSignal, cb: CoordinatorCallbacks, shots: string[]): Promise<E2ERoundResult> {
+  const verifierRoleId = chooseVerifierRole('shuri')
+  const forwardCb = makeE2EForwardCb(convId, round, cb, shots)
   const verifierPrompt = [
     `Gate C end-to-end verification, round ${round}. Actually run the product and verify the task below — do not trust any written summary.`,
     'Use e2e_browser (UI/Electron) and/or e2e_request (HTTP API) to launch and drive the app, run the asserted checks, then end with ONE verdict line starting with PASS, FAIL, BLOCKED, or SKIP plus evidence.',
@@ -933,7 +1009,7 @@ async function runE2EVerify(convId: string, prompt: string, cwd: string | undefi
     roleId: verifierRoleId,
     prompt: verifierPrompt,
     dispatch: ['coordinator-gate-c', verifierRoleId],
-    cb: silentCb,
+    cb: forwardCb,
     signal,
     cwd,
     permissionMode: 'default',
@@ -970,14 +1046,11 @@ async function runE2EImplementerFix(
   implementerRoleId: string,
   round: number,
   failDetail: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  cb: CoordinatorCallbacks,
+  shots: string[]
 ): Promise<void> {
-  const silentCb: CoordinatorCallbacks = {
-    onDispatch: () => {},
-    onStepStart: () => {},
-    onDelta: () => {},
-    onStepDone: () => {}
-  }
+  const forwardCb = makeE2EForwardCb(convId, round, cb, shots)
   const fixPrompt = [
     `Gate C end-to-end verification FAILED (round ${round - 1}). Fix the implementation so the task below passes — do not argue with the verdict, fix the code.`,
     `Verifier verdict + evidence:\n${failDetail}`,
@@ -989,12 +1062,53 @@ async function runE2EImplementerFix(
     roleId: implementerRoleId,
     prompt: fixPrompt,
     dispatch: ['coordinator-gate-c', implementerRoleId],
-    cb: silentCb,
+    cb: forwardCb,
     signal,
     cwd,
     permissionMode: 'default',
     includeHistory: false
   })
+}
+
+// Block 3 — desktop notification for the e2e verdict. Fires on PASS (the run succeeded, the user can move on)
+// and on a needsUser final-FAIL (the verifier exhausted all rounds still failing — the user must step in).
+// BLOCKED/SKIP and non-final transient FAILs stay quiet (no actionable outcome). Guards isSupported() so
+// headless / unsupported platforms are a no-op rather than a crash.
+function notifyE2EVerdict(verdict: E2EVerdict): void {
+  if (!Notification.isSupported()) return
+  const needsUser = verdict.needsUser ?? false
+  let title: string | null = null
+  let body = verdict.detail
+  if (verdict.kind === 'PASS') {
+    title = '✓ e2e 验证通过'
+    body = `验证在 ${verdict.rounds} 轮内通过 — ${verdict.detail}`
+  } else if (needsUser) {
+    title = '✗ e2e 验证未通过 — 需要你介入'
+    body = `${verdict.rounds} 轮后仍未通过 — ${verdict.detail}`
+  }
+  if (!title) return
+  try {
+    new Notification({ title, body }).show()
+  } catch (err) {
+    console.error('[gate-c] notification failed:', err)
+  }
+}
+
+// Block 3 — verdict re-injection (回灌). Persists a coordinator note into the conversation so the NEXT turn's
+// history carries the verified outcome: a PASS is confirmed context the model can build on; a needsUser FAIL
+// is a visible "needs you" message the user reads and the model sees. BLOCKED/SKIP and transient FAILs are
+// not re-injected (nothing actionable to carry forward). The note is authored as 'coordinator', matching the
+// other coordinator-authored messages in this file.
+async function reinjectE2EVerdict(convId: string, verdict: E2EVerdict): Promise<void> {
+  const needsUser = verdict.needsUser ?? false
+  let content: string | null = null
+  if (verdict.kind === 'PASS') {
+    content = `✅ **e2e 验证通过**（${verdict.rounds} 轮）\n\n${verdict.detail}`
+  } else if (needsUser) {
+    content = `⛔ **e2e 验证未通过，需要你介入**（${verdict.rounds} 轮后仍失败）\n\n${verdict.detail}`
+  }
+  if (!content) return
+  convService.append(convId, { author: 'expert', expertId: 'coordinator', content })
 }
 
 // Coordinator's unattended approval (doc 19 §8). Safety policy = the rule classifier (red is a hard floor:
@@ -1155,20 +1269,20 @@ async function runCollaboration(
   const results = await agentService.runCollabSession(input.convId, experts, hooks, signal, () => Date.now())
 
   const outputs: { role: string; text: string }[] = []
-  for (const [roleId, { text, freshInTokens, outTokens }] of results) {
+  for (const [roleId, { text, contextTokens, outTokens }] of results) {
     if (text) {
       convService.append(input.convId, {
         author: 'expert',
         expertId: roleId,
         model: models.get(roleId) ?? '',
         content: text,
-        inputTokens: freshInTokens, // DISPLAY: non-cached real sent (collab path is not instrumented for billing)
+        inputTokens: contextTokens, // DISPLAY: current context size (collab path not instrumented for billing)
         outputTokens: outTokens,
         dispatch: fullChain
       })
       outputs.push({ role: roleId, text })
     }
-    cb.onStepDone(roleId, text, freshInTokens, outTokens)
+    cb.onStepDone(roleId, text, contextTokens, outTokens)
   }
   return outputs
 }

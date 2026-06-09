@@ -93,6 +93,10 @@ export interface AgentContext {
   // headless / sub-agent contexts where there's no user to ask (the tool then errors).
   askUser?: AskUser
   todos: TodoItem[] // the agent's working todo list (TodoWrite replaces it); UI renders it in H4
+  // Shared-todos writer: in a coordinator pipeline every dispatched expert writes to ONE conv-level list, so
+  // the team's progress is continuous — Flynn's todos carry into Shuri's run and Shuri updates the SAME list
+  // (instead of each expert keeping a private list that strands the others' tasks). Undefined → run-local.
+  setTodos?: (todos: TodoItem[]) => void
   spawnSubAgent?: SpawnSubAgent // set by runAgent for the Task tool; undefined inside a sub-agent
   currentToolUseId?: string // tool_use id currently executing; lets tools tag child activity with their parent
   onSubAgentToolEvent?: SubAgentToolEventHandler // bubbles depth-1 child tool events to the parent stream

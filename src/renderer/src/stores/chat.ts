@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { STUDIO_DATA } from '@/data/studio-data'
 import { useCustomRoles } from '@/stores/custom-roles'
 import { useWorkspace } from '@/stores/workspace'
+import { attachVerifyListeners } from '@/stores/verify'
 import type { EffortLevel } from '@/lib/thinking'
 import type { AgentMode } from '@/lib/agent-mode'
 
@@ -338,6 +339,10 @@ export const useChat = create<ChatState>((set, get) => {
   const ensureListeners = (): void => {
     if (listening) return
     listening = true
+
+    // Gate C e2e verification (verify:progress / verify:tool / verify:done, keyed by convId): wired here so it
+    // shares this one-time subscription lifecycle with the coordinator/agent listeners (no double-subscribe).
+    attachVerifyListeners()
 
     // Clear a conversation's "retrying" banner once a run makes progress again (or ends). Shared by the
     // chat and agent paths — both set the same store.retry[convId].

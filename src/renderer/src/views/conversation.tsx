@@ -19,6 +19,7 @@ import { Markdown } from '@/components/markdown'
 import { ApprovalDialog } from '@/components/approval-dialog'
 import { QuestionDialog } from '@/components/question-dialog'
 import { ApprovalCards } from '@/components/approval-cards'
+import { VerifyTimeline } from '@/components/verify-timeline'
 import { useRoleBinding, type RoleBindingControls } from '@/lib/use-role-binding'
 import type { EndpointDto } from '@/lib/api'
 import { fileToImage, imagesFromClipboard, type ImageAttachment } from '@/lib/image'
@@ -671,6 +672,7 @@ export function ChatView({ expert, onOpenSettings, onBackToProject }: { expert: 
               onReject={(pid) => chat.rejectApproval(activeConv, pid)}
             />
           ) : null}
+          {activeConv ? <VerifyTimeline convId={activeConv} /> : null}
         </div>
       </div>
       <Composer expert={expert} value={value} setValue={setValue} onOpenSettings={onOpenSettings} focusNonce={focusNonce} />

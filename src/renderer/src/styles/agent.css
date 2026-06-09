@@ -54,6 +54,18 @@
 }
 .tb-chevron { color: var(--text-4); flex: none; display: inline-flex; transition: transform 0.15s ease; }
 .tb-chevron.open { transform: rotate(180deg); }
+.tb-assert {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  flex: none;
+}
+.tb-assert.pass { color: var(--success); background: color-mix(in oklch, var(--success) 16%, transparent); }
+.tb-assert.fail { color: var(--error); background: color-mix(in oklch, var(--error) 16%, transparent); }
+.tb-shot { padding: 8px 10px; }
 .tb-detail { border-top: 1px solid var(--border-1); }
 .tb-subtools {
   padding: 6px 10px 2px 10px;
@@ -482,3 +494,107 @@ button.path-chip:disabled {
 .ac-body { color: var(--text-2); }
 .ac-body code { font-family: var(--mono); color: var(--accent); }
 .ac-status { font-size: 12px; color: var(--text-3); }
+
+/* — Gate C e2e verification timeline (verify-timeline.tsx) — shares the tool-bubble visual language. —
+   Verdict colors map: PASS=success(green), FAIL=error(red), BLOCKED=warning(yellow), SKIP=muted(gray). */
+.verify-timeline {
+  border: 1px solid var(--border-1);
+  background: var(--bg-1);
+  border-radius: var(--r-md);
+  margin: 8px 0;
+  overflow: hidden;
+}
+.vt-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--border-1);
+  background: var(--bg-2);
+}
+.vt-head-ic { display: inline-flex; color: var(--accent); flex: none; }
+.vt-head-title { color: var(--text-1); font-weight: 500; }
+.vt-head-phase { font-size: 11px; color: var(--warning); text-transform: uppercase; letter-spacing: 0.04em; }
+.vt-head-kind {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  padding: 1px 7px;
+  border-radius: var(--r-sm);
+  border: 1px solid currentColor;
+}
+.vt-head-round { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--text-3); }
+
+.vt-rows { display: flex; flex-direction: column; }
+.vt-row { border-top: 1px solid var(--border-1); }
+.vt-row:first-child { border-top: none; }
+.vt-row-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 12px;
+  text-align: left;
+  font-size: 12.5px;
+}
+.vt-row-head:not(:disabled) { cursor: pointer; }
+.vt-row-head:not(:disabled):hover { background: var(--bg-2); }
+.vt-status { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; flex: none; color: var(--text-4); }
+.vt-row.done .vt-status { color: var(--success); }
+.vt-row.error .vt-status { color: var(--error); }
+.vt-row.pass .vt-status { color: var(--success); }
+.vt-name { font-family: var(--mono); color: var(--text-1); font-size: 12px; flex: none; }
+.vt-row.error .vt-name { color: var(--error); }
+.vt-summary {
+  font-family: var(--mono);
+  color: var(--text-3);
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+.vt-assert {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  flex: none;
+}
+.vt-assert.pass { color: var(--success); background: color-mix(in oklch, var(--success) 16%, transparent); }
+.vt-assert.fail { color: var(--error); background: color-mix(in oklch, var(--error) 16%, transparent); }
+.vt-round { font-family: var(--mono); font-size: 11px; color: var(--text-4); flex: none; }
+.vt-detail { border-top: 1px solid var(--border-1); padding: 8px 12px; }
+.vt-verdict-detail {
+  border-top: 1px solid var(--border-1);
+  padding: 9px 12px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Verdict accent color, applied to header (.vt-head) and toast (.toast-verdict) alike. */
+.verify-pass { color: var(--success); }
+.verify-fail { color: var(--error); }
+.verify-blocked { color: var(--warning); }
+.verify-skip { color: var(--text-3); }
+.vt-head.verify-pass, .vt-head.verify-fail, .vt-head.verify-blocked, .vt-head.verify-skip { border-bottom-color: color-mix(in oklch, currentColor 40%, var(--border-1)); }
+.vt-head.verify-pass .vt-head-title, .vt-head.verify-fail .vt-head-title,
+.vt-head.verify-blocked .vt-head-title, .vt-head.verify-skip .vt-head-title { color: inherit; }
+
+/* Lazy screenshot thumbnail (verify-screenshot.tsx), used by the timeline and the verdict toast. */
+.verify-shot {
+  display: block;
+  max-width: 180px;
+  max-height: 120px;
+  border: 1px solid var(--border-1);
+  border-radius: var(--r-sm);
+  background: var(--bg-2);
+}
+.verify-shot-loading, .verify-shot-missing { width: 180px; height: 110px; }
+.verify-shot-missing { opacity: 0.5; }

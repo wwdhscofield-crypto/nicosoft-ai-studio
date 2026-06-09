@@ -243,7 +243,7 @@ export async function run(
       content: loopRes.text,
       attachments: loopRes.attachments,
       runId,
-      inputTokens: loopRes.freshInTokens, // DISPLAY: real sent (non-cached, accumulated). promptTokens stays the live context-size readout (onUsage/compression above).
+      inputTokens: loopRes.contextTokens, // DISPLAY: current context size (last turn's prompt, NOT accumulated). usage_events below keeps the accumulated total for billing.
       outputTokens: loopRes.outTokens,
     })
   }
@@ -302,6 +302,8 @@ export interface AgentLoopInput {
   contextWindow?: number
   permissionMode: AgentContext['permissionMode']
   imageModel?: string // image backend slug for ns_generate_image (designer); Gemini only
+  initialTodos?: AgentContext['todos'] // seed the run's todos from the shared conv-level list (pipeline continuity)
+  onTodosChange?: AgentContext['setTodos'] // TodoWrite writes back here → the shared conv-level list
 }
 
 // Generic tool→image surfacing. A tool that produces an image (ns_generate_image, code_execution charts,
@@ -334,7 +336,7 @@ export async function runAgentLoop(
   loop: AgentLoopInput,
   cb: AgentCallbacks,
   signal: AbortSignal,
-): Promise<{ text: string; inTokens: number; freshInTokens: number; outTokens: number; reason: string; turns: number; attachments: MessageAttachmentDto[] }> {
+): Promise<{ text: string; inTokens: number; contextTokens: number; outTokens: number; reason: string; turns: number; attachments: MessageAttachmentDto[] }> {
   const sessionDir = join(homedir(), '.nsai', 'sessions', loop.convId)
   await mkdir(join(sessionDir, 'tool-results'), { recursive: true })
   const transcript = createWriteStream(join(sessionDir, 'transcript.jsonl'), { flags: 'a' })
@@ -360,7 +362,8 @@ export async function runAgentLoop(
     permissionMode: loop.permissionMode,
     requestPermission: cb.requestPermission,
     askUser: cb.askUser,
-    todos: [],
+    todos: loop.initialTodos ? [...loop.initialTodos] : [], // seed from the shared conv-level list (pipeline); copy so the run mutates its own array, setTodos pushes back
+    setTodos: loop.onTodosChange, // TodoWrite propagates updates to the shared conv-level list (continuous across a pipeline's experts)
     sessionDir,
     services: registry,
     subAgents,
@@ -391,7 +394,7 @@ export async function runAgentLoop(
 
   let result!: AgentResult
   let inTokens = 0 // TOTAL prompt tokens incl. cache, accumulated across turns → billing (usage_events)
-  let freshIn = 0 // NON-CACHED input only, accumulated → display "↑ sent" (codex/ccb: real sent amount, not cache-inflated N×)
+  let lastContext = 0 // current context size = LAST turn's prompt (display ↑). OVERWRITE, never accumulate — accumulating ANY per-turn input (fresh/non-cached/total) re-counts history N× and balloons on long runs (engineer hit 5.3M). = codex last_token_usage.
   let outTokens = 0
   const toolImages: MessageAttachmentDto[] = [] // images any tool produced this run → assistant-message attachments
   const toolNames = new Map<string, string>() // tool_use id → name, to pair tool:post with its tool
@@ -408,7 +411,7 @@ export async function runAgentLoop(
       let emitted: AgentEvent = value
       if (value.type === 'assistant') {
         inTokens += promptTokensFromUsage(value.usage) // total incl. cache → billing
-        freshIn += value.usage.inTokens + (value.usage.cacheCreationTokens ?? 0) // REAL SENT = fresh + first-time cache creation; excludes cache_read (repeat hits) → not inflated N×, but cache-invariant (reflects what was actually sent, unlike message_start delta alone). = codex non_cached_input.
+        lastContext = promptTokensFromUsage(value.usage) // current context size = this (latest) turn's full prompt incl. cache. OVERWRITE: the last turn's prompt IS the conversation context — cache- AND length-invariant.
         outTokens += value.usage.outTokens
         cb.onUsage?.(promptTokensFromUsage(value.usage)) // live ↑ readout: this turn's prompt size (current context, last)
         for (const b of value.message.content) {
@@ -450,7 +453,7 @@ export async function runAgentLoop(
   return {
     text: finalAssistantText(result.messages),
     inTokens,
-    freshInTokens: freshIn,
+    contextTokens: lastContext,
     outTokens,
     reason: result.reason,
     turns: result.turns,
@@ -500,13 +503,15 @@ export interface DispatchedAgentInput {
   // a read-only Read/Grep/Glob/Bash kit regardless of role — most non-dev roles lack Bash, so they can't run
   // the project checks under their default kit.
   toolNames?: readonly string[]
+  initialTodos?: AgentContext['todos'] // shared conv-level todos seeded into the dispatched run (pipeline continuity)
+  onTodosChange?: AgentContext['setTodos'] // TodoWrite writes back here → the shared conv-level list
 }
 
 export async function runDispatchedAgent(
   d: DispatchedAgentInput,
   cb: AgentCallbacks,
   signal: AbortSignal,
-): Promise<{ text: string; inTokens: number; freshInTokens: number; outTokens: number; attachments: MessageAttachmentDto[] }> {
+): Promise<{ text: string; inTokens: number; contextTokens: number; outTokens: number; attachments: MessageAttachmentDto[] }> {
   let tools: Tool[]
   if (d.toolNames) {
     // Fixed-kit dispatch (Gate B verifier): an explicit whitelist instead of the role's default kit — a
@@ -555,11 +560,13 @@ export async function runDispatchedAgent(
       contextWindow: d.contextWindow,
       permissionMode: d.permissionMode ?? 'default',
       imageModel: d.imageModel,
+      initialTodos: d.initialTodos,
+      onTodosChange: d.onTodosChange,
     },
     cb,
     signal,
   )
-  return { text: res.text, inTokens: res.inTokens, freshInTokens: res.freshInTokens, outTokens: res.outTokens, attachments: res.attachments }
+  return { text: res.text, inTokens: res.inTokens, contextTokens: res.contextTokens, outTokens: res.outTokens, attachments: res.attachments }
 }
 
 // ---- Multi-expert collaboration (consult — doc 19 §5 / §11 phase 3) ----
@@ -630,12 +637,12 @@ export async function runCollabSession(
   hooks: CollabHooks,
   signal: AbortSignal,
   nowMs: () => number,
-): Promise<Map<string, { text: string; inTokens: number; freshInTokens: number; outTokens: number }>> {
+): Promise<Map<string, { text: string; inTokens: number; contextTokens: number; outTokens: number }>> {
   // One service registry per collaboration, shared by all its experts (Flynn starts a backend, Shuri
   // lists + connects). Tree-killed in the finally below when the session ends — no zombie ports survive.
   const registry = new ServiceRegistry()
   const inTokensByRole = new Map<string, number>() // accumulated TOTAL prompt tokens (incl. cache) per expert → billing
-  const freshInByRole = new Map<string, number>() // accumulated NON-CACHED input per expert → per-message ↑ display (not cache-inflated)
+  const contextByRole = new Map<string, number>() // per expert: LAST turn's context size → per-message ↑ display (overwrite, NOT accumulated)
   const outTokensByRole = new Map<string, number>() // accumulated output tokens per expert → its per-message ↓ readout
   const roster = experts.map((x) => ({ id: x.roleId, name: displayName(x.roleId) ?? x.roleId }))
   const lspByExpert: LSPManager[] = [] // one per dev expert; tree-killed in the finally
@@ -702,7 +709,7 @@ export async function runCollabSession(
         })
         let result!: AgentResult
         let turnIn = 0 // total incl. cache → billing
-        let turnFresh = 0 // non-cached → display
+        let turnContext = 0 // last turn's context size → display (overwrite)
         let turnOut = 0
         for (;;) {
           const { value, done } = await gen.next()
@@ -714,7 +721,7 @@ export async function runCollabSession(
           // observable too (previously a gap — collab experts don't go through runAgentLoop).
           if (value.type === 'assistant') {
             turnIn += promptTokensFromUsage(value.usage) // total incl. cache → billing
-            turnFresh += value.usage.inTokens + (value.usage.cacheCreationTokens ?? 0) // real sent = fresh + first-time creation (excludes repeat cache_read) — cache-invariant
+            turnContext = promptTokensFromUsage(value.usage) // current context size (last turn's prompt) — overwrite
             turnOut += value.usage.outTokens
             for (const b of value.message.content) {
               if (isContentBlock(b) && b.type === 'tool_use') {
@@ -732,7 +739,7 @@ export async function runCollabSession(
           hooks.onExpertEvent(x.roleId, value)
         }
         inTokensByRole.set(x.roleId, (inTokensByRole.get(x.roleId) ?? 0) + turnIn)
-        freshInByRole.set(x.roleId, (freshInByRole.get(x.roleId) ?? 0) + turnFresh)
+        contextByRole.set(x.roleId, turnContext) // overwrite with this run's last context size (not accumulated)
         outTokensByRole.set(x.roleId, (outTokensByRole.get(x.roleId) ?? 0) + turnOut)
         return result.messages
       },
@@ -747,7 +754,7 @@ export async function runCollabSession(
   try {
     const texts = await new CollabSession(specs, onEvent, nowMs).run(signal)
     return new Map(
-      [...texts].map(([roleId, text]): [string, { text: string; inTokens: number; freshInTokens: number; outTokens: number }] => [roleId, { text, inTokens: inTokensByRole.get(roleId) ?? 0, freshInTokens: freshInByRole.get(roleId) ?? 0, outTokens: outTokensByRole.get(roleId) ?? 0 }])
+      [...texts].map(([roleId, text]): [string, { text: string; inTokens: number; contextTokens: number; outTokens: number }] => [roleId, { text, inTokens: inTokensByRole.get(roleId) ?? 0, contextTokens: contextByRole.get(roleId) ?? 0, outTokens: outTokensByRole.get(roleId) ?? 0 }])
     )
   } finally {
     hooks.onServices?.([])
