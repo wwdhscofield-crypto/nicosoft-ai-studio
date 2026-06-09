@@ -130,9 +130,6 @@ interface ChatState {
   contextTokens: Record<string, number> // per-conversation CURRENT context size (count_tokens of the last sent turn) — drives the composer "/ window" indicator
   liveInput: Record<string, number> // per-conversation REAL CUMULATIVE input tokens, streamed live during a turn (↑ readout) — overwritten by streaming pings; NOT accumulated
   liveOutput: Record<string, number> // per-conversation REAL output tokens, streamed live during a turn (↓ readout) — overwritten by streaming pings; NOT accumulated
-  sessionOutput: Record<string, number> // per-conversation session output tokens accumulated from turn-final events only
-  sessionInputFresh: Record<string, number> // per-conversation fresh input tokens accumulated from turn-final events only
-  sessionCached: Record<string, number> // per-conversation cache-read + cache-creation input tokens accumulated from turn-final events only
   streamStartedAt: Record<string, number> // per-conversation epoch ms when the current turn started; read only while streaming (Overview "In progress" elapsed). Overwritten each send, left stale after (never read when not streaming)
   retry: Record<string, { attempt: number; max: number; since: number } | null> // per-conversation transient-failure retry status ("retrying (N/M)"); null/absent when not retrying
   loadConversations: () => Promise<void>
@@ -626,16 +623,9 @@ export const useChat = create<ChatState>((set, get) => {
           }))
         }
       } else if (d.kind === 'turn-final') {
-        const cacheRead = Math.max(0, d.cacheReadInputTokens ?? 0)
-        // REAL SENT = total input minus cache_read repeat hits (= fresh delta + first-time cache_creation). cache_read is
-        // the repeat-hit portion the cache saved us from re-sending → booked as "cached", not "sent". Cache-invariant.
-        const fresh = Math.max(0, d.inputTokens - cacheRead)
+        // A request completed. Clear the live overlay so the readout falls back to the current context size
+        // instead of lingering on this request's last streamed cumulative ping until the next request starts.
         set((s) => ({
-          sessionOutput: { ...s.sessionOutput, [d.convId]: (s.sessionOutput[d.convId] ?? 0) + (d.outputTokens ?? 0) },
-          sessionInputFresh: { ...s.sessionInputFresh, [d.convId]: (s.sessionInputFresh[d.convId] ?? 0) + fresh },
-          sessionCached: { ...s.sessionCached, [d.convId]: (s.sessionCached[d.convId] ?? 0) + cacheRead },
-          // This request is now booked into the session totals. Clear the live overlay so the readout does not
-          // show session + the same request's last streamed cumulative ping until the next request starts.
           liveInput: { ...s.liveInput, [d.convId]: 0 },
           liveOutput: { ...s.liveOutput, [d.convId]: 0 }
         }))
@@ -901,9 +891,6 @@ export const useChat = create<ChatState>((set, get) => {
     contextTokens: {},
     liveInput: {},
     liveOutput: {},
-    sessionOutput: {},
-    sessionInputFresh: {},
-    sessionCached: {},
     streamStartedAt: {},
     retry: {},
 

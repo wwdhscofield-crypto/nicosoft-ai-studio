@@ -524,17 +524,15 @@ export function ChatView({ expert, onOpenSettings, onBackToProject }: { expert: 
   const { byId: expertById } = useAllExperts()
   const activeConv = chat.activeConv
   const messages = activeConv ? (chat.byConversation[activeConv] ?? []) : []
-  // Live ↑/↓ readout is cache-aware and avoids double-counting:
-  //   • session* totals accumulate only exactly-once turn-final usage.
-  //   • liveInput/liveOutput are the current request overlay from streaming pings and only overwrite.
-  //   • contextTokens is only a pre-usage fallback so the readout is visible before providers report usage.
+  // Live ↑/↓ readout shows the CURRENT request only, never a session running total. Accumulating per-turn
+  // input re-counts the (cache-resent) context N× and balloons on long multi-dispatch runs (Danny hit 11M).
+  //   • liveInput/liveOutput are the current request overlay from streaming pings (overwrite, not summed).
+  //   • contextTokens is the current context size — a pre-usage fallback before providers report live usage.
   const liveIn = activeConv ? (chat.liveInput[activeConv] ?? 0) : 0
   const liveOut = activeConv ? (chat.liveOutput[activeConv] ?? 0) : 0
   const ctxIn = activeConv ? (chat.contextTokens[activeConv] ?? 0) : 0
-  const sessionOut = activeConv ? (chat.sessionOutput[activeConv] ?? 0) : 0
-  const sessionFresh = activeConv ? (chat.sessionInputFresh[activeConv] ?? 0) : 0
-  const baseIn = sessionFresh + liveIn || ctxIn
-  const baseOut = sessionOut + liveOut
+  const baseIn = liveIn || ctxIn
+  const baseOut = liveOut
   const convStreaming = activeConv ? (chat.streaming[activeConv] ?? false) : false
   const retry = activeConv ? chat.retry[activeConv] : null
   const error = activeConv ? chat.error[activeConv] : null
