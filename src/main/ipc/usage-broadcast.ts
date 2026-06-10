@@ -2,10 +2,11 @@
 // Three `kind`s flow through here (see ConvUsage):
 //   • 'context' — the current context size (count_tokens of the turn being sent), measured up front per
 //     turn → drives the composer's "/ window" indicator.
-//   • 'live' — the real CUMULATIVE ↑input/↓output streamed per chunk → drives the live ↑/↓ readout only.
-// They MUST stay separate: the cumulative 'live' input climbs without bound across a long multi-request
-// agent turn, so routing it into the context indicator would make it read e.g. 4M/1M (BUG 1). Keyed by
-// convId — every path knows its convId, so we skip the streamId→conv indirection the done events use.
+//   • 'live' — the in-flight request's own ↑prompt size / ↓running output (overwrite per request, never
+//     summed across requests) → drives the live ↑/↓ readout only.
+// They stay separate because they answer different questions ("how full is the window" vs "what is this
+// request doing right now"), not because either accumulates. Keyed by convId — every path knows its
+// convId, so we skip the streamId→conv indirection the done events use.
 import type { WebContents } from 'electron'
 import type { ConvUsage, MessageAttachmentDto } from './contracts'
 

@@ -371,8 +371,9 @@ export const useChat = create<ChatState>((set, get) => {
     //   • 'context' — the CURRENT context size (count_tokens of the turn being sent), measured up front per
     //     turn → contextTokens, which the composer's "/ window" indicator reads. Roughly constant per turn,
     //     bounded by the model window.
-    //   • 'live'    — the REAL CUMULATIVE ↑input/↓output streamed per chunk → liveInput / liveOutput, which
-    //     feed the current live overlay only. Streaming pings OVERWRITE within-request and must never accumulate.
+    //   • 'live'    — the in-flight request's REAL ↑prompt/↓output → liveInput / liveOutput, which feed the
+    //     current live overlay only. Every ping OVERWRITES (each request reports its own full prompt size,
+    //     so ↑ tracks current context in real time) — never accumulate these.
     //   • 'turn-final' — exactly-once final usage for a single LLM request → session accumulators.
     window.api.onConvUsage((d) => {
       // Coordinator dispatched sub-step (roleId present, not the coordinator's own line) → this usage belongs

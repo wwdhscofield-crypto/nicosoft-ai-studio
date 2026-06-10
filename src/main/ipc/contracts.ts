@@ -111,17 +111,18 @@ export interface AgentTextDelta {
 }
 // Unified live usage for ANY in-flight turn (chat / agent / coordinator / image), keyed by convId.
 //
-// Two distinct measurements ride this one channel, disambiguated by `kind`:
+// Distinct measurements ride this one channel, disambiguated by `kind`:
 //   • 'context' — the CURRENT context size: the prompt tokens of the turn about to be sent (count_tokens,
 //     measured up front per turn). Drives the composer's "/ window" indicator. Roughly constant across a
 //     turn (≈ the last send's prompt), bounded by the model window.
-//   • 'live' — the REAL CUMULATIVE usage streamed per chunk where the provider reports it (anthropic's
-//     message_delta, gemini's usageMetadata): inputTokens climbs across a long agent turn (it sums every
-//     upstream request's prompt), outputTokens is the running output. Drives the live ↑/↓ readout ONLY.
+//   • 'live' — the in-flight request's REAL usage, streamed as the provider reports it: inputTokens is
+//     THAT request's full prompt size (input + cache read + cache write — anthropic sets it once at
+//     message_start, gemini per chunk, openai once at completed); outputTokens is its running output.
+//     Each new upstream request OVERWRITES the previous values — the ↑ readout therefore tracks the
+//     current context in real time and NEVER sums across requests (the pre-doc-39 implementation did
+//     sum, ballooning to millions over a long run — that's history, don't reintroduce it).
 //   • 'turn-final' — exactly-once final provider usage for one LLM request. The renderer accumulates these
 //     into session totals; streaming 'live' pings must never be accumulated.
-// Keeping them separate is essential: the cumulative 'live' input can reach millions over a long
-// multi-request turn — feeding it into the context indicator would make it read 4M/1M (the BUG-1 symptom).
 // outputTokens is omitted on the initial / between-turns input-only ping (the renderer keeps the last real
 // output then); OpenAI, which only reports usage at the end, lands it once at done.
 export interface ConvUsage {
