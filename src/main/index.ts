@@ -34,6 +34,11 @@ declare const __APP_VERSION__: string
 // path, so stored API keys keep decrypting. Any migration failure falls back to the legacy dir: starting
 // on the old path beats starting on an empty profile.
 function resolveUserDataDir(): string {
+  // Isolated-world override for e2e drivers: pointing userData at a throwaway dir keeps the Chromium
+  // profile AND credentials.json away from the real ones (Playwright forces --use-mock-keychain, so any
+  // key a driver stores is ciphertext the real app can never decrypt — see e2e/_helpers.mjs). Pair with
+  // STUDIO_DATA_DIR (db/connection.ts) to isolate the SQLite/media root too.
+  if (process.env.STUDIO_USER_DATA) return process.env.STUDIO_USER_DATA
   const base = app.getPath('appData')
   const next = join(base, 'NicoSoft AI Studio')
   const legacy = join(base, 'nicosoft-ai-studio')

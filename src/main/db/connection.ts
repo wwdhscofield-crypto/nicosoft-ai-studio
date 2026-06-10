@@ -11,7 +11,9 @@ import { runMigrations } from './migrate'
 let instance: DatabaseSync | null = null
 
 export function dataDir(): string {
-  const dir = join(homedir(), '.nsai')
+  // Isolated-world override for e2e drivers (pairs with STUDIO_USER_DATA in main/index.ts): keeps the
+  // driver's SQLite + media in a throwaway dir instead of the user's real ~/.nsai.
+  const dir = process.env.STUDIO_DATA_DIR || join(homedir(), '.nsai')
   mkdirSync(dir, { recursive: true })
   return dir
 }
