@@ -1,6 +1,6 @@
 // Shared primitives — recreated from the prototype's components.jsx.
 import { Fragment } from 'react'
-import type { CSSProperties, ReactElement } from 'react'
+import type { CSSProperties, ReactElement, ReactNode } from 'react'
 import { Icons } from './icons'
 import { STUDIO_DATA } from '@/data/studio-data'
 import type { Expert } from '@/types'
@@ -95,6 +95,52 @@ export function DispatchBadge({ chain }: { chain: string[] }): ReactElement {
               <span className="d-dot" style={{ background: e.color }} /> {e.name}
             </span>
           </Fragment>
+        )
+      })}
+    </div>
+  )
+}
+
+/* — small flat switch (one source: previously memory.tsx MemToggle + extensions.tsx Toggle) — */
+export function Switch({ on, onClick, disabled }: { on: boolean; onClick: () => void; disabled?: boolean }): ReactElement {
+  return (
+    <button
+      className={'switch' + (on ? ' on' : '') + (disabled ? ' disabled' : '')}
+      onClick={disabled ? undefined : onClick}
+      role="switch"
+      aria-checked={on}
+      disabled={disabled}
+    >
+      <span className="knob" />
+    </button>
+  )
+}
+
+/* — segmented control (one source: previously hand-written <div className="segmented"> in 8 places) — */
+export interface SegmentedOption {
+  v: string
+  l: ReactNode
+  disabled?: boolean
+}
+export function Segmented({
+  options,
+  value,
+  onChange,
+  className
+}: {
+  options: Array<string | SegmentedOption>
+  value: string
+  onChange: (v: string) => void
+  className?: string
+}): ReactElement {
+  return (
+    <div className={className ? `${className} segmented` : 'segmented'}>
+      {options.map((o) => {
+        const opt: SegmentedOption = typeof o === 'string' ? { v: o, l: o } : o
+        return (
+          <button key={opt.v} className={value === opt.v ? 'active' : ''} disabled={opt.disabled} onClick={() => onChange(opt.v)}>
+            {opt.l}
+          </button>
         )
       })}
     </div>

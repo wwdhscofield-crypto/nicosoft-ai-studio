@@ -6,6 +6,7 @@ import { Fragment, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import { Icons } from '@/components/icons'
+import { Segmented } from '@/components/primitives'
 import { STUDIO_DATA } from '@/data/studio-data'
 import { toast } from '@/stores/toast'
 import { useAnchoredMenu } from '@/lib/use-anchored-menu'
@@ -60,22 +61,6 @@ interface SelectControlProps {
   options: SelectOption[]
   value: string
   onChange: (v: string) => void
-}
-
-function Segmented({ options, value, onChange }: SelectControlProps): ReactElement {
-  return (
-    <div className="segmented">
-      {options.map((o) => {
-        const val = typeof o === 'string' ? o : o.v
-        const label = typeof o === 'string' ? o : o.l
-        return (
-          <button key={val} className={value === val ? 'active' : ''} onClick={() => onChange(val)}>
-            {label}
-          </button>
-        )
-      })}
-    </div>
-  )
 }
 
 /* — Custom dark dropdown (matches the design system, not a native select) — */

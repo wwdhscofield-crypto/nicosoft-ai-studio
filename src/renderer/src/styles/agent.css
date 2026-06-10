@@ -464,6 +464,10 @@ button.path-chip:disabled {
 }
 .iv-nav {
   position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 40px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -506,12 +510,6 @@ button.path-chip:disabled {
   width: 36px;
   padding: 0;
   justify-content: center;
-}
-.iv-nav {
-  top: 50%;
-  transform: translateY(-50%);
-  width: 40px;
-  height: 40px;
 }
 .iv-nav.left {
   left: 18px;

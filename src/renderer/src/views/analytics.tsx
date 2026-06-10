@@ -7,7 +7,8 @@ import { useEffect, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
 import { Icons } from '@/components/icons'
 import { Avatar } from '@/components/primitives'
-import { STUDIO_DATA } from '@/data/studio-data'
+import { STUDIO_DATA, expertMeta } from '@/data/studio-data'
+import { fmtTokens } from '@/lib/format'
 import { useChat } from '@/stores/chat'
 import type { AnalyticsSummary } from '@/lib/api'
 
@@ -24,17 +25,6 @@ function providerOf(model: string): string {
   if (m.includes('gpt') || m.startsWith('o1') || m.startsWith('o3') || m.includes('openai')) return 'openai'
   if (m.includes('gemini') || m.includes('imagen') || m.includes('nano-banana')) return 'gemini'
   return 'other'
-}
-// expert id → display name + color (built-ins; unknown/custom ids fall back to the raw id).
-function expertMeta(id: string): { name: string; color: string } {
-  const e = STUDIO_DATA.EXPERT_BY_ID[id]
-  return e ? { name: e.name, color: e.color } : { name: id || '—', color: 'var(--text-3)' }
-}
-// compact token count: 6_214_668 → "6.2M", 707_147 → "707k".
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
-  if (n >= 1_000) return Math.round(n / 1_000) + 'k'
-  return String(n)
 }
 
 type TrendPoint = number | { v: number }

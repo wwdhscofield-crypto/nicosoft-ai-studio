@@ -10,6 +10,7 @@ import { useRoles } from '@/stores/roles'
 import { useChat, roleHasAgent } from '@/stores/chat'
 import { useCustomRoles } from '@/stores/custom-roles'
 import { toast } from '@/stores/toast'
+import { ipcErrorMessage } from '@/lib/ipc-error'
 import { useT } from '@/stores/locale'
 import type { Expert } from '@/types'
 import type { EndpointDto, EndpointInput, ModelInfo, McpServerDto, McpServerInput, McpTransport, SkillDto, SkillInput, SkillSource } from '@/lib/api'
@@ -555,10 +556,8 @@ export function SkillDialog({
       toast.success(t('skill.saved'))
       onSaved()
     } catch (e) {
-      // Surface the service's reason (imported: no SKILL.md / empty body; builtin: missing name/body),
-      // stripping the layered "Error: … invoking remote method … Error:" IPC wrapper.
-      const msg = e instanceof Error ? e.message : String(e)
-      setErr(msg.split(/Error:\s*/).filter(Boolean).pop() ?? msg)
+      // Surface the service's reason (imported: no SKILL.md / empty body; builtin: missing name/body).
+      setErr(ipcErrorMessage(e))
       toast.error(t('skill.saveFailed'))
     }
   }
@@ -703,8 +702,7 @@ export function PluginDialog({
       await window.api.plugins.install(dirPath.trim())
       onInstalled()
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      setErr(msg.split(/Error:\s*/).filter(Boolean).pop() ?? msg)
+      setErr(ipcErrorMessage(e))
       setInstalling(false)
     }
   }

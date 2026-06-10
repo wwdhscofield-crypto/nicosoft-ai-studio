@@ -17,10 +17,10 @@ import type { Expert, MemoryItem } from '@/types'
 import type { MemoryDto } from '@/lib/api'
 import { Icons } from '@/components/icons'
 import { useRoles } from '@/stores/roles'
-import { Avatar } from '@/components/primitives'
+import { Avatar, Switch } from '@/components/primitives'
 import { Dropdown } from '@/views/profile'
 import { ConfirmDialog } from '@/components/dialogs'
-import { MemToggle, MemoryLayer } from '@/views/memory'
+import { MemoryLayer } from '@/views/memory'
 import { THINKING_OPTIONS } from '@/lib/thinking'
 import { useRoleBinding, FAMILY_LABEL } from '@/lib/use-role-binding'
 
@@ -193,7 +193,7 @@ function MemorySection({ expertId }: { expertId: string }): ReactElement {
         <span className="ds-title">Memory <span className="ds-sub">— what this expert remembers about you</span></span>
         <label className="learn-toggle">
           <span>Self-learning</span>
-          <MemToggle on={learning} onClick={() => void mem.setSelfLearning(expertId, !learning).catch(() => toast.error(t('mem.updateSettingFailed')))} />
+          <Switch on={learning} onClick={() => void mem.setSelfLearning(expertId, !learning).catch(() => toast.error(t('mem.updateSettingFailed')))} />
         </label>
       </div>
       {empty ? (
@@ -278,7 +278,7 @@ export function ExpertDetail({
             ) : (
               <div className="role-enable-pill">
                 <span>{roleDisabled ? "Role disabled" : "Role enabled"}</span>
-                <MemToggle on={!roleDisabled} onClick={() => roles.toggle(expertId)} />
+                <Switch on={!roleDisabled} onClick={() => roles.toggle(expertId)} />
               </div>
             )}
           </div>

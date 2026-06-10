@@ -1181,8 +1181,7 @@
 .ep-menu { position: relative; display: inline-flex; }
 .icon-btn.on { background: var(--bg-3); color: var(--text-1); }
 
-/* command palette — avatar / dot rows */
-.cmdk-row .cr-icon { display: grid; place-items: center; }
+/* command palette — avatar / dot rows (.cr-icon layout comes from the main cmdk block above) */
 .cr-dot { width: 8px; height: 8px; border-radius: 50%; }
 
 /* ============================================================

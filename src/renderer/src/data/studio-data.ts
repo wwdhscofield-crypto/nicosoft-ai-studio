@@ -80,3 +80,10 @@ export const STUDIO_DATA: StudioData = {
   GREETINGS,
   EXTENSIONS
 }
+
+// expert id → display name + color (built-ins; unknown/custom ids fall back to the raw id). Shared by
+// the Overview timeline and the Stats page.
+export function expertMeta(id: string): { name: string; color: string } {
+  const e = EXPERT_BY_ID[id]
+  return e ? { name: e.name, color: e.color } : { name: id || '\u2014', color: 'var(--text-3)' }
+}

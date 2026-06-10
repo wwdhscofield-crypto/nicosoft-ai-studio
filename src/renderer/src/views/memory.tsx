@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactElement } from 'react'
 import { Icons } from '@/components/icons'
-import { Avatar } from '@/components/primitives'
+import { Avatar, Segmented, Switch } from '@/components/primitives'
 import { STUDIO_DATA } from '@/data/studio-data'
 import { Dropdown } from '@/views/profile'
 import { Pagination } from '@/components/pagination'
@@ -124,14 +124,6 @@ export function MemoryLayer({
   )
 }
 
-/* — small flat switch (local to memory module) — */
-export function MemToggle({ on, onClick }: { on: boolean; onClick: () => void }): ReactElement {
-  return (
-    <button className={'switch' + (on ? ' on' : '')} onClick={onClick} role="switch" aria-checked={on}>
-      <span className="knob" />
-    </button>
-  )
-}
 
 // Flatten the backend memory list into UI rows. shared → SHARED (scope 'shared'); role → ROLE (scope =
 // roleId); collab → COLLAB. uid is the real memory id, used directly for update/remove.
@@ -260,14 +252,14 @@ export function MemorySettings(): ReactElement {
             <div className="mss-title">{t('mem.selfLearning')}</div>
             <div className="mss-sub">{t('mem.selfLearningSub')}</div>
           </div>
-          <MemToggle on={master} onClick={toggleMaster} />
+          <Switch on={master} onClick={toggleMaster} />
         </div>
         <div className="mem-self-grid">
           {EXPERTS.map((e) => (
             <div className="mse-row" key={e.id}>
               <Avatar expert={e} size={20} />
               <span className="mse-name">{e.name}</span>
-              <MemToggle
+              <Switch
                 on={perExpert[e.id] !== false}
                 onClick={() => void mem.setSelfLearning(e.id, perExpert[e.id] === false).catch(() => toast.error(t('mem.updateSettingFailed')))}
               />
@@ -286,13 +278,7 @@ export function MemorySettings(): ReactElement {
         </div>
         <div className="mf-group">
           <span className="mf-label">{t('mem.layer')}</span>
-          <div className="segmented">
-            {layers.map((l) => (
-              <button key={l} className={fLayer === l ? 'active' : ''} onClick={() => setFLayer(l)}>
-                {l === 'all' ? t('mem.all') : t('mem.' + l.toLowerCase())}
-              </button>
-            ))}
-          </div>
+          <Segmented options={layers.map((l) => ({ v: l, l: l === 'all' ? t('mem.all') : t('mem.' + l.toLowerCase()) }))} value={fLayer} onChange={(v) => setFLayer(v as typeof layers[number])} />
         </div>
         <span className="mf-count">{t('mem.count', { n: filtered.length })}</span>
       </div>

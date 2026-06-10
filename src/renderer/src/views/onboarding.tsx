@@ -5,7 +5,7 @@
 import { useState } from 'react'
 import type { ReactElement } from 'react'
 import { Icons } from '@/components/icons'
-import { Avatar } from '@/components/primitives'
+import { Avatar, Segmented } from '@/components/primitives'
 import { ProfileForm } from '@/views/profile'
 import { STUDIO_DATA } from '@/data/studio-data'
 import type { EndpointDto } from '@/lib/api'
@@ -124,13 +124,7 @@ function OnboardEndpoint({ created, onCreated }: { created: EndpointDto | null; 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 15 }}>
         <div>
           <label className="field-label">Provider</label>
-          <div className="segmented">
-            {(['anthropic', 'openai', 'gemini'] as const).map((p) => (
-              <button key={p} className={proto === p ? 'active' : ''} onClick={() => pickProto(p)} disabled={!!created}>
-                {PROTO_LABEL[p]}
-              </button>
-            ))}
-          </div>
+          <Segmented options={(['anthropic', 'openai', 'gemini'] as const).map((p) => ({ v: p, l: PROTO_LABEL[p], disabled: !!created }))} value={proto} onChange={(v) => pickProto(v as 'anthropic' | 'openai' | 'gemini')} />
         </div>
         <div>
           <label className="field-label">Base URL</label>

@@ -7,6 +7,7 @@
 import { useState } from 'react'
 import type { ReactElement } from 'react'
 import { Icons } from '@/components/icons'
+import { basename } from '@/lib/path'
 import { CodeBlock, Markdown, extToLang } from '@/components/markdown'
 import { VerifyScreenshot } from '@/components/verify-screenshot'
 import type { ToolCall, ServerNote } from '@/stores/chat'
@@ -202,7 +203,7 @@ export function ExploreGroup({ tools, live = false }: { tools: ToolCall[]; live?
     new Set(
       tools
         .map((t) => toolSummary(t.name, (t.input ?? {}) as Record<string, unknown>))
-        .map((s) => s.split(/[\\/]/).pop() || s)
+        .map(basename)
         .filter(Boolean)
     )
   )

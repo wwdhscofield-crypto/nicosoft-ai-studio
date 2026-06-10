@@ -7,8 +7,9 @@
 import { Fragment, useEffect, useState } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
 import { Icons } from '@/components/icons'
-import { Avatar, AvatarStack } from '@/components/primitives'
-import { STUDIO_DATA } from '@/data/studio-data'
+import { Avatar, AvatarStack, Segmented } from '@/components/primitives'
+import { STUDIO_DATA, expertMeta } from '@/data/studio-data'
+import { fmtTokens } from '@/lib/format'
 import { useRoles } from '@/stores/roles'
 import { useChat } from '@/stores/chat'
 import { StatsPage } from '@/views/analytics'
@@ -16,11 +17,6 @@ import type { AnalyticsSummary, ConversationDto } from '@/lib/api'
 
 type ProjectDto = Awaited<ReturnType<typeof window.api.project.list>>[number]
 
-const expertMeta = (id: string): { name: string; color: string } => {
-  const e = STUDIO_DATA.EXPERT_BY_ID[id]
-  return e ? { name: e.name, color: e.color } : { name: id || '—', color: 'var(--text-3)' }
-}
-const fmtTokens = (n: number): string => (n >= 1_000_000 ? (n / 1_000_000).toFixed(1) + 'M' : n >= 1_000 ? Math.round(n / 1_000) + 'k' : String(n))
 const fmtElapsed = (ms: number): string => {
   const s = Math.max(0, Math.floor(ms / 1000))
   if (s < 60) return `${s}s`
@@ -247,10 +243,7 @@ export function StudioHome({
     <div className="main-col">
       <div className="conv-header">
         <span className="conv-title">Overview</span>
-        <div className="studio-tabs segmented">
-          <button className={tab === 'activity' ? 'active' : ''} onClick={() => setTab('activity')}>Activity</button>
-          <button className={tab === 'stats' ? 'active' : ''} onClick={() => setTab('stats')}>Stats</button>
-        </div>
+        <Segmented className="studio-tabs" options={[{ v: 'activity', l: 'Activity' }, { v: 'stats', l: 'Stats' }]} value={tab} onChange={(v) => setTab(v as 'activity' | 'stats')} />
         <span className="conv-sub" style={{ marginLeft: 'auto' }}>
           {tab === 'activity' ? 'live work · right now' : 'local analytics · today'}
         </span>

@@ -10,7 +10,7 @@ import type { ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import { Icons } from '@/components/icons'
 import { useAnchoredMenu } from '@/lib/use-anchored-menu'
-import { Avatar, HealthDot } from '@/components/primitives'
+import { Avatar, HealthDot, Segmented, Switch } from '@/components/primitives'
 import { ImageModelPicker } from '@/components/composer-controls'
 import { McpDialog, SkillDialog, PluginDialog } from '@/components/dialogs'
 import { useRoleBinding } from '@/lib/use-role-binding'
@@ -19,21 +19,6 @@ import type { McpServerDto, SkillDto, PluginDto } from '@/lib/api'
 import type { PluginBundle } from '@/types'
 import { toast } from '@/stores/toast'
 import { useT } from '@/stores/locale'
-
-/* — small flat switch — */
-function Toggle({ on, onClick, disabled }: { on: boolean; onClick: () => void; disabled?: boolean }): ReactElement {
-  return (
-    <button
-      className={"switch" + (on ? " on" : "") + (disabled ? " disabled" : "")}
-      onClick={disabled ? undefined : onClick}
-      role="switch"
-      aria-checked={on}
-      disabled={disabled}
-    >
-      <span className="knob" />
-    </button>
-  );
-}
 
 /* — three-dot row action menu. Portals to <body> with fixed positioning (useAnchoredMenu) so the
      .ext-list overflow:hidden / .ext-body scroll can't clip it off at the card edge. Self-manages
@@ -174,7 +159,7 @@ function MCPTab({ onCount }: { onCount: (n: number) => void }): ReactElement {
                 <div className="ext-right">
                   <span className="ext-tools">{ok ? m.toolCount + " tools" : "—"}</span>
                   <ScopeChip scope={m.scope} />
-                  <Toggle on={m.enabled} onClick={() => onToggle(m)} disabled={owned} />
+                  <Switch on={m.enabled} onClick={() => onToggle(m)} disabled={owned} />
                 </div>
                 {owned ? null : (
                   <RowMenu
@@ -246,7 +231,7 @@ function SkillsTab({ onCount }: { onCount: (n: number) => void }): ReactElement 
                 </div>
                 <div className="ext-right">
                   <ScopeChip scope={s.scope} />
-                  <Toggle on={s.enabled} onClick={() => onToggle(s)} disabled={owned} />
+                  <Switch on={s.enabled} onClick={() => onToggle(s)} disabled={owned} />
                 </div>
                 {owned ? null : (
                   <RowMenu
@@ -310,7 +295,7 @@ function PluginsTab({ onCount }: { onCount: (n: number) => void }): ReactElement
               </div>
               <div className="ext-right">
                 <span className="ext-summary">{bundleSummary(p.bundles)}</span>
-                <Toggle on={p.enabled} onClick={() => onToggle(p)} />
+                <Switch on={p.enabled} onClick={() => onToggle(p)} />
               </div>
               <RowMenu items={[{ label: "Uninstall", danger: true, onClick: () => onUninstall(p.id) }]} />
             </div>
@@ -369,7 +354,7 @@ function ToolsTab(): ReactElement {
           </div>
           <div className="ext-right">
             <ScopeChip scope={['designer']} />
-            <Toggle on={enabled} onClick={toggle} />
+            <Switch on={enabled} onClick={toggle} />
           </div>
         </div>
       </div>
@@ -387,12 +372,7 @@ export function ExtensionsView(): ReactElement {
     <div className="main-col">
       <div className="conv-header">
         <span className="conv-title">Extensions</span>
-        <div className="studio-tabs segmented">
-          <button className={tab === "mcp" ? "active" : ""} onClick={() => setTab("mcp")}>MCP</button>
-          <button className={tab === "skills" ? "active" : ""} onClick={() => setTab("skills")}>Skills</button>
-          <button className={tab === "plugins" ? "active" : ""} onClick={() => setTab("plugins")}>Plugins</button>
-          <button className={tab === "tools" ? "active" : ""} onClick={() => setTab("tools")}>Tools</button>
-        </div>
+        <Segmented className="studio-tabs" options={[{ v: 'mcp', l: 'MCP' }, { v: 'skills', l: 'Skills' }, { v: 'plugins', l: 'Plugins' }, { v: 'tools', l: 'Tools' }]} value={tab} onChange={setTab} />
         <span className="conv-sub" style={{ marginLeft: "auto" }}>
           {counts[tab]}{" "}
           {tab === "tools"

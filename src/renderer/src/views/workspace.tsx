@@ -11,8 +11,7 @@ import { useChat } from '@/stores/chat'
 import { useWorkspace } from '@/stores/workspace'
 import { toast } from '@/stores/toast'
 import { useT } from '@/stores/locale'
-
-const basename = (p: string): string => p.split(/[\\/]/).pop() || p
+import { basename } from '@/lib/path'
 // Tools that CREATE/CHANGE a file on disk — only these count as "produced" (Read is excluded by design).
 const PRODUCE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'WritePdf'])
 // Agent TodoWrite statuses → the existing .task-status pill class + a readable label.

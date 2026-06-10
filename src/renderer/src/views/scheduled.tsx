@@ -8,10 +8,10 @@
 import { Fragment, useCallback, useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import { STUDIO_DATA } from '@/data/studio-data'
-import { Avatar } from '@/components/primitives'
+import { Avatar, Segmented, Switch } from '@/components/primitives'
 import { Icons } from '@/components/icons'
 import { Dropdown } from '@/views/profile'
-import { MemToggle } from '@/views/memory'
+
 import { toast } from '@/stores/toast'
 import { useT } from '@/stores/locale'
 
@@ -227,7 +227,7 @@ function ScheduledList({
                   <span className="sched-next">Next · {fmtTime(t.nextRunAt)}</span>
                   <LastRun task={t} onOpenConversation={onOpenConversation} />
                 </div>
-                <MemToggle on={t.enabled} onClick={() => onToggle(t)} />
+                <Switch on={t.enabled} onClick={() => onToggle(t)} />
                 <button className="icon-btn" title="Edit" onClick={() => onEdit(t.id)}>
                   <Icons.edit size={15} />
                 </button>
@@ -330,13 +330,7 @@ function ScheduledEditor({
           <div className="pf-grid">
             <div className="pf-field">
               <label className="field-label">Trigger</label>
-              <div className="segmented">
-                {TRIGGER_TYPES.map((tt) => (
-                  <button key={tt.v} className={tf.type === tt.v ? 'active' : ''} onClick={() => setTrig({ type: tt.v })}>
-                    {tt.l}
-                  </button>
-                ))}
-              </div>
+              <Segmented options={TRIGGER_TYPES.map((tt) => ({ v: tt.v, l: tt.l }))} value={tf.type} onChange={(v) => setTrig({ type: v as TriggerForm['type'] })} />
             </div>
             <div className="pf-field">
               <label className="field-label">{tf.type === 'cron' ? 'Cron expression' : 'When'}</label>
