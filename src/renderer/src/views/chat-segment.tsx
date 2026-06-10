@@ -7,7 +7,8 @@ import type { CSSProperties, ReactElement } from 'react'
 import type { ViewerImage } from '@/components/image-viewer'
 import { Avatar, NameChip } from '@/components/primitives'
 import type { ChatMessage, MsgBlock, ToolCall } from '@/stores/chat'
-import { ToolBubble, ServerBubble, Sources, ExploreGroup, EXPLORE_TOOL_NAMES } from '@/components/tool-bubble'
+import { ServerBubble, Sources } from '@/components/tool-bubble'
+import { ToolRun } from '@/components/tool-run'
 import { Markdown } from '@/components/markdown'
 import { useT } from '@/stores/locale'
 import type { Expert } from '@/types'
@@ -118,19 +119,17 @@ function isSynthesis(msg: ChatMessage): boolean {
 }
 
 /* — The body of an assistant RUN, walked at BLOCK level across all its turns in emission order. Model text
- *   NEVER folds (codex keeps agent messages outside the exploring cell; claude-code breaks its collapse
- *   groups on assistant text): narration and answers render in place, permanently visible, and they BREAK
- *   the explore fold — so folds are small cells sitting exactly where their silent tool streak happened,
- *   never one big cell pinned to the segment top hiding what the model said. Only consecutive SILENT探索
- *   tools (Read/Grep/Glob/LS, ≥2 in a row, across turn boundaries) fold; a lone one stays a plain row;
- *   side-effecting tools always render in place. — */
+ *   NEVER folds (claude-code breaks its collapse groups on assistant text): narration and answers render in
+ *   place, permanently visible, and they BREAK the tool run — so runs are small count-summary lines sitting
+ *   exactly where their tool streak happened, never one big cell pinned to the segment top hiding what the
+ *   model said. ALL consecutive tools between two pieces of text aggregate into ONE ToolRun (CCD style:
+ *   "Read 13 files, ran 18 commands, edited a file ›"); a lone tool renders as a single direct line. — */
 function RunBody({ msgs, onOpenImage, live }: { msgs: ChatMessage[]; onOpenImage: (items: ViewerImage[], index: number) => void; live: boolean }): ReactElement {
   const out: ReactElement[] = []
   let fold: ToolCall[] = []
   const flushFold = (tailLive: boolean): void => {
     if (fold.length === 0) return
-    if (fold.length >= 2) out.push(<ExploreGroup key={`f${fold[0].id}`} tools={fold} live={tailLive} />)
-    else out.push(<ToolBubble key={fold[0].id} tool={fold[0]} />)
+    out.push(<ToolRun key={`f${fold[0].id}`} tools={fold} live={tailLive} />)
     fold = []
   }
   for (const m of msgs) {
@@ -154,11 +153,7 @@ function RunBody({ msgs, onOpenImage, live }: { msgs: ChatMessage[]; onOpenImage
       }
       const tool = tools.find((tl) => tl.id === b.id)
       if (!tool) return
-      if (EXPLORE_TOOL_NAMES.has(tool.name)) fold.push(tool)
-      else {
-        flushFold(false)
-        out.push(<ToolBubble key={tool.id} tool={tool} />)
-      }
+      fold.push(tool)
     })
     if (m.images && m.images.length > 0) {
       flushFold(false)
@@ -185,8 +180,8 @@ function RunBody({ msgs, onOpenImage, live }: { msgs: ChatMessage[]; onOpenImage
       out.push(<Sources key={`cite${m.id}`} items={m.citations} />)
     }
   }
-  // A trailing fold is the run's live tail while exploring — keep it open across think-gaps; it settles to
-  // "Explored N steps" the moment anything (narration / the answer) renders after it.
+  // A trailing run is the segment's live tail while tools execute — keep its in-flight line up across
+  // think-gaps; it settles to the count summary the moment anything (narration / the answer) renders after it.
   flushFold(live)
   return <>{out}</>
 }

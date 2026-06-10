@@ -12,6 +12,10 @@ import { isReadOnlyCommand } from './bash-classifier'
 const inputSchema = z.object({
   command: z.string().describe('The shell command to run'),
   timeout_ms: z.number().int().positive().optional().describe('Timeout in ms (default 120000)'),
+  description: z
+    .string()
+    .optional()
+    .describe('Clear, concise description of what this command does in active voice, 5-10 words, shown to the user (e.g. "Run the typecheck", "List files in src")'),
 })
 
 const DEFAULT_TIMEOUT = 120_000
