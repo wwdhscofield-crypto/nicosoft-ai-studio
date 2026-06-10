@@ -21,7 +21,7 @@ import { Avatar, Switch } from '@/components/primitives'
 import { Dropdown } from '@/views/profile'
 import { ConfirmDialog } from '@/components/dialogs/confirm-dialog'
 import { MemoryLayer } from '@/views/memory'
-import { THINKING_OPTIONS } from '@/lib/thinking'
+import { ADAPTIVE_LABEL, THINKING_OPTIONS } from '@/lib/thinking'
 import { useRoleBinding, FAMILY_LABEL } from '@/lib/use-role-binding'
 
 // Best-effort relative timestamp for the "Recent conversations" list — matches the spirit of the
@@ -87,11 +87,12 @@ function InlineBinding({ expert, onOpenEndpoint }: { expert: Expert; onOpenEndpo
             icon="sparkle"
           />
         </div>
-        {b.depths.length > 0 && (
+        {(b.depths.length > 0 || b.adaptiveOption) && (
           <div style={{ width: 174 }}>
             <Dropdown
               options={[
-                { v: '', l: 'Default thinking' },
+                { v: '', l: 'Default thinking' }, // no explicit pick = the model's TOP tier
+                ...(b.adaptiveOption ? [{ v: 'adaptive', l: ADAPTIVE_LABEL }] : []),
                 ...THINKING_OPTIONS.filter((t) => b.depths.includes(t.value)).map((t) => ({ v: t.value, l: t.label }))
               ]}
               value={b.depth}

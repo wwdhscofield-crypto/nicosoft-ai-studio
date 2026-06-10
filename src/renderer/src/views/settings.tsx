@@ -15,7 +15,7 @@ import { ProfilePage, Dropdown } from '@/views/profile'
 import { MemorySettings } from '@/views/memory'
 import type { Expert } from '@/types'
 import type { EndpointDto, EndpointInput, AppInfo } from '@/lib/api'
-import { THINKING_OPTIONS } from '@/lib/thinking'
+import { ADAPTIVE_LABEL, THINKING_OPTIONS } from '@/lib/thinking'
 import { useRoleBinding, FAMILY_LABEL } from '@/lib/use-role-binding'
 import { toast } from '@/stores/toast'
 import { useTheme, type ThemePref } from '@/stores/theme'
@@ -212,11 +212,12 @@ function RoleBindRow({ expert }: { expert: Expert }): ReactElement {
                   onChange={b.onModel}
                 />
               </div>
-              {b.depths.length > 0 && (
+              {(b.depths.length > 0 || b.adaptiveOption) && (
                 <div className="rb-ctl rb-ctl-think">
                   <Dropdown
                     options={[
-                      { v: '', l: tr('rolesPage.defaultThinking') },
+                      { v: '', l: tr('rolesPage.defaultThinking') }, // no explicit pick = the model's TOP tier
+                      ...(b.adaptiveOption ? [{ v: 'adaptive', l: ADAPTIVE_LABEL }] : []),
                       ...THINKING_OPTIONS.filter((o) => b.depths.includes(o.value)).map((o) => ({ v: o.value, l: o.label }))
                     ]}
                     value={b.depth}

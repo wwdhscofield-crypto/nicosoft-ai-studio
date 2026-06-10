@@ -1048,9 +1048,6 @@
 /* enable/disable roles */
 .primary-tag { font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); background: var(--accent-soft); padding: 1px 5px; border-radius: 3px; margin-left: 7px; }
 .rm-note { padding: 7px 9px; font-size: 11.5px; color: var(--text-4); border-top: 1px solid var(--border-1); margin-top: 2px; }
-/* Adaptive thinking indicator: the explanatory note is the menu's ONLY child (no tier items above it), so
-   drop the divider/top-margin and let the sentence wrap to a readable width. */
-.cmp-thinking-adaptive .rm-note { border-top: none; margin-top: 0; max-width: 230px; white-space: normal; line-height: 1.4; }
 .disabled-head {
   display: flex; align-items: center; gap: 6px; padding: 9px 10px 5px; margin-top: 4px;
   font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;

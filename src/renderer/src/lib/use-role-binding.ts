@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react'
 import type { Expert, Family } from '@/types'
 import type { EndpointDto } from '@/lib/api'
-import { getThinkingCapability, protocolToFamily, supportedDepths, type ThinkingDepth } from '@/lib/thinking'
+import { choiceSupported, getThinkingCapability, hasAdaptiveOption, protocolToFamily, supportedDepths, type ThinkingChoice, type ThinkingDepth } from '@/lib/thinking'
 import { DEFAULT_IMAGE_MODEL, imageModelOptions } from '@/lib/image-models'
 
 export const FAMILY_LABEL: Record<string, string> = { anthropic: 'Anthropic', openai: 'OpenAI', gemini: 'Gemini' }
@@ -28,11 +28,12 @@ export interface RoleBindingControls {
   endpoints: EndpointDto[]
   endpointId: string
   model: string
-  depth: ThinkingDepth | ''
+  depth: ThinkingChoice | '' // '' = no explicit pick → the model's TOP tier (composer/main default)
   family: Family
   models: string[]
   contextLength: number
   depths: ThinkingDepth[]
+  adaptiveOption: boolean // Anthropic 4.6+: 'adaptive' is selectable alongside the tiers
   imageModel: string // designer's image backend slug (defaults to Nano Banana Pro)
   imageModels: string[] // image-backend options for the composer picker
   onEndpoint: (v: string) => void
@@ -46,7 +47,7 @@ export function useRoleBinding(expert: Expert): RoleBindingControls {
   const [loaded, setLoaded] = useState(false)
   const [endpointId, setEndpointId] = useState('')
   const [model, setModel] = useState('')
-  const [depth, setDepth] = useState<ThinkingDepth | ''>('')
+  const [depth, setDepth] = useState<ThinkingChoice | ''>('')
   const [imageModel, setImageModel] = useState(DEFAULT_IMAGE_MODEL)
 
   useEffect(() => {
@@ -62,18 +63,15 @@ export function useRoleBinding(expert: Expert): RoleBindingControls {
       const loadedModel = b?.model || expert.model || ep?.defaultModel || ep?.availableModels[0]?.slug || ''
       const loadedImageModel = b?.imageModel || DEFAULT_IMAGE_MODEL
       const fam = ep ? protocolToFamily(ep.protocol) : expert.family
-      const raw = (b?.thinkingDepth as ThinkingDepth | null) || ''
-      const supported = supportedDepths(getThinkingCapability(fam, loadedModel))
-      // Clamp the persisted depth to what THIS model supports — a stale tier (e.g. 'max' left from an
-      // Opus binding now pointing at a gpt-5 model) would otherwise mislead the picker.
-      const persisted = raw && supported.includes(raw) ? raw : ''
-      // Designer defaults to the model's TOP thinking tier (image work wants max reasoning) when the user
-      // hasn't set one; other roles fall back to medium (see conversation.tsx effectiveDepth).
-      const clamped = persisted || (expert.id === 'designer' && supported.length ? supported[supported.length - 1] : '')
+      const raw = (b?.thinkingDepth as ThinkingChoice | null) || ''
+      // Clamp the persisted choice to what THIS model supports — a stale pick (e.g. 'max' or
+      // 'adaptive' left from an Opus binding now pointing at a gpt-5 model) would otherwise mislead
+      // the picker. '' = no explicit pick → everywhere resolves to the model's TOP tier.
+      const persisted = raw && choiceSupported(getThinkingCapability(fam, loadedModel), raw) ? raw : ''
       setEndpoints(eps)
       setEndpointId(ep?.id ?? '')
       setModel(loadedModel)
-      setDepth(clamped)
+      setDepth(persisted)
       setImageModel(loadedImageModel)
       setLoaded(true)
     })
@@ -87,14 +85,16 @@ export function useRoleBinding(expert: Expert): RoleBindingControls {
   const models = (selectedEp?.availableModels ?? []).map((m) => m.slug)
   const imageModels = imageModelOptions(models)
   const contextLength = resolveContextLength(selectedEp?.availableModels ?? [], model)
-  const depths = supportedDepths(getThinkingCapability(family, model))
+  const cap = getThinkingCapability(family, model)
+  const depths = supportedDepths(cap)
+  const adaptiveOption = hasAdaptiveOption(cap)
 
-  const persist = (eId: string, m: string, d: ThinkingDepth | '', im: string): void => {
+  const persist = (eId: string, m: string, d: ThinkingChoice | '', im: string): void => {
     void window.api.roles.setBinding(expert.id, { endpointId: eId || null, model: m || null, thinkingDepth: d || null, imageModel: im || null })
   }
-  const clamp = (fam: Family, m: string, d: ThinkingDepth | ''): ThinkingDepth | '' => {
+  const clamp = (fam: Family, m: string, d: ThinkingChoice | ''): ThinkingChoice | '' => {
     if (!d) return ''
-    return supportedDepths(getThinkingCapability(fam, m)).includes(d) ? d : ''
+    return choiceSupported(getThinkingCapability(fam, m), d) ? d : ''
   }
 
   const onEndpoint = (v: string): void => {
@@ -113,13 +113,13 @@ export function useRoleBinding(expert: Expert): RoleBindingControls {
     persist(endpointId, v, d, imageModel)
   }
   const onDepth = (v: string): void => {
-    setDepth(v as ThinkingDepth | '')
-    persist(endpointId, model, v as ThinkingDepth | '', imageModel)
+    setDepth(v as ThinkingChoice | '')
+    persist(endpointId, model, v as ThinkingChoice | '', imageModel)
   }
   const onImageModel = (v: string): void => {
     setImageModel(v)
     persist(endpointId, model, depth, v)
   }
 
-  return { loaded, endpoints, endpointId, model, depth, family, models, contextLength, depths, imageModel, imageModels, onEndpoint, onModel, onDepth, onImageModel }
+  return { loaded, endpoints, endpointId, model, depth, family, models, contextLength, depths, adaptiveOption, imageModel, imageModels, onEndpoint, onModel, onDepth, onImageModel }
 }

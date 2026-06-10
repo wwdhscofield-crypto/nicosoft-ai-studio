@@ -458,13 +458,14 @@ export interface VerifyDoneEvent {
 }
 
 // === Roles (expert → endpoint/model binding + per-role state) ===
-// A role's binding: which endpoint/model it runs on + its default thinking depth (applied when a task
-// is dispatched to it; the chat composer can still override per-conversation). null = provider default.
+// A role's binding: which endpoint/model it runs on + its thinking choice (applied when a task is
+// dispatched to it; the chat composer can still override per-conversation). null = no explicit pick →
+// the model's TOP tier (see @shared/thinking highestDepth).
 export interface RoleBindingDto {
   roleId: string
   endpointId: string | null
   model: string | null
-  thinkingDepth: string | null // 'low' | 'medium' | 'high' | 'max' | null
+  thinkingDepth: string | null // ThinkingChoice: 'none'|'minimal'|'low'|'medium'|'high'|'xhigh'|'max'|'adaptive' | null
   imageModel: string | null // designer's image backend slug (null = Nano Banana Pro default)
 }
 export interface RoleBindingInput {

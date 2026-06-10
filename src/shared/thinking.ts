@@ -5,12 +5,16 @@
 // and drives the picker UI. Environment-neutral: no node, no DOM.
 
 // Thinking tiers across providers, each offered only where the model supports it:
-//   Anthropic (budget): low/medium/high/xhigh/max — by Opus version; 4.6+ thinks adaptively instead
+//   Anthropic (budget): low/medium/high/xhigh/max — by Opus version; 4.6+ additionally offers Adaptive
 //   OpenAI (effort):    none/minimal/low/medium/high/xhigh — by GPT version
 //   Gemini (effort/budget): low/medium/high
 // 'xhigh' shows as "Extra"; 'minimal'/'none' are OpenAI's sub-low tiers; 'max' is Anthropic-only.
 export type EffortLevel = 'minimal' | 'none' | 'low' | 'medium' | 'high' | 'xhigh'
 export type ThinkingDepth = EffortLevel | 'max'
+// What a role/composer can STORE as its pick: an explicit tier, or 'adaptive' (Anthropic 4.6+ —
+// the model self-budgets). Product decision 2026-06-11: every pick is user-selectable per role and
+// the DEFAULT (nothing stored) is the model's TOP tier — think as hard as possible unless dialed down.
+export type ThinkingChoice = ThinkingDepth | 'adaptive'
 
 // Resolved directive sent with a request. Exactly one field set: effort (OpenAI Responses / Gemini 3),
 // budgetTokens (Anthropic extended thinking / Gemini 2.5), or adaptive (Anthropic 4.6+ self-budgets).
@@ -78,9 +82,9 @@ export function openaiDepths(slug: string): ThinkingDepth[] {
   return tiers
 }
 
-// Opus 4.6+ / Sonnet 4.6+ are trained on adaptive thinking — the model self-budgets, so the UI offers no
-// tier and the backend sends { adaptive: true }. Mirrors claude-code's modelSupportsAdaptiveThinking
-// (Opus/Sonnet 4.6+; Haiku never thinks adaptively).
+// Opus 4.6+ / Sonnet 4.6+ are trained on adaptive thinking — the model self-budgets when sent
+// { adaptive: true }. Offered as a selectable choice next to the explicit tiers (not a lock: these
+// models accept explicit budgets too). Haiku never thinks.
 export function supportsAdaptiveThinking(slug: string): boolean {
   if (slug.includes('haiku')) return false
   const m = /(opus|sonnet)-4[.\-](\d+)/.exec(slug) // claude-opus-4-8 / claude-sonnet-4.6
@@ -92,4 +96,56 @@ export function supportsAdaptiveThinking(slug: string): boolean {
 export function clampDepth(depth: ThinkingDepth, supported: ThinkingDepth[]): ThinkingDepth | undefined {
   if (supported.length === 0) return undefined
   return supported.includes(depth) ? depth : supported[supported.length - 1]
+}
+
+// Which thinking knob a (family, slug) exposes — THE single source both processes resolve from
+// (renderer capability/picker, main resolveDepth). effort = enum knob (OpenAI Responses / Gemini 3);
+// budget = token allowance (Anthropic extended thinking / Gemini 2.5); adaptiveOption marks Anthropic
+// 4.6+ where 'adaptive' is selectable alongside the tiers.
+export type ThinkingKnob =
+  | { kind: 'none' }
+  | { kind: 'effort'; depths: ThinkingDepth[] }
+  | { kind: 'budget'; mapping: Partial<Record<ThinkingDepth, number>>; adaptiveOption?: boolean }
+
+function budgetsFor(depths: ThinkingDepth[], table: Partial<Record<ThinkingDepth, number>>): Partial<Record<ThinkingDepth, number>> {
+  const out: Partial<Record<ThinkingDepth, number>> = {}
+  for (const d of depths) if (table[d] !== undefined) out[d] = table[d]
+  return out
+}
+
+export function thinkingKnob(family: ProtocolFamily, slug: string): ThinkingKnob {
+  const s = (slug || '').toLowerCase()
+  if (!s || !family) return { kind: 'none' }
+  if (family === 'anthropic') {
+    const depths = anthropicDepths(s)
+    if (depths.length === 0) return { kind: 'none' }
+    return { kind: 'budget', mapping: budgetsFor(depths, ANTHROPIC_BUDGET), ...(supportsAdaptiveThinking(s) ? { adaptiveOption: true } : {}) }
+  }
+  if (family === 'openai') {
+    const depths = openaiDepths(s)
+    return depths.length === 0 ? { kind: 'none' } : { kind: 'effort', depths }
+  }
+  // Gemini wire split: 2.5 takes a token thinkingBudget; 3+ — including the rolling -latest aliases
+  // (gemini-pro-latest / gemini-flash-latest, tracking the newest 3.x) — takes a thinkingLevel.
+  // Older / non-thinking models (2.0, 1.x, imagen, nano-banana) expose nothing.
+  if (s.includes('gemini-2.5')) {
+    const table = s.includes('flash') ? GEMINI_FLASH_BUDGET : GEMINI_PRO_BUDGET
+    return { kind: 'budget', mapping: { ...table } }
+  }
+  const major = /gemini-(\d+)/.exec(s)
+  if ((major && parseInt(major[1], 10) >= 3) || s.endsWith('-latest')) return { kind: 'effort', depths: GEMINI3_DEPTHS }
+  return { kind: 'none' }
+}
+
+// The tier list a knob exposes (no 'adaptive' — that's a mode, not a tier).
+export function knobDepths(knob: ThinkingKnob): ThinkingDepth[] {
+  if (knob.kind === 'effort') return knob.depths
+  if (knob.kind === 'budget') return (Object.keys(knob.mapping) as ThinkingDepth[]).filter((d) => knob.mapping[d] !== undefined)
+  return []
+}
+
+// Default for a role with no stored pick: the model's TOP tier. Adaptive stays opt-in.
+export function highestDepth(family: ProtocolFamily, slug: string): ThinkingDepth | undefined {
+  const depths = knobDepths(thinkingKnob(family, slug))
+  return depths.length ? depths[depths.length - 1] : undefined
 }

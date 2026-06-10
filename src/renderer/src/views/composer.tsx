@@ -14,7 +14,7 @@ import { useChat, roleHasAgent, roleHasImageGen } from '@/stores/chat'
 import { useRoleBinding, type RoleBindingControls } from '@/lib/use-role-binding'
 import type { EndpointDto } from '@/lib/api'
 import { fileToImage, imagesFromClipboard, type ImageAttachment } from '@/lib/image'
-import { getThinkingCapability, resolveThinking, type ThinkingDepth } from '@/lib/thinking'
+import { defaultThinkingChoice, getThinkingCapability, resolveThinking, type ThinkingChoice } from '@/lib/thinking'
 import { useT, type TFunction } from '@/stores/locale'
 import type { Expert } from '@/types'
 
@@ -105,7 +105,9 @@ export function Composer({
     b.loaded &&
     (b.endpoints.length === 0 || !selectedEp || !selectedEp.enabled || selectedEp.keyState !== 'ok' || !b.model || needAgentProto)
   const ready = b.loaded && !noEndpoint && (!needsCwd || !!cwd)
-  const effectiveDepth = (b.depth || 'medium') as ThinkingDepth
+  // No stored pick → the model's TOP tier (think as hard as possible unless the user dials it down);
+  // 'medium' only as the final fallback for capability gaps.
+  const effectiveDepth = (b.depth || defaultThinkingChoice(b.family, b.model) || 'medium') as ThinkingChoice
 
   const grow = (): void => {
     const ta = taRef.current

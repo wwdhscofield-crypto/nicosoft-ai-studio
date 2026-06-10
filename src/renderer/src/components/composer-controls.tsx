@@ -8,7 +8,7 @@ import { createPortal } from 'react-dom'
 import { Icons } from '@/components/icons'
 import { useAnchoredMenu } from '@/lib/use-anchored-menu'
 import type { Family } from '@/types'
-import { getThinkingCapability, supportedDepths, THINKING_OPTIONS, type ThinkingDepth } from '@/lib/thinking'
+import { ADAPTIVE_LABEL, depthLabel, getThinkingCapability, hasAdaptiveOption, supportedDepths, type ThinkingChoice } from '@/lib/thinking'
 import { imageModelLabel } from '@/lib/image-models'
 import { MODE_OPTIONS, type AgentMode } from '@/lib/agent-mode'
 
@@ -87,52 +87,36 @@ export function ThinkingPicker({
 }: {
   family: Family
   model: string
-  depth: ThinkingDepth
-  onChange: (d: ThinkingDepth) => void
+  depth: ThinkingChoice
+  onChange: (d: ThinkingChoice) => void
   disabled?: boolean
 }): ReactElement | null {
   const [open, setOpen] = useState(false)
   const cap = getThinkingCapability(family, model)
-  // Adaptive (Opus/Sonnet 4.6+): the model self-budgets its reasoning, so there's no tier to pick — but
-  // rendering NOTHING reads as "thinking is off". Show a static "Thinking · Adaptive" indicator instead;
-  // clicking it explains the model sizes its own budget. (return null stays only for non-thinking models.)
-  if (cap.kind === 'adaptive') {
-    return (
-      <div className="cmp-model cmp-thinking cmp-thinking-adaptive" onClick={() => !disabled && setOpen((s) => !s)}>
-        <span className="cmp-model-id">Thinking · Adaptive</span>
-        {open && (
-          <>
-            <div className="menu-backdrop" onClick={(e) => { e.stopPropagation(); setOpen(false) }} />
-            <div className="row-menu up" onClick={(e) => e.stopPropagation()}>
-              <div className="rm-note">Adaptive thinking — the model sizes its own reasoning budget each turn. No tier to set.</div>
-            </div>
-          </>
-        )}
-      </div>
-    )
-  }
   const depths = supportedDepths(cap)
-  if (depths.length === 0) return null
-  // Guard against a stale depth not in this model's tiers (would otherwise show e.g. "Max" while the
-  // backend clamps to High). Fall back to a supported tier for the label.
-  const shown = depths.includes(depth) ? depth : depths.includes('medium') ? 'medium' : depths[depths.length - 1]
-  const label = THINKING_OPTIONS.find((t) => t.value === shown)?.label ?? 'Medium'
+  const adaptive = hasAdaptiveOption(cap)
+  if (depths.length === 0 && !adaptive) return null
+  // Guard against a stale choice this model doesn't offer (binding re-pointed at another model — the
+  // backend clamps the same way): show the effective pick, the TOP tier.
+  const valid = depth === 'adaptive' ? adaptive : depths.includes(depth)
+  const shown: ThinkingChoice = valid ? depth : depths[depths.length - 1]
+  const choices: ThinkingChoice[] = adaptive ? ['adaptive', ...depths] : depths
   return (
     <div className="cmp-model cmp-thinking" onClick={() => !disabled && setOpen((s) => !s)}>
-      <span className="cmp-model-id">Thinking · {label}</span>
+      <span className="cmp-model-id">Thinking · {depthLabel(shown)}</span>
       <Icons.chevronDown size={12} />
       {open && (
         <>
           <div className="menu-backdrop" onClick={(e) => { e.stopPropagation(); setOpen(false) }} />
           <div className="row-menu up" onClick={(e) => e.stopPropagation()}>
-            {THINKING_OPTIONS.filter((t) => depths.includes(t.value)).map((t) => (
+            {choices.map((c) => (
               <div
-                key={t.value}
-                className={'rm-item' + (t.value === depth ? ' active' : '')}
-                onClick={() => { onChange(t.value); setOpen(false) }}
+                key={c}
+                className={'rm-item' + (c === shown ? ' active' : '')}
+                onClick={() => { onChange(c); setOpen(false) }}
               >
-                <span>{t.label}</span>
-                {t.value === depth ? <Icons.check size={13} /> : null}
+                <span>{c === 'adaptive' ? `${ADAPTIVE_LABEL} — model sizes its own budget` : depthLabel(c)}</span>
+                {c === shown ? <Icons.check size={13} /> : null}
               </div>
             ))}
           </div>
