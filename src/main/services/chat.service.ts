@@ -2,8 +2,8 @@ import * as endpointRepo from '../repos/endpoint.repo'
 import * as convRepo from '../repos/conversation.repo'
 import * as summaryRepo from '../repos/summary.repo'
 import * as usageRepo from '../repos/usage.repo'
-import * as keychain from '../keychain/keychain'
 import * as memoryService from './memory.service'
+import { requireApiKey } from './credentials'
 import { chat as llmChat } from '../llm/client'
 import { countContext } from './token-count.service'
 import { pickSmallModel } from './model-select'
@@ -29,18 +29,7 @@ export async function send(
 ): Promise<ChatResult & { promptTokens: number }> {
   const ep = endpointRepo.getById(input.endpointId)
   if (!ep) throw new LlmError('bad_request', 'endpoint not found')
-  const key = keychain.getApiKey(input.endpointId)
-  if (!key) {
-    // Distinguish "never configured" from "stored under a different app identity" — the latter shows
-    // as configured in Settings yet fails here; saying what actually happened beats a misleading
-    // "no API key" that sends the user re-checking a config that was right there.
-    throw new LlmError(
-      'bad_key',
-      keychain.keyStatus(input.endpointId) === 'unreadable'
-        ? 'stored API key cannot be decrypted (app identity changed) — re-enter it in Settings → Endpoints'
-        : 'no API key configured for this endpoint'
-    )
-  }
+  const key = requireApiKey(input.endpointId)
 
   const messages = await buildContext(input)
 

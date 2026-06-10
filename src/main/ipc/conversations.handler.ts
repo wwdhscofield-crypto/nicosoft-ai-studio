@@ -1,5 +1,5 @@
-import { ipcMain, dialog } from 'electron'
-import { writeFile } from 'node:fs/promises'
+import { ipcMain } from 'electron'
+import { saveToFile } from './dialogs'
 import * as convService from '../services/conversation.service'
 import type { ConversationCreateDto, ConversationTitleInput, MessageAppendDto } from './contracts'
 
@@ -16,17 +16,14 @@ export function registerConversationHandlers(): void {
   ipcMain.handle('conversations:archive', (_e, convId: string, archived: boolean) => convService.setArchived(convId, archived))
   ipcMain.handle('conversations:title', (_e, input: ConversationTitleInput) => convService.generateTitle(input))
   ipcMain.handle('conversations:remove', (_e, convId: string) => convService.remove(convId))
-  ipcMain.handle(
-    'conversations:export',
-    async (_e, convId: string, format: 'md' | 'json'): Promise<string | null> => {
-      const { content, suggestedName } = convService.exportContent(convId, format)
-      const result = await dialog.showSaveDialog({
+  ipcMain.handle('conversations:export', (_e, convId: string, format: 'md' | 'json'): Promise<string | null> => {
+    const { content, suggestedName } = convService.exportContent(convId, format)
+    return saveToFile(
+      {
         defaultPath: suggestedName,
         filters: [format === 'json' ? { name: 'JSON', extensions: ['json'] } : { name: 'Markdown', extensions: ['md'] }]
-      })
-      if (result.canceled || !result.filePath) return null
-      await writeFile(result.filePath, content, 'utf-8')
-      return result.filePath
-    }
-  )
+      },
+      content
+    )
+  })
 }

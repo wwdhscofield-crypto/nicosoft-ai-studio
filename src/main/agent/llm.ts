@@ -3,8 +3,8 @@
 // start executing it before the turn completes), returning the full assistant turn at the end.
 // Reuses the shared SSE plumbing. See docs/nicosoft-studio/12-hex-coding-agent.md §2.4.
 
-import { iterSSE, openStream, parseJSON, toLlmError } from '../llm/_shared'
-import { USER_AGENT } from '../user-agent'
+import { iterSSE, openStream, parseJSON, toLlmError, trimBase } from '../llm/_shared'
+import { anthropicHeaders, anthropicThinkingDirective, applyAnthropicCacheControls } from '../llm/anthropic-wire'
 import { streamIdleGuard, LLM_STREAM_IDLE_MS } from './stream-timeout'
 import { callWithToolsOpenAI } from './llm-openai'
 import { callWithToolsGemini } from './llm-gemini'
@@ -20,7 +20,6 @@ import type {
 } from './types'
 
 const PROVIDER = 'anthropic'
-const ANTHROPIC_VERSION = '2023-06-01'
 
 export interface AgentLlmRequest {
   protocol: 'anthropic' | 'openai' | 'gemini'
@@ -88,51 +87,13 @@ type Accum =
   // *_tool_result blocks, which arrive complete at content_block_start).
   | { type: 'server'; raw: Record<string, unknown>; json: string | null }
 
-function hasCacheControl(value: unknown): boolean {
-  if (!value || typeof value !== 'object') return false
-  if ('cache_control' in value) return true
-  if (Array.isArray(value)) return value.some(hasCacheControl)
-  return Object.values(value as Record<string, unknown>).some(hasCacheControl)
-}
-
-function applyAnthropicCacheControls(body: AgentMessagesBody): void {
-  // NSAI upstream Claude OAuth may already inject cache controls and skips when cache controls exist,
-  // so avoiding duplicates here prevents conflict while preserving that upstream behavior.
-  if (hasCacheControl(body)) return
-  let count = 0
-  if (body.tools.length > 0) {
-    const index = body.tools.length - 1
-    body.tools = [...body.tools]
-    body.tools[index] = { ...(body.tools[index] as Record<string, unknown>), cache_control: { type: 'ephemeral' } } as unknown as AnyToolSchema
-    count++
-  }
-  if (typeof body.system === 'string' && body.system.trim().length > 0 && count < 3) {
-    body.system = [{ type: 'text', text: body.system, cache_control: { type: 'ephemeral' } }]
-    count++
-  }
-  for (let i = body.messages.length - 1; i >= 0 && count < 3; i--) {
-    const msg = body.messages[i]
-    if (msg.role !== 'user') continue
-    for (let j = msg.content.length - 1; j >= 0; j--) {
-      const block = msg.content[j]
-      if (block.type === 'text' && typeof (block as TextBlock).text === 'string' && (block as TextBlock).text.length > 0) {
-        body.messages = [...body.messages]
-        const content = [...msg.content]
-        content[j] = { ...(block as TextBlock), cache_control: { type: 'ephemeral' } } as TextBlock
-        body.messages[i] = { ...msg, content }
-        return
-      }
-    }
-  }
-}
-
 // POST /v1/messages (Anthropic protocol) with tools. Yields each completed tool_use block as it
 // finishes (content_block_stop); returns the assembled AssistantTurn when the stream ends.
 async function* callWithToolsAnthropic(
   req: AgentLlmRequest,
   onEvent?: (e: AgentLlmEvent) => void,
 ): AsyncGenerator<ToolUseBlock, AssistantTurn, void> {
-  const url = `${req.baseUrl.replace(/\/$/, '')}/v1/messages`
+  const url = `${trimBase(req.baseUrl)}/v1/messages`
   const body: AgentMessagesBody = {
     model: req.model,
     max_tokens: req.maxTokens,
@@ -141,16 +102,12 @@ async function* callWithToolsAnthropic(
     tools: req.tools,
     stream: true,
   }
-  // Extended thinking. Adaptive (Opus/Sonnet 4.6+): the model self-budgets — send { type: 'adaptive' } with
-  // no token count. Legacy budget: budget_tokens must be < max_tokens; lift max_tokens to leave room.
-  if (req.thinking?.adaptive) {
-    body.thinking = { type: 'adaptive' }
-  } else {
-    const budget = req.thinking?.budgetTokens
-    if (typeof budget === 'number' && budget > 0) {
-      body.thinking = { type: 'enabled', budget_tokens: budget }
-      if (req.maxTokens <= budget) body.max_tokens = budget + req.maxTokens
-    }
+  // Extended thinking (shared directive). Loop policy: lift max_tokens only when the run's own ceiling is
+  // at or below the budget (budget_tokens must stay < max_tokens).
+  const directive = anthropicThinkingDirective(req.thinking)
+  if (directive) {
+    body.thinking = directive
+    if (directive.type === 'enabled' && req.maxTokens <= directive.budget_tokens) body.max_tokens = directive.budget_tokens + req.maxTokens
   }
   if (req.cacheEnabled) applyAnthropicCacheControls(body)
   const blocks: (Accum | undefined)[] = []
@@ -167,12 +124,7 @@ async function* callWithToolsAnthropic(
     guard.reset()
     const reader = await openStream(PROVIDER, url, {
       method: 'POST',
-      headers: {
-        'x-api-key': req.apiKey,
-        'anthropic-version': ANTHROPIC_VERSION,
-        'content-type': 'application/json',
-        'User-Agent': USER_AGENT,
-      },
+      headers: anthropicHeaders(req.apiKey),
       body: JSON.stringify(body),
       signal: guard.signal,
     })

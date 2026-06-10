@@ -8,6 +8,8 @@
 
 import type { Protocol } from '../domain'
 import { CHARS_PER_TOKEN } from '../llm/estimate'
+import { trimBase } from '../llm/_shared'
+import { ANTHROPIC_VERSION } from '../llm/anthropic-wire'
 
 export interface AnthropicCountInput {
   baseUrl: string
@@ -47,7 +49,7 @@ export async function countContext(protocol: Protocol, input: AnthropicCountInpu
 // L1 — the real endpoint. Free, not billed, supports system+messages+tools+thinking (verified live).
 async function viaCountTokensApi(input: AnthropicCountInput): Promise<number | null> {
   try {
-    const res = await fetch(`${input.baseUrl.replace(/\/$/, '')}/v1/messages/count_tokens`, {
+    const res = await fetch(`${trimBase(input.baseUrl)}/v1/messages/count_tokens`, {
       method: 'POST',
       headers: anthropicHeaders(input.apiKey),
       body: JSON.stringify(bodyFor(input.model, input))
@@ -65,7 +67,7 @@ async function viaSmallModelProbe(input: AnthropicCountInput): Promise<number | 
   if (!input.smallModel) return null // no small model to borrow → this probe path doesn't apply
   const smallModel = input.smallModel
   try {
-    const res = await fetch(`${input.baseUrl.replace(/\/$/, '')}/v1/messages`, {
+    const res = await fetch(`${trimBase(input.baseUrl)}/v1/messages`, {
       method: 'POST',
       headers: anthropicHeaders(input.apiKey),
       body: JSON.stringify({ ...bodyFor(smallModel, input), max_tokens: 1 })
@@ -82,8 +84,10 @@ async function viaSmallModelProbe(input: AnthropicCountInput): Promise<number | 
   }
 }
 
+// Deliberately NOT the adapters' anthropicHeaders (llm/anthropic-wire): the counter probes send no
+// User-Agent today and this keeps their wire shape unchanged — only the version constant is shared.
 function anthropicHeaders(apiKey: string): Record<string, string> {
-  return { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
+  return { 'x-api-key': apiKey, 'anthropic-version': ANTHROPIC_VERSION, 'content-type': 'application/json' }
 }
 
 // Shared body builder. Empty messages with tools still needs a dummy user turn so

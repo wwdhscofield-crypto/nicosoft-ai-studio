@@ -4,8 +4,7 @@
 // tools (function defs) + streamed function_call arguments + reasoning encrypted_content passthrough.
 // See docs/nicosoft-studio/16-openai-agent-loop.md.
 
-import { iterSSE, openStream, parseJSON, toLlmError } from '../llm/_shared'
-import { USER_AGENT } from '../user-agent'
+import { DEFAULT_INSTRUCTIONS, iterSSE, openStream, openaiHeaders, parseJSON, stablePromptCacheKey, toLlmError, trimBase } from '../llm/_shared'
 import { streamIdleGuard, LLM_STREAM_IDLE_MS } from './stream-timeout'
 import type { AgentLlmEvent, AgentLlmRequest } from './llm'
 import type {
@@ -122,20 +121,14 @@ interface RespEvent {
   response?: { usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number } } }
 }
 
-function stablePromptCacheKey(req: AgentLlmRequest): string {
-  const primary = req.conversationId ?? req.threadId
-  if (primary && primary.length > 0) return primary
-  return [req.endpointId, req.roleId, req.model, req.baseUrl].filter((v): v is string => Boolean(v)).join(':')
-}
-
 export async function* callWithToolsOpenAI(
   req: AgentLlmRequest,
   onEvent?: (e: AgentLlmEvent) => void,
 ): AsyncGenerator<ToolUseBlock, AssistantTurn, void> {
-  const url = `${req.baseUrl.replace(/\/$/, '')}/v1/responses`
+  const url = `${trimBase(req.baseUrl)}/v1/responses`
   const body: ResponsesToolBody = {
     model: req.model,
-    instructions: req.system || 'You are a helpful assistant.',
+    instructions: req.system || DEFAULT_INSTRUCTIONS,
     input: toInput(req.messages),
     tools: toOpenAITools(req.tools),
     tool_choice: 'auto',
@@ -165,7 +158,7 @@ export async function* callWithToolsOpenAI(
     guard.reset()
     const reader = await openStream(PROVIDER, url, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${req.apiKey}`, 'Content-Type': 'application/json', 'User-Agent': USER_AGENT },
+      headers: openaiHeaders(req.apiKey),
       body: JSON.stringify(body),
       signal: guard.signal,
     })

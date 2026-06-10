@@ -1,8 +1,67 @@
-// Shared plumbing for the protocol adapters: HTTP error classification, fetch-failure mapping,
-// and an SSE line iterator. Adapters stay focused on per-provider request shaping + event parsing.
-// No DB / keychain here — pure protocol translation helpers.
+// Shared plumbing for the protocol adapters: HTTP error classification, fetch-failure mapping, an SSE
+// line iterator, base-URL normalization, per-provider headers, and small wire-shape helpers. Adapters
+// stay focused on per-provider request shaping + event parsing. No DB / keychain here — pure protocol
+// translation helpers.
 
-import { LlmError, type LlmErrorCode } from './types'
+import { USER_AGENT } from '../user-agent'
+import { LlmError, type LlmErrorCode, type ThinkingParam } from './types'
+
+// Strip one trailing slash so adapters can append /v1/... paths uniformly.
+export function trimBase(url: string): string {
+  return url.replace(/\/$/, '')
+}
+
+// Gemini endpoints are stored with or without an API-version suffix; strip it (and a trailing slash) so
+// the adapter can append its own /v1beta/models/... path.
+export function geminiBase(url: string): string {
+  return url.replace(/\/$/, '').replace(/\/v1beta$/, '').replace(/\/v1$/, '')
+}
+
+export function openaiHeaders(apiKey: string): Record<string, string> {
+  return { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'User-Agent': USER_AGENT }
+}
+
+export function geminiHeaders(apiKey: string): Record<string, string> {
+  // Key in the x-goog-api-key header, not the URL — query-string secrets leak into logs/proxies.
+  return { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey, 'User-Agent': USER_AGENT }
+}
+
+// The Responses gateway rejects a request whose `instructions` is absent ("Instructions are required").
+// System-less calls fall back to this neutral prompt so they aren't 400'd.
+export const DEFAULT_INSTRUCTIONS = 'You are a helpful assistant.'
+
+// Stable prompt_cache_key for the Responses API: the conversation (or thread) id when present, else a
+// deterministic composite of the routing coordinates.
+export function stablePromptCacheKey(req: {
+  conversationId?: string
+  threadId?: string
+  endpointId?: string
+  roleId?: string
+  model: string
+  baseUrl: string
+}): string {
+  const primary = req.conversationId ?? req.threadId
+  if (primary && primary.length > 0) return primary
+  return [req.endpointId, req.roleId, req.model, req.baseUrl].filter((v): v is string => Boolean(v)).join(':')
+}
+
+// Gemini thinking wire split: Gemini 3 (and the rolling -latest aliases) take thinkingLevel (effort);
+// Gemini 2.5 takes a token thinkingBudget. resolveThinking/resolveDepth hand us effort XOR budgetTokens.
+export function geminiThinkingConfig(
+  thinking?: ThinkingParam,
+): { thinkingConfig: { thinkingBudget?: number; thinkingLevel?: string } } | undefined {
+  if (thinking?.effort) return { thinkingConfig: { thinkingLevel: thinking.effort } }
+  if (typeof thinking?.budgetTokens === 'number' && thinking.budgetTokens > 0)
+    return { thinkingConfig: { thinkingBudget: thinking.budgetTokens } }
+  return undefined
+}
+
+// Gemini's functionResponse.response must be a JSON object — wrap a non-object result.
+export function asGeminiFunctionResponse(result: unknown): Record<string, unknown> {
+  return result && typeof result === 'object' && !Array.isArray(result)
+    ? (result as Record<string, unknown>)
+    : { result }
+}
 
 // Map an upstream HTTP status to our error taxonomy. Kept identical across all three providers.
 function codeForStatus(status: number): LlmErrorCode {

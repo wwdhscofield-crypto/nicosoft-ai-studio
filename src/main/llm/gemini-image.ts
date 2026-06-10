@@ -9,8 +9,7 @@
 // against a live request (see docs/nicosoft-studio/14-lyra-image-generation.md §6).
 
 import { LlmError, type ImageGenResult } from './types'
-import { throwHttpError, toLlmError } from './_shared'
-import { USER_AGENT } from '../user-agent'
+import { geminiBase, geminiHeaders, throwHttpError, toLlmError } from './_shared'
 
 const PROVIDER = 'gemini'
 
@@ -32,17 +31,13 @@ export interface GeminiImageRequest {
   signal?: AbortSignal
 }
 
-function geminiBase(baseUrl: string): string {
-  return baseUrl.replace(/\/$/, '').replace(/\/v1beta$/, '').replace(/\/v1$/, '')
-}
-
 // One-shot POST + JSON parse with the same error taxonomy the streaming adapter uses.
 async function postJson(url: string, apiKey: string, body: unknown, signal?: AbortSignal): Promise<unknown> {
   let res: Response
   try {
     res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey, 'User-Agent': USER_AGENT },
+      headers: geminiHeaders(apiKey),
       body: JSON.stringify(body),
       signal,
     })

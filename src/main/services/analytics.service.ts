@@ -6,11 +6,10 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { getDb } from '../db/connection'
 import type { AnalyticsSummary, AppInfo } from '../ipc/contracts'
+import * as analyticsRepo from '../repos/analytics.repo'
 import * as convRepo from '../repos/conversation.repo'
 import * as memoryRepo from '../repos/memory.repo'
-import { homedir as osHomedir } from 'node:os'
 
 // created_at is stored as UTC ISO (new Date().toISOString()); local-midnight N days ago as that same UTC ISO.
 function localMidnightISO(daysAgo = 0): string {
@@ -39,57 +38,56 @@ function lastDays(n: number): string[] {
 }
 
 export function getSummary(): AnalyticsSummary {
-  const db = getDb()
   const today = localMidnightISO(0)
   const week = localMidnightISO(7)
 
   // Token usage from usage_events — the accurate per-run accounting (every turn's full context, what the
   // upstream actually billed), carrying expert_id + model + provider. messages would undercount (final reply
   // only) and lacks provider, so all token numbers come from one source here for a consistent scale.
-  const tToday = db.prepare('SELECT COALESCE(SUM(in_tokens),0) i, COALESCE(SUM(out_tokens),0) o FROM usage_events WHERE created_at >= ?').get(today) as { i: number; o: number }
-  const tAll = db.prepare('SELECT COALESCE(SUM(in_tokens + out_tokens),0) v FROM usage_events').get() as { v: number }
+  const tToday = analyticsRepo.tokensSince(today)
+  const tAll = analyticsRepo.tokensAllTime()
 
-  const byExpert = db.prepare('SELECT expert_id id, SUM(in_tokens + out_tokens) v FROM usage_events WHERE expert_id IS NOT NULL GROUP BY expert_id ORDER BY v DESC').all() as { id: string; v: number }[]
-  const byModel = db.prepare("SELECT model, SUM(in_tokens + out_tokens) v FROM usage_events WHERE model IS NOT NULL AND model != '' GROUP BY model ORDER BY v DESC").all() as { model: string; v: number }[]
-  const byProvider = db.prepare("SELECT provider, SUM(in_tokens + out_tokens) v FROM usage_events WHERE provider IS NOT NULL AND provider != '' GROUP BY provider ORDER BY v DESC").all() as { provider: string; v: number }[]
+  const byExpert = analyticsRepo.tokensByExpert()
+  const byModel = analyticsRepo.tokensByModel()
+  const byProvider = analyticsRepo.tokensByProvider()
 
-  const dayMap = new Map((db.prepare("SELECT date(created_at, 'localtime') d, SUM(in_tokens + out_tokens) v FROM usage_events WHERE created_at >= ? GROUP BY d").all(localMidnightISO(6)) as { d: string; v: number }[]).map((r) => [r.d, r.v]))
+  const dayMap = new Map(analyticsRepo.tokensByLocalDay(localMidnightISO(6)).map((r) => [r.d, r.v]))
   const byDay = lastDays(7).map((d) => ({ d: d.slice(5), v: dayMap.get(d) ?? 0 }))
 
-  const convTotal = (db.prepare('SELECT COUNT(*) c FROM conversations').get() as { c: number }).c
+  const convTotal = convRepo.count()
 
-  const actMap = new Map((db.prepare("SELECT date(created_at, 'localtime') d, COUNT(*) v FROM messages WHERE created_at >= ? GROUP BY d").all(localMidnightISO(13)) as { d: string; v: number }[]).map((r) => [r.d, r.v]))
+  const actMap = new Map(analyticsRepo.messagesByLocalDay(localMidnightISO(13)).map((r) => [r.d, r.v]))
   const actByDay = lastDays(14).map((d) => actMap.get(d) ?? 0)
 
-  const todayByExpert = db.prepare("SELECT expert_id id, COUNT(*) v FROM messages WHERE author='expert' AND expert_id IS NOT NULL AND created_at >= ? GROUP BY expert_id ORDER BY v DESC").all(today) as { id: string; v: number }[]
-  const weekByExpert = new Map((db.prepare("SELECT expert_id id, COUNT(*) v FROM messages WHERE author='expert' AND expert_id IS NOT NULL AND created_at >= ? GROUP BY expert_id").all(week) as { id: string; v: number }[]).map((r) => [r.id, r.v]))
+  const todayByExpert = analyticsRepo.expertMessageCountsSince(today)
+  const weekByExpert = new Map(analyticsRepo.expertMessageCountsSince(week).map((r) => [r.id, r.v]))
   const top = todayByExpert[0]
   const mostActive = top ? { id: top.id, today: top.v, week: weekByExpert.get(top.id) ?? top.v } : { id: '', today: 0, week: 0 }
 
-  const hourRows = db.prepare("SELECT CAST(strftime('%H', created_at, 'localtime') AS INTEGER) h, COUNT(*) v FROM messages WHERE created_at >= ? GROUP BY h").all(today) as { h: number; v: number }[]
+  const hourRows = analyticsRepo.messagesByLocalHour(today)
   const peakHours = Array.from({ length: 24 }, (_, h) => hourRows.find((r) => r.h === h)?.v ?? 0)
 
-  const memTotal = (db.prepare('SELECT COUNT(*) c FROM memories').get() as { c: number }).c
-  const perExpert = db.prepare('SELECT role_id id, COUNT(*) v FROM memories WHERE role_id IS NOT NULL GROUP BY role_id ORDER BY v DESC').all() as { id: string; v: number }[]
-  const layerMap = new Map((db.prepare('SELECT layer, COUNT(*) v FROM memories GROUP BY layer').all() as { layer: string; v: number }[]).map((r) => [r.layer, r.v]))
+  const memTotal = memoryRepo.count()
+  const perExpert = analyticsRepo.memoriesPerRole()
+  const layerMap = new Map(analyticsRepo.memoriesByLayer().map((r) => [r.layer, r.v]))
   const layers = [
     { key: 'Shared', hint: 'about you', v: layerMap.get('shared') ?? 0 },
     { key: 'Role', hint: 'per expert', v: layerMap.get('role') ?? 0 },
     { key: 'Collab', hint: 'project', v: layerMap.get('collab') ?? 0 }
   ]
-  const approved = (db.prepare("SELECT COUNT(*) c FROM memories WHERE type='learning'").get() as { c: number }).c
-  const corrected = (db.prepare('SELECT COUNT(*) c FROM memory_versions').get() as { c: number }).c
+  const approved = analyticsRepo.learningCount()
+  const corrected = analyticsRepo.correctionCount()
   const byWeek = [0, 0, 0, 0]
   const nowMs = Date.now()
-  for (const r of db.prepare("SELECT created_at FROM memories WHERE type='learning' AND created_at >= ?").all(localMidnightISO(27)) as { created_at: string }[]) {
-    const wk = Math.min(3, Math.max(0, Math.floor((nowMs - new Date(r.created_at).getTime()) / (7 * 86_400_000))))
+  for (const createdAt of analyticsRepo.learningCreatedSince(localMidnightISO(27))) {
+    const wk = Math.min(3, Math.max(0, Math.floor((nowMs - new Date(createdAt).getTime()) / (7 * 86_400_000))))
     byWeek[3 - wk]++ // index 0 = oldest week, 3 = current
   }
 
   return {
     usage: {
       tokensToday: tToday.i + tToday.o,
-      tokensAllTime: tAll.v,
+      tokensAllTime: tAll,
       tokensIn: tToday.i,
       tokensOut: tToday.o,
       byDay,
@@ -146,7 +144,7 @@ function scanToolsToday(): { label: string; v: number }[] {
 export function appInfo(version: string): AppInfo {
   return {
     version,
-    dataDir: join(osHomedir(), '.nsai'),
+    dataDir: join(homedir(), '.nsai'),
     conversations: convRepo.count(),
     memories: memoryRepo.count()
   }

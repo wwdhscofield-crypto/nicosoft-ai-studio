@@ -1,5 +1,6 @@
 import { ulid } from '../db/id'
 import { getDb } from '../db/connection'
+import { asBool, asJson, buildUpdate, parseJson } from './_sql'
 import type { PluginBundleDto } from '../ipc/contracts'
 
 // plugins CRUD. bundles is a JSON array of {type,id,name} pointing at the skill/mcp/role rows this
@@ -42,14 +43,6 @@ interface PluginRaw {
   bundles: string
   enabled: number
   created_at: string | null
-}
-
-function parseJson<T>(json: string, fallback: T): T {
-  try {
-    return JSON.parse(json) as T
-  } catch {
-    return fallback
-  }
 }
 
 function mapRow(raw: PluginRaw): PluginRow {
@@ -103,21 +96,14 @@ export function create(input: PluginCreateInput): PluginRow {
 }
 
 export function update(id: string, patch: PluginUpdatePatch): PluginRow | null {
-  const sets: string[] = []
-  const args: (string | number)[] = []
-  if (patch.bundles !== undefined) {
-    sets.push('bundles = ?')
-    args.push(JSON.stringify(patch.bundles))
-  }
-  if (patch.enabled !== undefined) {
-    sets.push('enabled = ?')
-    args.push(patch.enabled ? 1 : 0)
-  }
+  const { sets, args } = buildUpdate([
+    ['bundles', asJson(patch.bundles)],
+    ['enabled', asBool(patch.enabled)],
+  ])
   if (sets.length > 0) {
-    args.push(id)
     getDb()
       .prepare(`UPDATE plugins SET ${sets.join(', ')} WHERE id = ?`)
-      .run(...args)
+      .run(...args, id)
   }
   return getById(id)
 }

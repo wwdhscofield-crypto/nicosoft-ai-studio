@@ -1,5 +1,6 @@
 import { ulid } from '../db/id'
 import { getDb } from '../db/connection'
+import { asBool, asJson, buildUpdate } from './_sql'
 import type { ModelInfo, Protocol } from '../domain'
 
 // Endpoints table CRUD. Pure SQL — no business logic / IPC / keychain. API keys live in the OS
@@ -133,41 +134,19 @@ export function create(input: EndpointCreateInput): EndpointRow {
 }
 
 export function update(id: string, patch: EndpointUpdatePatch): EndpointRow | null {
-  const sets: string[] = []
-  const args: (string | number | null)[] = []
-  if (patch.name !== undefined) {
-    sets.push('name = ?')
-    args.push(patch.name)
-  }
-  if (patch.protocol !== undefined) {
-    sets.push('protocol = ?')
-    args.push(patch.protocol)
-  }
-  if (patch.baseUrl !== undefined) {
-    sets.push('base_url = ?')
-    args.push(patch.baseUrl)
-  }
-  if (patch.defaultModel !== undefined) {
-    sets.push('default_model = ?')
-    args.push(patch.defaultModel)
-  }
-  if (patch.availableModels !== undefined) {
-    sets.push('available_models = ?')
-    args.push(JSON.stringify(patch.availableModels))
-  }
-  if (patch.enabled !== undefined) {
-    sets.push('enabled = ?')
-    args.push(patch.enabled ? 1 : 0)
-  }
-  if (patch.cacheEnabled !== undefined) {
-    sets.push('cache_enabled = ?')
-    args.push(patch.cacheEnabled ? 1 : 0)
-  }
+  const { sets, args } = buildUpdate([
+    ['name', patch.name],
+    ['protocol', patch.protocol],
+    ['base_url', patch.baseUrl],
+    ['default_model', patch.defaultModel],
+    ['available_models', asJson(patch.availableModels)],
+    ['enabled', asBool(patch.enabled)],
+    ['cache_enabled', asBool(patch.cacheEnabled)],
+  ])
   if (sets.length > 0) {
-    args.push(id)
     getDb()
       .prepare(`UPDATE endpoints SET ${sets.join(', ')} WHERE id = ?`)
-      .run(...args)
+      .run(...args, id)
   }
   return getById(id)
 }

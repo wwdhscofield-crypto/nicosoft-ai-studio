@@ -8,17 +8,20 @@
 // The prototype's mock projects / conversations / analytics / memory / endpoint fixtures were removed —
 // those screens read real IPC-backed data now.
 import type { Expert, StudioData, ExtensionsData, Greeting } from '@/types'
+import { ROLE_DISPLAY_NAMES as N } from '@shared/roles'
 
+// Display names come from @shared/roles (single source with main's router/dispatch prompts); everything
+// else here (color, specialty, personality, default model, family) is renderer-only UI metadata.
 const EXPERTS: Expert[] = [
-  { id: 'coordinator', name: 'Danny', color: 'var(--exp-coordinator)', specialty: 'Coordinator — routes & merges', personality: 'Calm air-traffic-controller', model: 'nicosoft/claude-opus-4-8', family: 'anthropic', coordinator: true },
-  { id: 'generalist', name: 'Amélie', color: 'var(--exp-generalist)', specialty: 'Generalist — chat & brainstorming', personality: 'Warm, curious front door', model: 'nicosoft/gpt-5.5', family: 'openai' },
-  { id: 'engineer', name: 'Flynn', color: 'var(--exp-engineer)', specialty: 'Backend engineer — APIs, server, data', personality: 'Precise, direct, no pleasantries', model: 'nicosoft/claude-opus-4-8', family: 'anthropic' },
-  { id: 'shuri', name: 'Shuri', color: 'var(--exp-shuri)', specialty: 'Frontend engineer — UI, React, CSS', personality: 'Inventive, detail-driven, craft-proud', model: 'nicosoft/claude-opus-4-8', family: 'anthropic' },
-  { id: 'designer', name: 'Georgia', color: 'var(--exp-designer)', specialty: 'Designer — images & posters', personality: 'Creative, opinionated', model: 'gemini-pro-latest', family: 'gemini' },
-  { id: 'translator', name: 'Louise', color: 'var(--exp-translator)', specialty: 'Translator — any language pair', personality: 'Precise, culturally aware', model: 'nicosoft/gemini-3-flash-agent', family: 'gemini' },
-  { id: 'editor', name: 'Miranda', color: 'var(--exp-editor)', specialty: 'Editor — summarize & condense', personality: 'Structured, no padding', model: 'gemini-pro-latest', family: 'gemini' },
-  { id: 'analyst', name: 'Turing', color: 'var(--exp-analyst)', specialty: 'Data analyst — stats & charts', personality: 'Rigorous, honest about uncertainty', model: 'nicosoft/gpt-5.5', family: 'openai' },
-  { id: 'scheduler', name: 'Joan', color: 'var(--exp-scheduler)', specialty: 'Email & scheduling', personality: 'Efficient, situationally appropriate', model: 'nicosoft/gpt-5.4-mini', family: 'openai' }
+  { id: 'coordinator', name: N.coordinator, color: 'var(--exp-coordinator)', specialty: 'Coordinator — routes & merges', personality: 'Calm air-traffic-controller', model: 'nicosoft/claude-opus-4-8', family: 'anthropic', coordinator: true },
+  { id: 'generalist', name: N.generalist, color: 'var(--exp-generalist)', specialty: 'Generalist — chat & brainstorming', personality: 'Warm, curious front door', model: 'nicosoft/gpt-5.5', family: 'openai' },
+  { id: 'engineer', name: N.engineer, color: 'var(--exp-engineer)', specialty: 'Backend engineer — APIs, server, data', personality: 'Precise, direct, no pleasantries', model: 'nicosoft/claude-opus-4-8', family: 'anthropic' },
+  { id: 'shuri', name: N.shuri, color: 'var(--exp-shuri)', specialty: 'Frontend engineer — UI, React, CSS', personality: 'Inventive, detail-driven, craft-proud', model: 'nicosoft/claude-opus-4-8', family: 'anthropic' },
+  { id: 'designer', name: N.designer, color: 'var(--exp-designer)', specialty: 'Designer — images & posters', personality: 'Creative, opinionated', model: 'gemini-pro-latest', family: 'gemini' },
+  { id: 'translator', name: N.translator, color: 'var(--exp-translator)', specialty: 'Translator — any language pair', personality: 'Precise, culturally aware', model: 'nicosoft/gemini-3-flash-agent', family: 'gemini' },
+  { id: 'editor', name: N.editor, color: 'var(--exp-editor)', specialty: 'Editor — summarize & condense', personality: 'Structured, no padding', model: 'gemini-pro-latest', family: 'gemini' },
+  { id: 'analyst', name: N.analyst, color: 'var(--exp-analyst)', specialty: 'Data analyst — stats & charts', personality: 'Rigorous, honest about uncertainty', model: 'nicosoft/gpt-5.5', family: 'openai' },
+  { id: 'scheduler', name: N.scheduler, color: 'var(--exp-scheduler)', specialty: 'Email & scheduling', personality: 'Efficient, situationally appropriate', model: 'nicosoft/gpt-5.4-mini', family: 'openai' }
 ]
 
 const EXPERT_BY_ID: Record<string, Expert> = Object.fromEntries(EXPERTS.map((e) => [e.id, e]))

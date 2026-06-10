@@ -1,20 +1,24 @@
-// Thinking-depth engine — the single source of truth for "which thinking knob does this model expose,
-// and what does each depth resolve to". Mirrors each provider's NATIVE API because Studio talks to raw
-// endpoints (no middle layer): OpenAI Responses → reasoning.effort; Claude (non-Haiku) → extended
-// thinking budget_tokens; Gemini 2.5 → thinkingConfig.thinkingBudget; Gemini 3 → effort/level.
-//
-// The composer uses this to show/hide the picker and list depths; resolveThinking() produces the exact
-// directive sent to the backend (effort XOR budgetTokens), which adapters translate verbatim.
+// Thinking-depth engine — "which thinking knob does this model expose, and what does each depth resolve
+// to". The provider tables / model probes are single-sourced in @shared/thinking (main's resolveDepth
+// reads the same ones); this file owns the renderer-only capability layer: the picker options, the
+// capability kinds the composer renders, and resolveThinking() producing the exact directive sent to the
+// backend (effort XOR budgetTokens), which adapters translate verbatim.
 
 import type { Family } from '@/types'
+import {
+  ANTHROPIC_BUDGET,
+  GEMINI3_DEPTHS,
+  GEMINI_FLASH_BUDGET,
+  GEMINI_PRO_BUDGET,
+  anthropicDepths,
+  openaiDepths,
+  protocolFamily,
+  supportsAdaptiveThinking,
+  type ThinkingDepth,
+  type ThinkingParam,
+} from '@shared/thinking'
 
-// Thinking tiers across providers, each shown only where the model supports it:
-//   Anthropic (budget): low/medium/high/xhigh/max — by Opus version
-//   OpenAI (effort):    none/minimal/low/medium/high/xhigh — by GPT version
-//   Gemini (effort/budget): low/medium/high
-// 'xhigh' shows as "Extra"; 'minimal'/'none' are OpenAI's sub-low tiers; 'max' is Anthropic-only.
-export type EffortLevel = 'minimal' | 'none' | 'low' | 'medium' | 'high' | 'xhigh'
-export type ThinkingDepth = EffortLevel | 'max'
+export type { EffortLevel, ThinkingDepth, ThinkingParam } from '@shared/thinking'
 
 // effort = enum knob (OpenAI Responses / Gemini-3 reasoning models, no token budget, no 'max').
 // budget = token allowance (Anthropic extended thinking / Gemini 2.5). none = model can't think.
@@ -23,13 +27,6 @@ export type ThinkingCapability =
   | { kind: 'effort'; depths: ThinkingDepth[] }
   | { kind: 'budget'; mapping: Partial<Record<ThinkingDepth, number>> }
   | { kind: 'adaptive' } // Anthropic 4.6+ — model self-budgets, no tier picker (claude-code adaptive thinking)
-
-// Resolved directive sent to the backend (mirrors llm/types ThinkingParam). Exactly one field set.
-export interface ThinkingParam {
-  effort?: EffortLevel
-  budgetTokens?: number
-  adaptive?: boolean // Anthropic 4.6+ adaptive thinking — model self-budgets, no token count / effort
-}
 
 export interface ThinkingOption {
   value: ThinkingDepth
@@ -45,59 +42,6 @@ export const THINKING_OPTIONS: ThinkingOption[] = [
   { value: 'max', label: 'Max' }
 ]
 
-// Gemini-3 effort knob — three native levels.
-const GEMINI3_DEPTHS: ThinkingDepth[] = ['low', 'medium', 'high']
-
-// OpenAI reasoning effort by model (verified against the OpenAI API docs):
-//   o-series (o1/o3…)          → low/medium/high
-//   gpt-5.0 (gpt-5, gpt-5-mini)→ minimal/low/medium/high   (minimal = fastest)
-//   gpt-5.1–5.4                → none/low/medium/high       (none replaces minimal)
-//   gpt-5.5+                   → none/low/medium/high/xhigh
-//   gpt-4 and below            → no reasoning effort
-function openaiDepths(slug: string): ThinkingDepth[] {
-  if (/(^|[/\-])o[1-9]/.test(slug)) return ['low', 'medium', 'high']
-  const gpt = /gpt-(\d+)(?:\.(\d+))?/.exec(slug)
-  if (!gpt || parseInt(gpt[1], 10) < 5) return []
-  const major = parseInt(gpt[1], 10)
-  const minor = gpt[2] ? parseInt(gpt[2], 10) : 0
-  if (major === 5 && minor === 0) return ['minimal', 'low', 'medium', 'high']
-  const tiers: ThinkingDepth[] = ['none', 'low', 'medium', 'high']
-  if (major > 5 || minor >= 5) tiers.push('xhigh')
-  return tiers
-}
-// Claude effort levels (low/medium/high/xhigh/max) expressed as extended-thinking budgets, so any
-// Anthropic-protocol endpoint accepts them — budget_tokens is the universally-supported wire form
-// (new Opus models also take the effort enum, but budget is the safe, portable choice).
-const ANTHROPIC_BUDGET: Partial<Record<ThinkingDepth, number>> = {
-  low: 1024,
-  medium: 8192,
-  high: 32768,
-  xhigh: 49152,
-  max: 65536
-}
-
-// Per-model Claude tiers: low/medium/high base; +max on Opus 4.6+; +xhigh(Extra) on Opus 4.7+.
-// Haiku has no thinking; non-Opus or older Opus Claude gets the base three.
-function anthropicDepths(slug: string): ThinkingDepth[] {
-  if (slug.includes('haiku')) return []
-  const tiers: ThinkingDepth[] = ['low', 'medium', 'high']
-  const opus = /opus-4[.\-](\d+)/.exec(slug) // matches both claude-opus-4-6 and claude-opus-4.6
-  if (opus) {
-    const minor = parseInt(opus[1], 10)
-    if (minor >= 7) tiers.push('xhigh')
-    if (minor >= 6) tiers.push('max')
-  }
-  return tiers
-}
-
-// Opus 4.6+ / Sonnet 4.6+ are trained on adaptive thinking — the model self-budgets, so the UI offers no
-// tier and the backend sends { adaptive: true }. Mirrors claude-code modelSupportsAdaptiveThinking.
-function supportsAdaptiveThinking(slug: string): boolean {
-  if (slug.includes('haiku')) return false
-  const m = /(opus|sonnet)-4[.\-](\d+)/.exec(slug) // claude-opus-4-8 / claude-sonnet-4.6
-  return m ? parseInt(m[2], 10) >= 6 : false
-}
-
 function pickBudget(depths: ThinkingDepth[]): Partial<Record<ThinkingDepth, number>> {
   const out: Partial<Record<ThinkingDepth, number>> = {}
   for (const d of depths) {
@@ -106,9 +50,6 @@ function pickBudget(depths: ThinkingDepth[]): Partial<Record<ThinkingDepth, numb
   }
   return out
 }
-// Gemini 2.5 budgets — sub-model token ceilings (no 'max' tier).
-const GEMINI_PRO_BUDGET: Partial<Record<ThinkingDepth, number>> = { low: 1024, medium: 8192, high: 32768 }
-const GEMINI_FLASH_BUDGET: Partial<Record<ThinkingDepth, number>> = { low: 1024, medium: 8192, high: 24576 }
 
 // Which thinking knob a given (family, model slug) exposes.
 export function getThinkingCapability(family: Family, slug: string): ThinkingCapability {
@@ -157,12 +98,8 @@ export function resolveThinking(cap: ThinkingCapability, depth: ThinkingDepth): 
   return budget !== undefined ? { budgetTokens: budget } : null
 }
 
-
-// Map an endpoint's protocol to the model family the thinking engine reasons about. openai + custom
-// (both Responses-API) collapse to 'openai'; unknown protocols → null (no thinking).
+// Map an endpoint's protocol to the model family the thinking engine reasons about (single source:
+// @shared/thinking). openai + custom (both Responses-API) collapse to 'openai'; unknown → null.
 export function protocolToFamily(protocol: string): Family {
-  if (protocol === 'anthropic') return 'anthropic'
-  if (protocol === 'gemini') return 'gemini'
-  if (protocol === 'openai' || protocol === 'custom') return 'openai'
-  return null
+  return protocolFamily(protocol)
 }

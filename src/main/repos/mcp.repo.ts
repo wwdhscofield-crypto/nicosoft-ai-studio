@@ -1,5 +1,6 @@
 import { ulid } from '../db/id'
 import { getDb } from '../db/connection'
+import { asBool, asJson, buildUpdate, parseJson } from './_sql'
 import type { McpScope, McpStatus, McpTransport } from '../ipc/contracts'
 
 // mcp_servers CRUD. Pure SQL — no business logic / keychain. env (stdio) / headers (http) are SECRETS
@@ -52,14 +53,6 @@ interface McpServerRaw {
   status: McpStatus
   owner_plugin_id: string | null
   created_at: string
-}
-
-function parseJson<T>(json: string, fallback: T): T {
-  try {
-    return JSON.parse(json) as T
-  } catch {
-    return fallback
-  }
 }
 
 function mapRow(raw: McpServerRaw): McpServerRow {
@@ -115,45 +108,20 @@ export function create(input: McpServerCreateInput): McpServerRow {
 }
 
 export function update(id: string, patch: McpServerUpdatePatch): McpServerRow | null {
-  const sets: string[] = []
-  const args: (string | number)[] = []
-  if (patch.name !== undefined) {
-    sets.push('name = ?')
-    args.push(patch.name)
-  }
-  if (patch.transport !== undefined) {
-    sets.push('transport = ?')
-    args.push(patch.transport)
-  }
-  if (patch.endpointOrCmd !== undefined) {
-    sets.push('endpoint_or_cmd = ?')
-    args.push(patch.endpointOrCmd)
-  }
-  if (patch.args !== undefined) {
-    sets.push('args = ?')
-    args.push(JSON.stringify(patch.args))
-  }
-  if (patch.scope !== undefined) {
-    sets.push('scope = ?')
-    args.push(JSON.stringify(patch.scope))
-  }
-  if (patch.enabled !== undefined) {
-    sets.push('enabled = ?')
-    args.push(patch.enabled ? 1 : 0)
-  }
-  if (patch.toolCount !== undefined) {
-    sets.push('tool_count = ?')
-    args.push(patch.toolCount)
-  }
-  if (patch.status !== undefined) {
-    sets.push('status = ?')
-    args.push(patch.status)
-  }
+  const { sets, args } = buildUpdate([
+    ['name', patch.name],
+    ['transport', patch.transport],
+    ['endpoint_or_cmd', patch.endpointOrCmd],
+    ['args', asJson(patch.args)],
+    ['scope', asJson(patch.scope)],
+    ['enabled', asBool(patch.enabled)],
+    ['tool_count', patch.toolCount],
+    ['status', patch.status],
+  ])
   if (sets.length > 0) {
-    args.push(id)
     getDb()
       .prepare(`UPDATE mcp_servers SET ${sets.join(', ')} WHERE id = ?`)
-      .run(...args)
+      .run(...args, id)
   }
   return getById(id)
 }

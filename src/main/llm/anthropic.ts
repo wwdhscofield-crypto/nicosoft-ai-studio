@@ -3,8 +3,8 @@
 // message_start (input_tokens) and message_delta (output_tokens); text is in content_block_delta.
 
 import type { ChatAttachment, ChatFn, ChatMessage, ChatRequest, ChatResult, OnDelta } from './types'
-import { iterSSE, openStream, parseJSON, toLlmError } from './_shared'
-import { USER_AGENT } from '../user-agent'
+import { iterSSE, openStream, parseJSON, toLlmError, trimBase } from './_shared'
+import { anthropicHeaders, anthropicThinkingDirective, applyAnthropicCacheControls } from './anthropic-wire'
 
 const PROVIDER = 'anthropic'
 const MAX_TOKENS = 4096
@@ -80,36 +80,6 @@ function toSystem(messages: ChatMessage[]): string | undefined {
   return parts.length > 0 ? parts.join('\n\n') : undefined
 }
 
-function hasCacheControl(value: unknown): boolean {
-  if (!value || typeof value !== 'object') return false
-  if ('cache_control' in value) return true
-  if (Array.isArray(value)) return value.some(hasCacheControl)
-  return Object.values(value as Record<string, unknown>).some(hasCacheControl)
-}
-
-function applyAnthropicCacheControls(body: MessagesBody): MessagesBody {
-  // NSAI upstream Claude OAuth may already inject cache controls and skips when cache controls exist,
-  // so avoiding duplicates here prevents conflict while preserving that upstream behavior.
-  if (hasCacheControl(body)) return body
-  let count = 0
-  if (typeof body.system === 'string' && body.system.trim().length > 0) {
-    body.system = [{ type: 'text', text: body.system, cache_control: { type: 'ephemeral' } }]
-    count++
-  }
-  for (let i = body.messages.length - 1; i >= 0 && count < 3; i--) {
-    const msg = body.messages[i]
-    if (msg.role !== 'user') continue
-    for (let j = msg.content.length - 1; j >= 0; j--) {
-      const block = msg.content[j]
-      if (block.type === 'text' && block.text.length > 0) {
-        block.cache_control = { type: 'ephemeral' }
-        return body
-      }
-    }
-  }
-  return body
-}
-
 function buildBody(req: ChatRequest): MessagesBody {
   const body: MessagesBody = {
     model: req.model,
@@ -119,17 +89,12 @@ function buildBody(req: ChatRequest): MessagesBody {
   }
   const system = toSystem(req.messages)
   if (system) body.system = system
-  // Extended thinking. Adaptive (Opus/Sonnet 4.6+): the model self-budgets — send { type: 'adaptive' } with
-  // no token count (mirrors claude-code). Legacy budget: budget_tokens must be < max_tokens, so lift
-  // max_tokens to leave room for the visible answer on top of the thinking allowance.
-  if (req.thinking?.adaptive) {
-    body.thinking = { type: 'adaptive' }
-  } else {
-    const budget = req.thinking?.budgetTokens
-    if (typeof budget === 'number' && budget > 0) {
-      body.thinking = { type: 'enabled', budget_tokens: budget }
-      body.max_tokens = budget + MAX_TOKENS
-    }
+  // Extended thinking (shared directive). Chat policy: always lift max_tokens above the budget so the
+  // visible answer keeps MAX_TOKENS of room on top of the thinking allowance.
+  const directive = anthropicThinkingDirective(req.thinking)
+  if (directive) {
+    body.thinking = directive
+    if (directive.type === 'enabled') body.max_tokens = directive.budget_tokens + MAX_TOKENS
   }
   if (req.cacheEnabled) applyAnthropicCacheControls(body)
   return body
@@ -150,15 +115,10 @@ interface AnthropicEvent {
 }
 
 export const chatAnthropic: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Promise<ChatResult> => {
-  const url = `${req.baseUrl.replace(/\/$/, '')}/v1/messages`
+  const url = `${trimBase(req.baseUrl)}/v1/messages`
   const reader = await openStream(PROVIDER, url, {
     method: 'POST',
-    headers: {
-      'x-api-key': req.apiKey,
-      'anthropic-version': '2023-06-01',
-      'Content-Type': 'application/json',
-      'User-Agent': USER_AGENT,
-    },
+    headers: anthropicHeaders(req.apiKey),
     body: JSON.stringify(buildBody(req)),
     signal: req.signal,
   })

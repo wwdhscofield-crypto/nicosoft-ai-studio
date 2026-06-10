@@ -8,8 +8,8 @@
 // OpenAI roles don't use this tool; they get OpenAI's hosted web_search as a serverTool in agent.service.run.
 
 import { z } from 'zod'
-import { geminiModelPath } from '../../llm/_shared'
-import { USER_AGENT } from '../../user-agent'
+import { geminiBase, geminiHeaders, geminiModelPath, trimBase } from '../../llm/_shared'
+import { anthropicHeaders } from '../../llm/anthropic-wire'
 import type { AgentLlmAccess } from '../context'
 import { buildTool } from '../tool'
 import type { ToolResultBlock } from '../types'
@@ -61,10 +61,10 @@ async function delegatedSearch(
   if (input.allowed_domains?.length) tool.allowed_domains = input.allowed_domains
   if (input.blocked_domains?.length) tool.blocked_domains = input.blocked_domains
 
-  const res = await fetch(`${llm.baseUrl.replace(/\/$/, '')}/v1/messages`, {
+  const res = await fetch(`${trimBase(llm.baseUrl)}/v1/messages`, {
     method: 'POST',
     signal: AbortSignal.any([signal, AbortSignal.timeout(SEARCH_TIMEOUT_MS)]),
-    headers: { 'x-api-key': llm.apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json', 'User-Agent': USER_AGENT },
+    headers: anthropicHeaders(llm.apiKey),
     body: JSON.stringify({
       model: llm.searchModel,
       max_tokens: 1024,
@@ -106,12 +106,11 @@ async function delegatedSearchGemini(
   input: z.infer<typeof inputSchema>,
   signal: AbortSignal,
 ): Promise<WebSearchOutput> {
-  const base = llm.baseUrl.replace(/\/$/, '').replace(/\/v1beta$/, '').replace(/\/v1$/, '')
-  const url = `${base}/v1beta/models/${geminiModelPath(llm.searchModel)}:generateContent`
+  const url = `${geminiBase(llm.baseUrl)}/v1beta/models/${geminiModelPath(llm.searchModel)}:generateContent`
   const res = await fetch(url, {
     method: 'POST',
     signal: AbortSignal.any([signal, AbortSignal.timeout(SEARCH_TIMEOUT_MS)]),
-    headers: { 'x-goog-api-key': llm.apiKey, 'content-type': 'application/json', 'User-Agent': USER_AGENT },
+    headers: geminiHeaders(llm.apiKey),
     body: JSON.stringify({
       contents: [{ role: 'user', parts: [{ text: `Search the web for: ${input.query}` }] }],
       tools: [{ google_search: {} }],

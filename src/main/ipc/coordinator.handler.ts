@@ -4,7 +4,7 @@
 // terminal `coordinator:done` or `coordinator:error`. `coordinator:stop` aborts. This handler owns stream lifecycle
 // (id + AbortController + sender lifetime cleanup); the service does the orchestration.
 
-import { ipcMain, type WebContents } from 'electron'
+import { ipcMain } from 'electron'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
@@ -14,6 +14,7 @@ import { isContentBlock } from '../agent/types'
 import * as coordinatorService from '../services/coordinator.service'
 import { LlmError } from '../llm/types'
 import { broadcastConvImage, broadcastUsage } from './usage-broadcast'
+import { StreamRegistry } from './stream-lifecycle'
 import type {
   CoordinatorRunInputDto,
   CoordinatorDispatchEvent,
@@ -37,7 +38,7 @@ import type {
   AgentPermissionResponse
 } from './contracts'
 
-const streams = new Map<string, { controller: AbortController; sender: WebContents }>()
+const streams = new StreamRegistry()
 // Dispatched-tool approvals (phase 2 still pop to the user — doc 19 §14), mirroring agent.handler: one
 // settle() per permissionId + the set of ids per run, so a terminal event can deny any prompt the
 // renderer never answered.
@@ -55,21 +56,9 @@ function sweepStream(streamId: string): void {
 export function registerCoordinatorHandlers(): void {
   ipcMain.handle('coordinator:run', (e, input: CoordinatorRunInputDto): { streamId: string } => {
     const streamId = ulid()
-    const controller = new AbortController()
     const sender = e.sender
-    streams.set(streamId, { controller, sender })
+    const { controller, send, finish } = streams.open(streamId, sender)
     pendingByStream.set(streamId, new Set())
-
-    // If the renderer goes away mid-stream, abort so SSE readers + fetch handles unwind instead of
-    // hanging. Covers window close, render-process crash, and page reload — same pattern as agent.handler.
-    const onGone = (): void => controller.abort()
-    sender.once('destroyed', onGone)
-    sender.once('render-process-gone', onGone)
-    sender.once('did-start-loading', onGone)
-
-    const send = (channel: string, data: unknown): void => {
-      if (!sender.isDestroyed()) sender.send(channel, data)
-    }
 
     void coordinatorService
       .run(
@@ -211,22 +200,17 @@ export function registerCoordinatorHandlers(): void {
         send('coordinator:error', ev)
       })
       .finally(() => {
-        if (!sender.isDestroyed()) {
-          sender.removeListener('destroyed', onGone)
-          sender.removeListener('render-process-gone', onGone)
-          sender.removeListener('did-start-loading', onGone)
-        }
         sweepStream(streamId) // deny any approval the renderer never answered before the turn ended
-        streams.delete(streamId)
+        finish()
       })
 
     return { streamId }
   })
 
   ipcMain.handle('coordinator:stop', (_e, streamId: string) => {
-    streams.get(streamId)?.controller.abort()
+    streams.abort(streamId)
     sweepStream(streamId)
-    streams.delete(streamId)
+    streams.drop(streamId)
   })
 
   // A dispatched-tool approval answer from the renderer (phase 2 — doc 19 §14). settle() is delete-guarded,

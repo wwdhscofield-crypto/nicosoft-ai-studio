@@ -1,5 +1,6 @@
 import { ulid } from '../db/id'
 import { getDb } from '../db/connection'
+import { asBool, asJson, buildUpdate, parseJson } from './_sql'
 import type { SkillScope, SkillSource } from '../ipc/contracts'
 
 // skills CRUD. Pure SQL — no business logic. allowed_tools/scope are JSON columns; enabled 0/1.
@@ -60,14 +61,6 @@ interface SkillRaw {
   created_at: string | null
 }
 
-function parseJson<T>(json: string, fallback: T): T {
-  try {
-    return JSON.parse(json) as T
-  } catch {
-    return fallback
-  }
-}
-
 function mapRow(raw: SkillRaw): SkillRow {
   return {
     id: raw.id,
@@ -125,45 +118,20 @@ export function create(input: SkillCreateInput): SkillRow {
 }
 
 export function update(id: string, patch: SkillUpdatePatch): SkillRow | null {
-  const sets: string[] = []
-  const args: (string | number | null)[] = []
-  if (patch.name !== undefined) {
-    sets.push('name = ?')
-    args.push(patch.name)
-  }
-  if (patch.description !== undefined) {
-    sets.push('description = ?')
-    args.push(patch.description)
-  }
-  if (patch.whenToUse !== undefined) {
-    sets.push('when_to_use = ?')
-    args.push(patch.whenToUse)
-  }
-  if (patch.body !== undefined) {
-    sets.push('body = ?')
-    args.push(patch.body)
-  }
-  if (patch.dirPath !== undefined) {
-    sets.push('dir_path = ?')
-    args.push(patch.dirPath)
-  }
-  if (patch.allowedTools !== undefined) {
-    sets.push('allowed_tools = ?')
-    args.push(JSON.stringify(patch.allowedTools))
-  }
-  if (patch.scope !== undefined) {
-    sets.push('scope = ?')
-    args.push(JSON.stringify(patch.scope))
-  }
-  if (patch.enabled !== undefined) {
-    sets.push('enabled = ?')
-    args.push(patch.enabled ? 1 : 0)
-  }
+  const { sets, args } = buildUpdate([
+    ['name', patch.name],
+    ['description', patch.description],
+    ['when_to_use', patch.whenToUse],
+    ['body', patch.body],
+    ['dir_path', patch.dirPath],
+    ['allowed_tools', asJson(patch.allowedTools)],
+    ['scope', asJson(patch.scope)],
+    ['enabled', asBool(patch.enabled)],
+  ])
   if (sets.length > 0) {
-    args.push(id)
     getDb()
       .prepare(`UPDATE skills SET ${sets.join(', ')} WHERE id = ?`)
-      .run(...args)
+      .run(...args, id)
   }
   return getById(id)
 }

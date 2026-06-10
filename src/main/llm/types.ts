@@ -3,6 +3,7 @@
 // translation — they never touch the DB or keychain (the key is passed in by the service).
 
 import type { Protocol } from '../domain'
+import type { ThinkingParam } from '@shared/thinking'
 export type { Protocol }
 
 export type LlmErrorCode =
@@ -45,16 +46,9 @@ export interface ChatMessage {
   toolResults?: ToolResult[] // user turn returning tool results (Gemini functionResponse)
 }
 
-// Resolved thinking directive. The renderer's thinking engine (renderer/src/lib/thinking.ts) picks
-// exactly one shape per request: effort (OpenAI Responses / Gemini-3 reasoning models) or budgetTokens
-// (Anthropic extended thinking / Gemini 2.5). Absent = no thinking. Adapters translate it natively.
-export interface ThinkingParam {
-  effort?: 'minimal' | 'none' | 'low' | 'medium' | 'high' | 'xhigh'
-  budgetTokens?: number
-  // Anthropic adaptive thinking (Opus/Sonnet 4.6+): the model self-budgets — no token count, no effort.
-  // Mutually exclusive with budgetTokens/effort. Mirrors claude-code's { type: 'adaptive' } selection.
-  adaptive?: boolean
-}
+// Resolved thinking directive — single-sourced in @shared/thinking (the renderer's thinking engine and
+// main's resolveDepth both produce it). Exactly one field set; absent = no thinking.
+export type { ThinkingParam } from '@shared/thinking'
 
 export interface ChatRequest {
   protocol: Protocol

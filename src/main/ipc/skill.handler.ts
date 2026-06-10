@@ -1,4 +1,5 @@
-import { BrowserWindow, dialog, ipcMain } from 'electron'
+import { ipcMain } from 'electron'
+import { pickDirectory } from './dialogs'
 import * as skillService from '../services/skill.service'
 import type { SkillInput } from './contracts'
 
@@ -10,10 +11,5 @@ export function registerSkillHandlers(): void {
   ipcMain.handle('skills:update', (_e, id: string, patch: SkillInput) => skillService.update(id, patch))
   ipcMain.handle('skills:remove', (_e, id: string) => skillService.remove(id))
   // Folder picker for importing a SKILL.md directory. Returns the chosen path, or null if cancelled.
-  ipcMain.handle('skills:pickDir', async (e) => {
-    const win = BrowserWindow.fromWebContents(e.sender)
-    const opts = { title: 'Select a skill folder (containing SKILL.md)', properties: ['openDirectory' as const] }
-    const res = await (win ? dialog.showOpenDialog(win, opts) : dialog.showOpenDialog(opts))
-    return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0]
-  })
+  ipcMain.handle('skills:pickDir', (e) => pickDirectory(e, { title: 'Select a skill folder (containing SKILL.md)' }))
 }

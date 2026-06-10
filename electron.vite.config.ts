@@ -8,9 +8,14 @@ import react from '@vitejs/plugin-react'
 // instead of the app's. Injecting here is correct in both dev and packaged builds.
 const pkg = JSON.parse(readFileSync(resolve('package.json'), 'utf-8')) as { version: string }
 
+// src/shared/ holds cross-process single-source modules (thinking tables, role names) imported by BOTH
+// the main process and the renderer — the alias keeps the import spelling identical on either side.
+const sharedAlias = { '@shared': resolve('src/shared') }
+
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
+    resolve: { alias: sharedAlias },
     build: {
       rollupOptions: {
         // externalizeDepsPlugin only externalizes `dependencies` — playwright is a DEV dependency
@@ -34,7 +39,8 @@ export default defineConfig({
   renderer: {
     resolve: {
       alias: {
-        '@': resolve('src/renderer/src')
+        '@': resolve('src/renderer/src'),
+        ...sharedAlias
       }
     },
     plugins: [react()]

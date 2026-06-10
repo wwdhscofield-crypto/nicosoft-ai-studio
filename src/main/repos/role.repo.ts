@@ -1,5 +1,6 @@
 import { ulid } from '../db/id'
 import { getDb } from '../db/connection'
+import { asJson, buildUpdate } from './_sql'
 
 // role_bindings + custom_roles + role_states tables. Pure SQL.
 // - bindings: which endpoint+model a role talks to (role_id PK, UPSERT).
@@ -219,41 +220,19 @@ export function createCustom(input: CustomRoleCreateInput): CustomRoleRow {
 }
 
 export function updateCustom(id: string, patch: CustomRoleUpdatePatch): CustomRoleRow | null {
-  const sets: string[] = []
-  const args: (string | number | null)[] = []
-  if (patch.name !== undefined) {
-    sets.push('name = ?')
-    args.push(patch.name)
-  }
-  if (patch.avatar !== undefined) {
-    sets.push('avatar = ?')
-    args.push(patch.avatar)
-  }
-  if (patch.color !== undefined) {
-    sets.push('color = ?')
-    args.push(patch.color)
-  }
-  if (patch.systemPrompt !== undefined) {
-    sets.push('system_prompt = ?')
-    args.push(patch.systemPrompt)
-  }
-  if (patch.tools !== undefined) {
-    sets.push('tools = ?')
-    args.push(JSON.stringify(patch.tools))
-  }
-  if (patch.greeting !== undefined) {
-    sets.push('greeting = ?')
-    args.push(patch.greeting)
-  }
-  if (patch.exampleQueries !== undefined) {
-    sets.push('example_queries = ?')
-    args.push(JSON.stringify(patch.exampleQueries))
-  }
+  const { sets, args } = buildUpdate([
+    ['name', patch.name],
+    ['avatar', patch.avatar],
+    ['color', patch.color],
+    ['system_prompt', patch.systemPrompt],
+    ['tools', asJson(patch.tools)],
+    ['greeting', patch.greeting],
+    ['example_queries', asJson(patch.exampleQueries)],
+  ])
   if (sets.length > 0) {
-    args.push(id)
     getDb()
       .prepare(`UPDATE custom_roles SET ${sets.join(', ')} WHERE id = ?`)
-      .run(...args)
+      .run(...args, id)
   }
   const row = getDb().prepare('SELECT * FROM custom_roles WHERE id = ?').get(id) as unknown as
     | CustomRoleRaw

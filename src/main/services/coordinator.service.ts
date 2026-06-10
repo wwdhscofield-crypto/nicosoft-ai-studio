@@ -27,7 +27,9 @@ import * as collabProject from './collab-project.service'
 import * as rolesService from './roles.service'
 import * as compressionService from './compression.service'
 import { chat as llmChat } from '../llm/client'
+import { chatOnce } from './llm-once'
 import { resolveDepth } from '../llm/thinking'
+import { protocolFamily } from '@shared/thinking'
 import * as agentService from './agent.service'
 import { backgroundVerifyQueue, GATE_C_MAX_ROUNDS, type E2ERoundResult, type E2EVerdict } from '../agent/background-verify-queue'
 import { Notification } from 'electron'
@@ -463,11 +465,11 @@ export async function route(userInput: string, history: convRepo.MessageRow[], s
 
   const messages = buildRouterMessages(userInput, history, enabled)
   try {
-    const result = await llmChat(
-      { protocol: ep.protocol, baseUrl: ep.baseUrl, apiKey, model: binding.model, messages, thinking: resolveDepth(ep.protocol, binding.model, binding.thinkingDepth), signal },
-      () => {} // collect, don't stream
-    )
-    return parseRouteDecision(result.text, enabled)
+    const text = await chatOnce(ep, apiKey, binding.model, messages, {
+      thinking: resolveDepth(ep.protocol, binding.model, binding.thinkingDepth),
+      signal,
+    })
+    return parseRouteDecision(text, enabled)
   } catch (e) {
     // Router LLM failed — fall back to the first enabled role so Coordinator never dead-ends, but DON'T
     // swallow silently: a persistent failure here makes every turn degrade to one role, which looks
@@ -714,8 +716,7 @@ async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputT
   // so the renderer draws one badge spanning the run, exactly like the llmChat path below.
   // The loop speaks Anthropic Messages, OpenAI Responses, or Gemini generateContent — a dispatched expert on
   // any of the three runs the full tool loop (mirrors agent.service.run's protocol gate).
-  const agentProtocol: 'anthropic' | 'openai' | 'gemini' | null =
-    ep.protocol === 'anthropic' ? 'anthropic' : ep.protocol === 'openai' || ep.protocol === 'custom' ? 'openai' : ep.protocol === 'gemini' ? 'gemini' : null
+  const agentProtocol = protocolFamily(ep.protocol)
   // Agent path: a dispatched expert (full kit), OR Danny's DIRECT turn (isDirect → his read-only kit +
   // the DIRECT persona via systemPromptOverride). Synthesis turns stay on the tool-less llmChat path below.
   if (agentProtocol && ((agentService.AGENT_ROLE_IDS.has(roleId) && !isCoordinatorSelf) || isDirect)) {
@@ -1285,8 +1286,10 @@ async function runCollaboration(
     if (!ep?.enabled) continue
     const apiKey = keychain.getApiKey(binding.endpointId)
     if (!apiKey) continue
-    const protocol: 'anthropic' | 'openai' | null =
-      ep.protocol === 'anthropic' ? 'anthropic' : ep.protocol === 'openai' || ep.protocol === 'custom' ? 'openai' : null
+    // Collaboration runs Anthropic/OpenAI experts only — a gemini-bound role is skipped (CollabSession
+    // doesn't drive the Gemini tool loop yet), so don't collapse this to a bare protocolFamily() gate.
+    const family = protocolFamily(ep.protocol)
+    const protocol = family === 'gemini' ? null : family
     if (!protocol) continue
     models.set(roleId, binding.model)
     cb.onStepStart(roleId, fullChain, binding.model)

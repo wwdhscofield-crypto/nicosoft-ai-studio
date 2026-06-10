@@ -34,7 +34,8 @@ import { e2eBrowserTool, disposeE2ESessionsOwnedBy } from '../agent/tools/e2e-br
 import { e2eRequestTool } from '../agent/tools/e2e-request'
 import type { Tool } from '../agent/tool'
 import type { AgentRunInput, MessageAttachmentDto, ToolCallDto, RunTranscript } from '../ipc/contracts'
-import * as keychain from '../keychain/keychain'
+import { requireApiKey } from './credentials'
+import { protocolFamily } from '@shared/thinking'
 import { LlmError } from '../llm/types'
 import { persistBase64, resolveToDataUrl } from '../media/storage'
 import * as endpointRepo from '../repos/endpoint.repo'
@@ -132,27 +133,9 @@ export async function run(
   if (!ep) throw new LlmError('bad_request', 'endpoint not found')
   // The agent loop speaks Anthropic Messages (/v1/messages), OpenAI Responses (/v1/responses), or Gemini
   // generateContent (/v1beta/models/*:streamGenerateContent) tool use.
-  const protocol: 'anthropic' | 'openai' | 'gemini' =
-    ep.protocol === 'anthropic'
-      ? 'anthropic'
-      : ep.protocol === 'openai' || ep.protocol === 'custom'
-        ? 'openai'
-        : ep.protocol === 'gemini'
-          ? 'gemini'
-          : (() => {
-              throw new LlmError('bad_request', `agent does not support ${ep.protocol} endpoints yet`)
-            })()
-  const key = keychain.getApiKey(input.endpointId)
-  if (!key) {
-    // Same split as chat.service: an unreadable key (encrypted under a different app identity) must not
-    // masquerade as "not configured" — Settings shows it exists, so tell the user to re-enter it.
-    throw new LlmError(
-      'bad_key',
-      keychain.keyStatus(input.endpointId) === 'unreadable'
-        ? 'stored API key cannot be decrypted (app identity changed) — re-enter it in Settings → Endpoints'
-        : 'no API key configured for this endpoint'
-    )
-  }
+  const protocol = protocolFamily(ep.protocol)
+  if (!protocol) throw new LlmError('bad_request', `agent does not support ${ep.protocol} endpoints yet`)
+  const key = requireApiKey(input.endpointId)
 
   const convId = input.convId
   const runId = ulid()

@@ -6,8 +6,18 @@
 //   2. functionCall parts arrive WHOLE (args is a complete object, not streamed fragments) — yield on sight.
 // Combining google_search grounding with custom function calling in one call needs Gemini 3 (see doc 29).
 
-import { geminiModelPath, iterSSE, openStream, parseJSON, sanitizeGeminiSchema, toLlmError } from '../llm/_shared'
-import { USER_AGENT } from '../user-agent'
+import {
+  asGeminiFunctionResponse,
+  geminiBase,
+  geminiHeaders,
+  geminiModelPath,
+  geminiThinkingConfig,
+  iterSSE,
+  openStream,
+  parseJSON,
+  sanitizeGeminiSchema,
+  toLlmError,
+} from '../llm/_shared'
 import { streamIdleGuard, LLM_STREAM_IDLE_MS } from './stream-timeout'
 import { ulid } from '../db/id'
 import type { AgentLlmEvent, AgentLlmRequest } from './llm'
@@ -36,11 +46,6 @@ interface GeminiPart {
 interface GeminiContent {
   role: 'user' | 'model'
   parts: GeminiPart[]
-}
-
-// Gemini's functionResponse.response must be a JSON object — wrap a non-object/string result.
-function asResponse(result: unknown): Record<string, unknown> {
-  return result && typeof result === 'object' && !Array.isArray(result) ? (result as Record<string, unknown>) : { result }
 }
 
 // tool_result content → plain string (image siblings dropped: Gemini functionResponse is structured text).
@@ -80,7 +85,7 @@ function toContents(messages: AgentMessage[]): GeminiContent[] {
         if (isContentBlock(b) && b.type === 'tool_result') {
           const tr = b as ToolResultBlock
           const name = idToName.get(tr.tool_use_id) ?? tr.tool_use_id
-          parts.push({ functionResponse: { name, response: asResponse(toolResultText(tr)) } })
+          parts.push({ functionResponse: { name, response: asGeminiFunctionResponse(toolResultText(tr)) } })
         }
       }
       for (const b of m.content) {
@@ -126,18 +131,15 @@ export async function* callWithToolsGemini(
   onEvent?: (e: AgentLlmEvent) => void,
 ): AsyncGenerator<ToolUseBlock, AssistantTurn, void> {
   // alt=sse: Gemini 3 only emits functionCall parts reliably over SSE (the default JSON-array stream drops
-  // them) — mirrors the chat gemini.ts adapter. Key in the x-goog-api-key header, not the URL.
-  const base = req.baseUrl.replace(/\/$/, '').replace(/\/v1beta$/, '').replace(/\/v1$/, '')
-  const url = `${base}/v1beta/models/${geminiModelPath(req.model)}:streamGenerateContent?alt=sse`
+  // them) — mirrors the chat gemini.ts adapter.
+  const url = `${geminiBase(req.baseUrl)}/v1beta/models/${geminiModelPath(req.model)}:streamGenerateContent?alt=sse`
   const body: Record<string, unknown> = {
     contents: toContents(req.messages),
     tools: toGeminiTools(req.tools),
   }
   if (req.system) body.systemInstruction = { parts: [{ text: req.system }] }
-  // Gemini 3 takes thinkingLevel (effort); 2.5 takes a token thinkingBudget — pick the matching field.
-  if (req.thinking?.effort) body.generationConfig = { thinkingConfig: { thinkingLevel: req.thinking.effort } }
-  else if (typeof req.thinking?.budgetTokens === 'number' && req.thinking.budgetTokens > 0)
-    body.generationConfig = { thinkingConfig: { thinkingBudget: req.thinking.budgetTokens } }
+  const gc = geminiThinkingConfig(req.thinking)
+  if (gc) body.generationConfig = gc
 
   const content: Array<TextBlock | ToolUseBlock> = []
   let textAcc = ''
@@ -150,7 +152,7 @@ export async function* callWithToolsGemini(
     guard.reset()
     const reader = await openStream(PROVIDER, url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': req.apiKey, 'User-Agent': USER_AGENT },
+      headers: geminiHeaders(req.apiKey),
       body: JSON.stringify(body),
       signal: guard.signal,
     })

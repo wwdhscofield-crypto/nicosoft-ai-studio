@@ -1,11 +1,9 @@
 import * as memoryRepo from '../repos/memory.repo'
 import * as extractionRepo from '../repos/extraction.repo'
 import * as convRepo from '../repos/conversation.repo'
-import * as endpointRepo from '../repos/endpoint.repo'
 import * as roleRepo from '../repos/role.repo'
-import * as keychain from '../keychain/keychain'
 import { estimateTextTokens } from '../llm/estimate'
-import { chat as llmChat } from '../llm/client'
+import { chatOnce, endpointWithKey } from './llm-once'
 import { pickSmallModel } from './model-select'
 import type { MemoryLayer, MemoryType, MemorySource, MemoryRow } from '../repos/memory.repo'
 
@@ -61,29 +59,20 @@ export async function extract(ctx: ExtractContext, trigger: ExtractTrigger): Pro
   try {
     const messages = convRepo.listByConversation(ctx.convId)
     if (messages.length < MIN_MESSAGES) return
-    const ep = endpointRepo.getById(ctx.endpointId)
-    if (!ep) return
-    const key = keychain.getApiKey(ctx.endpointId)
-    if (!key) return
-    const model = pickSmallModel(ep.protocol, ep.availableModels, ctx.model)
+    const target = endpointWithKey(ctx.endpointId)
+    if (!target) return
+    const model = pickSmallModel(target.ep.protocol, target.ep.availableModels, ctx.model)
     // Explicit "remember…" intent overrides the role's self-learning switch — the user asked directly.
     const selfLearning = trigger === 'explicit' || (roleRepo.getState(ctx.roleId)?.selfLearningEnabled ?? true)
 
     let transcript = messages.map((m) => `${m.author === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n')
     if (transcript.length > MAX_TRANSCRIPT_CHARS) transcript = transcript.slice(-MAX_TRANSCRIPT_CHARS)
 
-    const result = await llmChat(
-      {
-        protocol: ep.protocol,
-        baseUrl: ep.baseUrl,
-        apiKey: key,
-        model,
-        messages: [{ role: 'user', content: `${EXTRACT_INSTRUCTION}\n\nConversation:\n${transcript}` }]
-      },
-      () => {} // non-streaming use
-    )
+    const text = await chatOnce(target.ep, target.key, model, [
+      { role: 'user', content: `${EXTRACT_INSTRUCTION}\n\nConversation:\n${transcript}` }
+    ])
 
-    const items = parseExtracted(result.text)
+    const items = parseExtracted(text)
     if (!items.length) return
     const source: MemorySource = trigger === 'explicit' ? 'explicit' : trigger === 'user' ? 'user' : 'auto'
     const pool = memoryRepo.listForRole(ctx.roleId) // dedup pool: shared + this role's own
@@ -178,11 +167,9 @@ function capByBudget(memories: MemoryRow[]): MemoryRow[] {
 // (not ids) in the prompt — cheap, and no id round-trip. Returns null on failure so recall falls back
 // to the unfiltered pool.
 async function llmFilter(input: RecallInput, pool: MemoryRow[]): Promise<MemoryRow[] | null> {
-  const ep = endpointRepo.getById(input.endpointId)
-  if (!ep) return null
-  const key = keychain.getApiKey(input.endpointId)
-  if (!key) return null
-  const model = pickSmallModel(ep.protocol, ep.availableModels, input.model)
+  const target = endpointWithKey(input.endpointId)
+  if (!target) return null
+  const model = pickSmallModel(target.ep.protocol, target.ep.availableModels, input.model)
   const recent = convRepo
     .listByConversation(input.convId)
     .slice(-6)
@@ -192,11 +179,8 @@ async function llmFilter(input: RecallInput, pool: MemoryRow[]): Promise<MemoryR
   const indexed = pool.map((m, i) => `${i + 1}. ${m.content}`).join('\n')
   const prompt = `From the numbered facts below, return a JSON array of the index numbers relevant to the current conversation. Include only genuinely relevant facts; return [] if none.\n\nConversation:\n${recent}\n\nFacts:\n${indexed}`
   try {
-    const result = await llmChat(
-      { protocol: ep.protocol, baseUrl: ep.baseUrl, apiKey: key, model, messages: [{ role: 'user', content: prompt }] },
-      () => {}
-    )
-    const picked = parseIndices(result.text)
+    const text = await chatOnce(target.ep, target.key, model, [{ role: 'user', content: prompt }])
+    const picked = parseIndices(text)
       .map((i) => pool[i - 1])
       .filter((m): m is MemoryRow => !!m)
     return picked.length ? picked : null

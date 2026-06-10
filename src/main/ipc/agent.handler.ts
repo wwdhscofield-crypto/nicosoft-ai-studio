@@ -1,9 +1,10 @@
-import { ipcMain, type WebContents } from 'electron'
+import { ipcMain } from 'electron'
 import { ulid } from '../db/id'
 import type { PermissionDecision } from '../agent/context'
 import { isContentBlock } from '../agent/types'
 import { LlmError } from '../llm/types'
 import { broadcastConvImage, broadcastUsage } from './usage-broadcast'
+import { StreamRegistry } from './stream-lifecycle'
 import * as agentService from '../services/agent.service'
 import * as compressionService from '../services/compression.service'
 import type { AgentBlockDto, AgentPermissionResponse, AgentQuestionResponse, AgentResultDto, AgentRunInput } from './contracts'
@@ -12,7 +13,7 @@ import type { AgentBlockDto, AgentPermissionResponse, AgentQuestionResponse, Age
 // `agent:delta` (text) / `agent:assistant` (a finished turn's blocks) / `agent:results` (tool
 // results) / `agent:done` / `agent:error`. A tool needing approval pauses on `agent:permission`
 // until the renderer answers via `agent:permission:respond`. `agent:stop` aborts.
-const streams = new Map<string, { controller: AbortController; sender: WebContents }>()
+const streams = new StreamRegistry()
 // pending approvals keyed by permissionId; settle() resolves the loop's requestPermission promise.
 const pendingPermissions = new Map<string, (d: PermissionDecision) => void>()
 // permissionIds belonging to each run, so a terminal event can deny + clear any still-open prompts.
@@ -39,25 +40,10 @@ function sweepStream(streamId: string): void {
 export function registerAgentHandlers(): void {
   ipcMain.handle('agent:run', (e, input: AgentRunInput): { streamId: string } => {
     const streamId = ulid()
-    const controller = new AbortController()
     const sender = e.sender
-    streams.set(streamId, { controller, sender })
+    const { controller, send, finish } = streams.open(streamId, sender)
     pendingByStream.set(streamId, new Set())
     pendingQByStream.set(streamId, new Set())
-
-    // If the renderer goes away without answering a prompt or calling agent:stop, abort the run so the
-    // loop unwinds instead of hanging forever on a pending permission (which would pin the
-    // AbortController, the suspended generator + its SSE connection, and the fd). Cover all three ways:
-    // window close (destroyed), recoverable crash (render-process-gone), and reload (did-start-loading,
-    // which fires page-level while a run is active — the initial load already finished before run).
-    const onGone = (): void => controller.abort()
-    sender.once('destroyed', onGone)
-    sender.once('render-process-gone', onGone)
-    sender.once('did-start-loading', onGone)
-
-    const send = (channel: string, data: unknown): void => {
-      if (!sender.isDestroyed()) sender.send(channel, data)
-    }
 
     void agentService
       .run(
@@ -172,19 +158,14 @@ export function registerAgentHandlers(): void {
       })
       .finally(() => {
         sweepStream(streamId) // deny any prompt the renderer never answered before the run ended
-        if (!sender.isDestroyed()) {
-          sender.removeListener('destroyed', onGone)
-          sender.removeListener('render-process-gone', onGone)
-          sender.removeListener('did-start-loading', onGone)
-        }
-        streams.delete(streamId)
+        finish()
       })
 
     return { streamId }
   })
 
   ipcMain.handle('agent:stop', (_e, streamId: string) => {
-    streams.get(streamId)?.controller.abort()
+    streams.abort(streamId)
   })
 
   ipcMain.handle('agent:permission:respond', (_e, resp: AgentPermissionResponse) => {

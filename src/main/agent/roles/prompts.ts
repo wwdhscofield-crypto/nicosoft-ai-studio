@@ -11,28 +11,9 @@
 
 import { COMMON_PREAMBLE } from './common-preamble'
 
-// Display names shown to the user + used by Danny when it refers to a teammate. The role_id keys stay the
-// internal contract (routing / bindings / dispatch / AGENT_ROLES) — only the surface name changed, so a
-// rename never touches the wiring. roleIdFromName accepts either the display name or the raw id.
-const ROLE_DISPLAY_NAMES: Record<string, string> = {
-  coordinator: 'Danny',
-  generalist: 'Amélie',
-  engineer: 'Flynn',
-  shuri: 'Shuri',
-  designer: 'Georgia',
-  translator: 'Louise',
-  editor: 'Miranda',
-  analyst: 'Turing',
-  scheduler: 'Joan'
-}
-export function displayName(roleId: string): string {
-  return ROLE_DISPLAY_NAMES[roleId] ?? roleId
-}
-export function roleIdFromName(name: string): string {
-  const lower = name.trim().toLowerCase()
-  for (const [id, n] of Object.entries(ROLE_DISPLAY_NAMES)) if (id === lower || n.toLowerCase() === lower) return id
-  return lower
-}
+// Display names live in @shared/roles (single source with the renderer's expert roster) — re-exported here
+// so the rest of main keeps importing them from the prompts module they conceptually belong to.
+export { displayName, roleIdFromName } from '@shared/roles'
 
 export const COORDINATOR_ROUTER_PROMPT = `You are Danny, the router and coordinator of NicoSoft AI Studio.
 

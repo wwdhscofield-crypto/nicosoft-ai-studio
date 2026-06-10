@@ -3,8 +3,7 @@
 // SSE is event-based: `response.output_text.delta` carries text, `response.completed` carries usage.
 
 import type { ChatAttachment, ChatFn, ChatMessage, ChatRequest, ChatResult, OnDelta } from './types'
-import { iterSSE, openStream, parseJSON, toLlmError } from './_shared'
-import { USER_AGENT } from '../user-agent'
+import { DEFAULT_INSTRUCTIONS, iterSSE, openStream, openaiHeaders, parseJSON, stablePromptCacheKey, toLlmError, trimBase } from './_shared'
 
 const PROVIDER = 'openai'
 
@@ -73,12 +72,6 @@ function toInstructions(messages: ChatMessage[]): string | undefined {
   return parts.length > 0 ? parts.join('\n\n') : undefined
 }
 
-function stablePromptCacheKey(req: ChatRequest): string {
-  const primary = req.conversationId ?? req.threadId
-  if (primary && primary.length > 0) return primary
-  return [req.endpointId, req.roleId, req.model, req.baseUrl].filter((v): v is string => Boolean(v)).join(':')
-}
-
 function buildBody(req: ChatRequest): ResponsesBody {
   const body: ResponsesBody = {
     model: req.model,
@@ -86,26 +79,21 @@ function buildBody(req: ChatRequest): ResponsesBody {
     stream: true,
     store: false // local-first: don't let the provider retain responses server-side
   }
-  // The Responses gateway rejects a request whose `instructions` is absent ("Instructions are
-  // required"). System-less calls still need a non-empty value: title/memory generation deliberately
-  // put their directive in a user turn (to survive the upstream identity overwrite), and endpoint-test
-  // pings carry no system at all. Fall back to a neutral prompt so those calls aren't 400'd.
+  // System-less calls still need a non-empty `instructions`: title/memory generation deliberately put
+  // their directive in a user turn (to survive the upstream identity overwrite), and endpoint-test pings
+  // carry no system at all. Fall back to the shared neutral prompt so those calls aren't 400'd.
   const instructions = toInstructions(req.messages)
-  body.instructions = instructions ?? 'You are a helpful assistant.'
+  body.instructions = instructions ?? DEFAULT_INSTRUCTIONS
   if (req.thinking?.effort) body.reasoning = { effort: req.thinking.effort }
   if (req.cacheEnabled) body.prompt_cache_key = stablePromptCacheKey(req)
   return body
 }
 
 export const chatOpenAI: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Promise<ChatResult> => {
-  const url = `${req.baseUrl.replace(/\/$/, '')}/v1/responses`
+  const url = `${trimBase(req.baseUrl)}/v1/responses`
   const reader = await openStream(PROVIDER, url, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${req.apiKey}`,
-      'Content-Type': 'application/json',
-      'User-Agent': USER_AGENT,
-    },
+    headers: openaiHeaders(req.apiKey),
     body: JSON.stringify(buildBody(req)),
     signal: req.signal,
   })

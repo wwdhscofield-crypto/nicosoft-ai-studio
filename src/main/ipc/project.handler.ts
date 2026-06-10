@@ -1,4 +1,5 @@
-import { dialog, ipcMain } from 'electron'
+import { ipcMain } from 'electron'
+import { pickDirectory } from './dialogs'
 import * as projectService from '../services/project.service'
 import * as gitService from '../services/git.service'
 import type { ProjectCreateInput, ProjectPhase, ProjectTaskInput, ProjectTaskStatus, ProjectTestStatus } from './contracts'
@@ -8,10 +9,7 @@ import type { ProjectCreateInput, ProjectPhase, ProjectTaskInput, ProjectTaskSta
 // service, return — no SQL, no git/exec, no business logic here.
 export function registerProjectHandlers(): void {
   // Open a native folder picker; returns the chosen absolute path or null if cancelled.
-  ipcMain.handle('project:pick', async (): Promise<string | null> => {
-    const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
-    return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0]
-  })
+  ipcMain.handle('project:pick', (e) => pickDirectory(e, { create: true }))
 
   ipcMain.handle('project:branch', (_e, cwd: string) => gitService.currentBranch(cwd))
   ipcMain.handle('project:branches', (_e, cwd: string) => gitService.listBranches(cwd))

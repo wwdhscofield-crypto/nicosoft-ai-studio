@@ -1,6 +1,4 @@
-import * as endpointRepo from '../repos/endpoint.repo'
-import * as keychain from '../keychain/keychain'
-import { chat as llmChat } from '../llm/client'
+import { chatOnce, endpointWithKey } from './llm-once'
 import { pickSmallModel } from './model-select'
 
 // Conversation title generation. Picks a small/fast model WITHIN the conversation's own endpoint (see
@@ -38,28 +36,17 @@ export interface TitleInput {
 
 export async function generate(input: TitleInput): Promise<string> {
   const fallback = truncate(input.firstMessage)
-  const ep = endpointRepo.getById(input.endpointId)
-  if (!ep) return fallback
-  const key = keychain.getApiKey(input.endpointId)
-  if (!key) return fallback
+  const target = endpointWithKey(input.endpointId)
+  if (!target) return fallback
   // Stay on the conversation's endpoint; pick a smaller sibling there (haiku/sonnet, mini/nano,
   // flash), else fall back to its own model. Never cross to another provider's endpoint.
-  const model = pickSmallModel(ep.protocol, ep.availableModels, input.model)
+  const model = pickSmallModel(target.ep.protocol, target.ep.availableModels, input.model)
 
   try {
-    const result = await llmChat(
-      {
-        protocol: ep.protocol,
-        baseUrl: ep.baseUrl,
-        apiKey: key,
-        model,
-        messages: [
-          { role: 'user', content: `${TITLE_INSTRUCTION}\n\nFirst message:\n"""\n${input.firstMessage.slice(0, 1000)}\n"""` }
-        ]
-      },
-      () => {} // non-streaming use: ignore deltas, read the final text
-    )
-    return parseTitle(result.text) ?? fallback
+    const text = await chatOnce(target.ep, target.key, model, [
+      { role: 'user', content: `${TITLE_INSTRUCTION}\n\nFirst message:\n"""\n${input.firstMessage.slice(0, 1000)}\n"""` }
+    ])
+    return parseTitle(text) ?? fallback
   } catch {
     return fallback // network / model error — keep the truncation
   }
