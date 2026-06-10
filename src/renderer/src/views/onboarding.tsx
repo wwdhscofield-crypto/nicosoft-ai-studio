@@ -8,6 +8,7 @@ import { Icons } from '@/components/icons'
 import { Avatar, Segmented } from '@/components/primitives'
 import { ProfileForm } from '@/views/profile'
 import { STUDIO_DATA } from '@/data/studio-data'
+import { DEFAULT_IMAGE_MODEL } from '@/lib/image-models'
 import type { EndpointDto } from '@/lib/api'
 
 type Proto = EndpointDto['protocol']
@@ -26,6 +27,50 @@ const PROTO_DEFAULT_MODEL: Record<Proto, { slug: string; contextLength: number }
   openai: { slug: 'nicosoft/gpt-5.5', contextLength: 128000 },
   gemini: { slug: 'gemini-2.5-flash', contextLength: 1048576 },
   custom: null
+}
+
+// Context lengths for the seeded slugs (existing entries keep whatever they already have).
+const SEED_CTX: Record<string, number> = {
+  'nicosoft/claude-opus-4-8': 200000,
+  'nicosoft/claude-haiku-4-5': 200000,
+  'nicosoft/gpt-5.5': 128000,
+  'nicosoft/gpt-5.4-mini': 128000,
+  'gemini-pro-latest': 1048576,
+  'nicosoft/gemini-3-flash-agent': 1048576,
+  'gemini-2.5-flash': 1048576
+}
+// Extra slugs beyond the roles' own models: a small sibling so the cheap auxiliary paths (title /
+// memory / search pick haiku|mini|flash WITHIN the endpoint) have something to pick, and the image
+// backend for Georgia on Gemini. OpenAI needs none — Joan's gpt-5.4-mini already satisfies /mini/.
+const SEED_EXTRA: Record<Proto, string[]> = {
+  anthropic: ['nicosoft/claude-haiku-4-5'],
+  openai: [],
+  gemini: ['gemini-2.5-flash', DEFAULT_IMAGE_MODEL],
+  custom: []
+}
+
+// Seed the endpoint's default models + role bindings into the DB. Runs when the endpoint step advances
+// (Continue) and again from finish() — idempotent: slugs merge as a set (existing context lengths are
+// preserved), bindings overwrite with the same values. Every expert whose family matches gets ITS OWN
+// seed model from EXPERTS (the single source); Georgia additionally gets the default image backend.
+async function seedEndpointDefaults(endpoint: EndpointDto): Promise<void> {
+  const mine = STUDIO_DATA.EXPERTS.filter((e) => e.family === endpoint.protocol)
+  const existing = new Map((endpoint.availableModels ?? []).map((m) => [m.slug, m.contextLength]))
+  const slugs = new Set([
+    ...existing.keys(),
+    ...mine.map((e) => e.model).filter((m): m is string => !!m),
+    ...SEED_EXTRA[endpoint.protocol]
+  ])
+  await window.api.endpoints.update(endpoint.id, {
+    availableModels: [...slugs].map((slug) => ({ slug, contextLength: existing.get(slug) || SEED_CTX[slug] || 0 }))
+  })
+  for (const e of mine) {
+    await window.api.roles.setBinding(e.id, {
+      endpointId: endpoint.id,
+      model: e.model,
+      ...(e.id === 'designer' && endpoint.protocol === 'gemini' ? { imageModel: DEFAULT_IMAGE_MODEL } : {})
+    })
+  }
 }
 
 function Dots({ step, count = 4 }: { step: number; count?: number }): ReactElement {
@@ -202,25 +247,17 @@ export function Onboarding({ onFinish }: { onFinish: () => void }): ReactElement
   const last = 3
 
   const finish = async (): Promise<void> => {
-    if (endpoint) {
-      // Auto-bind every expert whose family matches the endpoint, each to ITS OWN seed model — the single
-      // source is EXPERTS (coordinator/engineer/shuri = opus-4.8, etc). Merge those slugs into the
-      // endpoint's available list first so the binding resolves + the Settings model picker shows them.
-      const mine = STUDIO_DATA.EXPERTS.filter((e) => e.family === endpoint.protocol)
-      if (mine.length) {
-        const slugs = new Set(
-          [...(endpoint.availableModels ?? []).map((m) => m.slug), ...mine.map((e) => e.model)].filter((s): s is string => !!s)
-        )
-        await window.api.endpoints.update(endpoint.id, { availableModels: [...slugs].map((slug) => ({ slug, contextLength: 0 })) })
-        for (const e of mine) {
-          await window.api.roles.setBinding(e.id, { endpointId: endpoint.id, model: e.model })
-        }
-      }
-    }
+    if (endpoint) await seedEndpointDefaults(endpoint) // idempotent backstop (Continue already seeded)
     await window.api.settings.set('onboarded', true)
     onFinish()
   }
-  const next = (): void => { if (step < last) setStep(step + 1); else void finish() }
+  const next = (): void => {
+    // Leaving the endpoint step seeds the defaults right away (models + bindings land in the DB even if
+    // the user closes the app on the team step instead of clicking Start).
+    if (step === 2 && endpoint) void seedEndpointDefaults(endpoint)
+    if (step < last) setStep(step + 1)
+    else void finish()
+  }
   const back = (): void => { if (step > 0) setStep(step - 1) }
 
   return (
