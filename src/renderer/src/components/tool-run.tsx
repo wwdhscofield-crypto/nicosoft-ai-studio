@@ -244,13 +244,22 @@ export function ToolRun({ tools, live = false }: { tools: ToolCall[]; live?: boo
   const isLive = live || running.length > 0
 
   if (isLive) {
-    // While the run works here: the finished part as a dim summary (not expandable yet — it is still
-    // growing) + one gerund line per in-flight call (normally exactly one).
+    // ONE line, always (plan A): the newest in-flight call's gerund ("Reading adapter.go") — read-only
+    // tools run concurrently, but the extra in-flight calls just join the summary count when they land —
+    // or, in the think-gap between tools, the finished part as a growing count summary. The same row
+    // carries start → settle, so completion is a text swap into the clickable summary, never a
+    // multi-line collapse.
+    const current = running[running.length - 1]
     return (
       <div className="tool-run live">
-        {done.length > 0 ? <div className="tr-summary pending">{summarizeRun(done)}</div> : null}
-        {running.map((t) => <LiveLine key={t.id} tool={t} />)}
-        {running.length === 0 ? <div className="tr-live"><span className="tr-dot" /></div> : null}
+        {current ? (
+          <LiveLine tool={current} />
+        ) : (
+          <div className="tr-live">
+            <span className="tr-dot" />
+            {done.length > 0 ? <span className="tr-verb">{summarizeRun(done)}</span> : null}
+          </div>
+        )}
       </div>
     )
   }
