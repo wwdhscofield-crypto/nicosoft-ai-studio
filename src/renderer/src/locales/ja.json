@@ -69,6 +69,7 @@
   "settings.about.author": "作成者",
   "settings.about.note": "ユーザーのデバイス上で動作するように設計されており、モデルプロバイダーへのAPIリクエストを除き、アプリの利用方法に関する情報が他の場所に送信されることは一切ありません。",
   "sidebar.newConversation": "新規会話",
+  "rolePicker.title": "新規会話 — ロールを選択",
   "sidebar.overview": "ダッシュボード",
   "sidebar.projects": "プロジェクト",
   "sidebar.scheduled": "スケジュール",

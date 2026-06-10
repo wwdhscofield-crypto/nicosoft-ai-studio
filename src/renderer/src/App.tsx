@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import { STUDIO_DATA } from '@/data/studio-data'
 import { Topbar, Sidebar } from '@/components/shell'
-import { CommandPalette, RoleEditorDialog } from '@/components/dialogs'
+import { CommandPalette, RoleEditorDialog, RolePickerDialog } from '@/components/dialogs'
 import { Onboarding } from '@/views/onboarding'
 import { SettingsView } from '@/views/settings'
 import { StudioHome } from '@/views/studio'
@@ -48,13 +48,17 @@ function saveState(s: PersistedState): void {
 
 export default function App(): ReactElement {
   const chat = useChat()
-  const { byId: EXPERT_BY_ID } = useAllExperts()
+  const { experts, byId: EXPERT_BY_ID } = useAllExperts()
+  const roles = useRoles()
   const persisted = loadState()
 
   const [view, setView] = useState<string>(persisted.view || 'onboarding')
   const [activeExpert, setActiveExpert] = useState<string>(persisted.activeExpert || 'engineer')
   const [settingsTab, setSettingsTab] = useState<string>(persisted.settingsTab || 'endpoints')
   const [cmdk, setCmdk] = useState(false)
+  // "New conversation" role picker: a new conversation is a conversation WITH someone — the user picks
+  // who (the old behavior hard-jumped to generalist). Opened by the sidebar's new-conversation button.
+  const [rolePicker, setRolePicker] = useState(false)
   // null = closed, {} = create mode, {initialRole} = edit mode for an existing custom role.
   const [roleDialog, setRoleDialog] = useState<null | { initialRole?: { id: string; name: string; color: string | null; systemPrompt: string | null; greeting: string | null; tools: string[] } }>(null)
   const [drawerOpen, setDrawerOpen] = useState<boolean>(persisted.drawerOpen || false)
@@ -216,11 +220,7 @@ export default function App(): ReactElement {
             onOpenProfile={openProfile}
             onSelectConv={selectConv}
             onNewRole={() => setRoleDialog({})}
-            onNewConversation={() => {
-              chat.newConversation()
-              setActiveExpert('generalist')
-              setView('app')
-            }}
+            onNewConversation={() => setRolePicker(true)}
           />
           <div className="main-area">
             <Topbar
@@ -278,6 +278,21 @@ export default function App(): ReactElement {
         />
       )}
       {roleDialog && <RoleEditorDialog initialRole={roleDialog.initialRole} onClose={() => setRoleDialog(null)} />}
+      {rolePicker && (
+        <RolePickerDialog
+          // Same enabled-set the sidebar shows: until role states hydrate treat all as enabled (coordinator
+          // is always enabled by the store's own rule).
+          experts={roles.loaded ? experts.filter((e) => !roles.isDisabled(e.id)) : experts}
+          currentId={activeExpert}
+          onPick={(id) => {
+            setRolePicker(false)
+            chat.newConversation()
+            setActiveExpert(id)
+            setView('app')
+          }}
+          onClose={() => setRolePicker(false)}
+        />
+      )}
       <Toaster />
     </div>
   )

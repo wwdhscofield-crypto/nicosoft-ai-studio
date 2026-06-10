@@ -69,6 +69,7 @@
   "settings.about.author": "작성자",
   "settings.about.note": "사용자의 기기에서 로컬로 작동하도록 설계되었으며, 사용 정보가 외부 서버로 절대 전송되지 않습니다.",
   "sidebar.newConversation": "새 대화",
+  "rolePicker.title": "새 대화 — 역할 선택",
   "sidebar.overview": "개요",
   "sidebar.projects": "프로젝트",
   "sidebar.scheduled": "일정",

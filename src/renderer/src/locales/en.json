@@ -77,6 +77,7 @@
   "settings.about.note": "Built to run on your device, against your model providers — nothing about how you use it is ever sent anywhere else.",
 
   "sidebar.newConversation": "New Conversation",
+  "rolePicker.title": "New conversation — pick a role",
   "sidebar.overview": "Overview",
   "sidebar.projects": "Projects",
   "sidebar.scheduled": "Scheduled",
