@@ -204,7 +204,10 @@ export function ExploreGroup({ blocks, byId }: { blocks: MsgBlock[]; byId: (id: 
         .filter(Boolean)
     )
   )
-  const targetLabel = targets.slice(0, 3).join(', ') + (targets.length > 3 ? '…' : '')
+  // Join ALL targets and let CSS (.eg-targets: flex:1 + min-width:0 + text-overflow:ellipsis) truncate to the
+  // available width — adaptive: a wide pane shows more names, a narrow one fewer, both ending in a native "…".
+  // (No fixed slice — that capped it at 3 even when the row had room for more.)
+  const targetLabel = targets.join(', ')
   return (
     <div className={'explore-group' + (errored ? ' error' : '') + (expanded ? ' open' : '')}>
       <button className="eg-head" onClick={() => !running && setOpen((o) => !o)} disabled={running}>
