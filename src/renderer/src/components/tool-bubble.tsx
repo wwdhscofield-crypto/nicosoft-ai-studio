@@ -190,12 +190,16 @@ export function ToolBubble({ tool, depth = 0 }: { tool: ToolCall; depth?: number
 // While ANY tool is still executing the cell stays open so the list grows live (matching the Thinking readout
 // below it); once done it collapses to "Explored N steps · targets" — click to re-expand. Inner tools render
 // as full ToolBubbles at depth=1, and inner narration as Markdown, so nothing loses its drill-down.
-export function ExploreGroup({ blocks, byId }: { blocks: MsgBlock[]; byId: (id: string) => ToolCall | undefined }): ReactElement {
+export function ExploreGroup({ blocks, byId, live = false }: { blocks: MsgBlock[]; byId: (id: string) => ToolCall | undefined; live?: boolean }): ReactElement {
   const [open, setOpen] = useState(false)
   const tools = blocks.flatMap((b) => (b.kind === 'tool' ? [byId(b.id)] : [])).filter((t): t is ToolCall => !!t)
-  const running = tools.some((t) => t.status === 'running')
+  // `live` = the run is still exploring here (this fold is the live tail of its segment) — keeps the cell
+  // open across the think-gaps BETWEEN tools, where no tool is running yet but the next one is coming.
+  // Without it the cell would flap closed/open on every gap. The moment the answer text starts (a piece
+  // renders after the fold) the caller passes live=false → the cell settles to "Explored N steps".
+  const running = live || tools.some((t) => t.status === 'running')
   const errored = tools.some((t) => t.status === 'error')
-  const expanded = running || open // running → always open (watch it live); done → folded unless clicked
+  const expanded = running || open // running/live → always open (watch it live); done → folded unless clicked
   const targets = Array.from(
     new Set(
       tools

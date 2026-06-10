@@ -218,36 +218,46 @@ function AgentBody({ blocks, tools }: { blocks: MsgBlock[]; tools?: ToolCall[] }
   return <>{renderBlocks(blocks, byId)}</>
 }
 
-/* — One message in the list (user or assistant). For Coordinator-routed conversations the contributing
- *   expert can vary per message — resolve the expert from msg.expertId (with the prop as a fallback). — */
+/* — One transcript segment: a RUN of consecutive merge-compatible assistant messages (same expert, same
+ *   dispatch chain, same synthesis-ness; user messages always stand alone). Mirrors codex/claude-code: the
+ *   speaker appears ONCE, and everything the agent did across its turns — explore folds, tool cards,
+ *   narration, the final answer — flows inside one body with a single live readout at the bottom. Without
+ *   this, every one-tool turn became its own avatar+name+readout block, and a tools-then-answer run read as
+ *   two separate replies (the fold updating above while the answer streamed below). — */
 function ChatSegment({
-  msg,
+  msgs,
   expert,
   expertById,
   onOpenImage,
   inputTokens,
-  outputTokens
+  outputTokens,
+  pendingLive = false
 }: {
-  msg: ChatMessage
+  msgs: ChatMessage[]
   expert: Expert
   expertById: Record<string, Expert>
   onOpenImage: (items: ViewerImage[], index: number) => void
   inputTokens: number
   outputTokens: number
+  // True for the LAST run while the conversation still streams: the gap between two of this run's turns
+  // (tool done, next turn not yet open) keeps the readout alive INSIDE this segment instead of flashing a
+  // separate PendingReadout segment below it on every turn boundary.
+  pendingLive?: boolean
 }): ReactElement {
   const t = useT()
-  const isUser = msg.role === 'user'
-  // Lookup the per-message expert if Coordinator tagged it; fall back to the prop (the conversation's
-  // primary role) so direct chats / agents render the same as before. expertById is the merged
-  // built-in + custom-roles map.
-  const msgExpert: Expert | undefined = !isUser && msg.expertId ? expertById[msg.expertId] : undefined
+  const first = msgs[0]
+  const last = msgs[msgs.length - 1]
+  const isUser = first.role === 'user'
+  // Lookup the per-run expert if Coordinator tagged it (expertId is a merge condition, so it's uniform
+  // across the run); fall back to the prop so direct chats / agents render the same as before.
+  const msgExpert: Expert | undefined = !isUser && first.expertId ? expertById[first.expertId] : undefined
   const renderExpert = msgExpert ?? expert
-  const synthesis = isSynthesis(msg)
+  const synthesis = isSynthesis(first)
   const segColor = isUser ? 'var(--border-2)' : synthesis ? 'var(--accent)' : renderExpert.color
   // Foldable: a dispatched expert step inside a panel/debate (has a chain, isn't Coordinator's intro/synthesis).
   // Parallel/council stack many of these, so once a step finishes streaming we collapse it to a one-line
   // summary — the user watches it stream live, then it folds away, leaving Coordinator's synthesis prominent.
-  const foldable = !isUser && !synthesis && !!msg.dispatch?.length && msg.expertId != null && msg.expertId !== 'coordinator'
+  const foldable = !isUser && !synthesis && !!first.dispatch?.length && first.expertId != null && first.expertId !== 'coordinator'
   const [expanded, setExpanded] = useState(false)
   const bodyRef = useRef<HTMLDivElement>(null)
   // Folded expert steps render in a fixed-height scroll WINDOW from the start (not collapsed to a line):
@@ -255,13 +265,21 @@ function ChatSegment({
   // "View full" expands to the complete height; collapsing returns to the window. Single-dispatch experts,
   // direct, intro, and synthesis never fold (foldable already excludes them).
   const windowed = foldable && !expanded
+  // Live while the run's newest turn still streams, any tool executes, or (pendingLive) the conversation is
+  // about to continue this run — drives the readout, the avatar pulse, and keeping a tail fold open.
+  const runLive = pendingLive || msgs.some((m) => m.streaming || m.tools?.some((tl) => tl.status === 'running'))
   useEffect(() => {
     if (windowed && bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
-  }, [msg.text, msg.tools?.length, msg.servers?.length, msg.streaming, windowed])
+  }, [last.text, last.tools?.length, last.servers?.length, last.streaming, msgs.length, windowed])
+  // Finished-run token summary: ↓ totals the whole run's output; ↑ is the newest call's prompt size
+  // (each call's input already includes the prior context — summing inputs would overstate).
+  const sumOut = msgs.reduce((n, m) => n + (m.outputTokens ?? 0), 0)
+  const lastIn = [...msgs].reverse().find((m) => m.inputTokens)?.inputTokens
+  const pieces = splitRun(msgs)
   return (
     <div className={'segment' + (isUser ? ' user' : '')} style={{ '--seg-color': segColor } as CSSProperties}>
       <div className="seg-head">
-        <Avatar expert={isUser ? null : renderExpert} you={isUser} size={28} streaming={msg.streaming} />
+        <Avatar expert={isUser ? null : renderExpert} you={isUser} size={28} streaming={!isUser && runLive} />
         <div className="seg-meta">
           <NameChip expert={isUser ? null : renderExpert} neutral={isUser} />
           {synthesis ? <span className="synthesis-tag">{t('conv.synthesis')}</span> : null}
@@ -271,113 +289,144 @@ function ChatSegment({
         </div>
       </div>
       <div ref={bodyRef} className={'seg-body' + (isUser || synthesis ? ' primary' : '') + (windowed ? ' fold-window' : '')}>
-        {/* Agent turns carry an ordered text+tool block list → interleave reasoning text and tool cards in
-            emission order. Everything else (plain chat, user input, or a legacy turn with no block list)
-            falls back to the flat "text, then all tool cards" render. */}
-        {!isUser && msg.blocks && msg.blocks.length > 0 ? (
-          <AgentBody blocks={msg.blocks} tools={msg.tools} />
-        ) : msg.text ? (
-          isUser ? (
-            <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{msg.text}</p>
+        {pieces.map((p, i) =>
+          p.kind === 'fold' ? (
+            <ExploreGroup
+              key={`f${p.msgs[0].id}`}
+              blocks={p.msgs.flatMap((m) => m.blocks ?? (m.tools ?? []).map((tl) => ({ kind: 'tool' as const, id: tl.id })))}
+              byId={(id) => p.msgs.flatMap((m) => m.tools ?? []).find((tl) => tl.id === id)}
+              live={runLive && i === pieces.length - 1}
+            />
           ) : (
-            <Markdown>{msg.text}</Markdown>
+            <MsgBody key={p.msg.id} msg={p.msg} isUser={isUser} onOpenImage={onOpenImage} />
           )
-        ) : null}
-        {msg.images && msg.images.length > 0 ? (
-          <div className="msg-images">
-            {msg.images.map((img, i) => (
-              <img
-                key={i}
-                className="msg-img-thumb"
-                src={img.url}
-                alt={img.name}
-                onClick={() => onOpenImage(msg.images!.map((x) => ({ url: x.url, name: x.name })), i)}
-              />
-            ))}
-          </div>
-        ) : null}
-        {/* Tool cards NOT covered by the ordered block list (legacy turn, or a defensive gap) render here so
-            none are ever dropped — through the same explore-folding path. With a block list, every tool id
-            appears as a block → orphans is empty → this renders nothing. */}
-        {(() => {
-          const orphans = (msg.tools ?? []).filter((t) => !(msg.blocks ?? []).some((b) => b.kind === 'tool' && b.id === t.id))
-          if (orphans.length === 0) return null
-          return renderBlocks(
-            orphans.map((t) => ({ kind: 'tool' as const, id: t.id })),
-            (id) => orphans.find((t) => t.id === id)
-          )
-        })()}
-        {msg.servers && msg.servers.length > 0 ? msg.servers.map((sv, i) => <ServerBubble key={i} note={sv} />) : null}
-        {msg.citations && msg.citations.length > 0 ? <Sources items={msg.citations} /> : null}
-        {/* Live readout (pulsing dot · elapsed · ↑↓ tokens) shows ONLY while the agent is working — streaming
-            or any tool still running. The moment the turn finishes / goes idle it disappears: a finished or
-            inactive conversation carries no lingering token status. */}
-        {msg.streaming || msg.tools?.some((t) => t.status === 'running') ? (
+        )}
+        {/* ONE live readout for the whole run (pulsing dot · elapsed · ↑↓ tokens), gone the moment the run
+            finishes; then the run-total token summary takes its place. */}
+        {runLive ? (
           // Coordinator segments carry their own live ↑/↓ (per-message) so concurrent segments don't all show
           // the conv-level total; single chat/agent turns have no per-message live → fall back to the conv prop.
-          <ThinkingReadout chars={msg.text.length} inputTokens={msg.liveInputTokens ?? inputTokens} outputTokens={msg.liveOutputTokens ?? outputTokens} activity={segmentActivity(msg.tools)} />
-        ) : !isUser && (msg.inputTokens || msg.outputTokens) ? (
-          <TokenSummary inputTokens={msg.inputTokens} outputTokens={msg.outputTokens} />
+          <ThinkingReadout chars={last.text.length} inputTokens={last.liveInputTokens ?? inputTokens} outputTokens={last.liveOutputTokens ?? outputTokens} activity={segmentActivity(last.tools)} />
+        ) : !isUser && (lastIn || sumOut) ? (
+          <TokenSummary inputTokens={lastIn} outputTokens={sumOut || undefined} />
         ) : null}
       </div>
     </div>
   )
 }
 
-// — Cross-turn explore folding ————————————————————————————————————————————————————————————————————
-// Claude runs ONE tool per turn, so a burst of Read/Grep/Glob arrives as a RUN of separate assistant messages
-// (each its own avatar + readout = the real source of "tool spam"). Per-message folding can't catch that.
-// These fold at the LIST level: a run of ≥2 consecutive same-expert explore turns becomes one ExploreSegment.
-
-// An explore turn: a finished assistant message whose tools are ALL read-only探索 (Read/Grep/Glob/LS); it may
-// carry narration text. Streaming turns are excluded so the live one keeps its own ThinkingReadout. A turn
-// with any write/exec tool (or none) breaks the run → side effects + real answers always render on their own.
-function isExploreTurn(m: ChatMessage): boolean {
-  return m.role === 'assistant' && !m.streaming && !!m.tools?.length && m.tools.every((t) => EXPLORE_TOOL_NAMES.has(t.name))
+/* — One message's body content (ordered blocks / plain text, images, orphan tools, servers, citations) —
+ *   everything except the segment chrome and the readout, which live at the RUN level in ChatSegment. — */
+function MsgBody({ msg, isUser, onOpenImage }: { msg: ChatMessage; isUser: boolean; onOpenImage: (items: ViewerImage[], index: number) => void }): ReactElement {
+  return (
+    <>
+      {/* Agent turns carry an ordered text+tool block list → interleave reasoning text and tool cards in
+          emission order. Everything else (plain chat, user input, or a legacy turn with no block list)
+          falls back to the flat "text, then all tool cards" render. */}
+      {!isUser && msg.blocks && msg.blocks.length > 0 ? (
+        <AgentBody blocks={msg.blocks} tools={msg.tools} />
+      ) : msg.text ? (
+        isUser ? (
+          <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{msg.text}</p>
+        ) : (
+          <Markdown>{msg.text}</Markdown>
+        )
+      ) : null}
+      {msg.images && msg.images.length > 0 ? (
+        <div className="msg-images">
+          {msg.images.map((img, i) => (
+            <img
+              key={i}
+              className="msg-img-thumb"
+              src={img.url}
+              alt={img.name}
+              onClick={() => onOpenImage(msg.images!.map((x) => ({ url: x.url, name: x.name })), i)}
+            />
+          ))}
+        </div>
+      ) : null}
+      {/* Tool cards NOT covered by the ordered block list (legacy turn, or a defensive gap) render here so
+          none are ever dropped — through the same explore-folding path. With a block list, every tool id
+          appears as a block → orphans is empty → this renders nothing. */}
+      {(() => {
+        const orphans = (msg.tools ?? []).filter((t) => !(msg.blocks ?? []).some((b) => b.kind === 'tool' && b.id === t.id))
+        if (orphans.length === 0) return null
+        return renderBlocks(
+          orphans.map((t) => ({ kind: 'tool' as const, id: t.id })),
+          (id) => orphans.find((t) => t.id === id)
+        )
+      })()}
+      {msg.servers && msg.servers.length > 0 ? msg.servers.map((sv, i) => <ServerBubble key={i} note={sv} />) : null}
+      {msg.citations && msg.citations.length > 0 ? <Sources items={msg.citations} /> : null}
+    </>
+  )
 }
 
-type RenderUnit = { kind: 'explore'; msgs: ChatMessage[] } | { kind: 'single'; msg: ChatMessage }
-// Fold runs of ≥2 consecutive same-expert explore turns into one unit; everything else passes through as a
-// single message. The run breaks on a non-explore turn, a streaming turn, or an expert change (so concurrent
-// coordinator experts never merge into one another's fold). A lone explore turn stays a normal segment.
-function groupMessages(messages: ChatMessage[]): RenderUnit[] {
-  const units: RenderUnit[] = []
-  let run: ChatMessage[] = []
+// — Cross-turn run grouping + explore folding ——————————————————————————————————————————————————————
+// Claude runs ONE tool per turn, so a burst of Read/Grep/Glob arrives as a RUN of separate assistant
+// messages. Like codex (consecutive exploring exec calls coalesce into one cell) and claude-code
+// (collapseReadSearchGroups absorbs consecutive read/search messages), Studio merges the whole consecutive
+// same-expert message run into ONE segment, and folds its explore stretches inside that body.
+
+// An explore turn: an assistant message whose tools (≥1) are ALL read-only探索 (Read/Grep/Glob/LS). It may
+// still be streaming — the live call joins the open fold, codex-style — and may carry narration text (kept
+// inside the fold). Any write/exec tool keeps the message out of the fold → side effects stay visible.
+function isExploreTurn(m: ChatMessage): boolean {
+  return m.role === 'assistant' && !!m.tools?.length && m.tools.every((tl) => EXPLORE_TOOL_NAMES.has(tl.name))
+}
+
+// A turn with nothing visible yet (just opened: no text, no tools, no media). Skipped as a run piece so the
+// think-gap between two explore turns doesn't wedge an empty piece after the fold (which would flap it
+// closed); the run-level readout already shows the liveness.
+function isEmptyMsg(m: ChatMessage): boolean {
+  return !m.text && !m.tools?.length && !m.images?.length && !m.servers?.length && !m.citations?.length
+}
+
+type RunPiece = { kind: 'fold'; msgs: ChatMessage[] } | { kind: 'msg'; msg: ChatMessage }
+// Order-preserving walk of a run: consecutive explore turns totalling ≥2 tools fold into one piece;
+// everything else renders as its own body content in place.
+function splitRun(msgs: ChatMessage[]): RunPiece[] {
+  const pieces: RunPiece[] = []
+  let fold: ChatMessage[] = []
   const flush = (): void => {
-    if (run.length >= 2) units.push({ kind: 'explore', msgs: run })
-    else for (const m of run) units.push({ kind: 'single', msg: m })
-    run = []
+    if (fold.length === 0) return
+    const toolCount = fold.reduce((n, m) => n + (m.tools?.length ?? 0), 0)
+    if (toolCount >= 2) pieces.push({ kind: 'fold', msgs: fold })
+    else for (const m of fold) pieces.push({ kind: 'msg', msg: m })
+    fold = []
   }
-  for (const m of messages) {
-    if (isExploreTurn(m) && (run.length === 0 || run[0].expertId === m.expertId)) run.push(m)
-    else { flush(); units.push({ kind: 'single', msg: m }) }
+  for (const m of msgs) {
+    if (isEmptyMsg(m)) continue
+    if (isExploreTurn(m)) fold.push(m)
+    else {
+      flush()
+      pieces.push({ kind: 'msg', msg: m })
+    }
   }
   flush()
-  return units
+  return pieces
 }
 
-// One ExploreSegment for a run of explore turns: a single avatar/name, body = one collapsible ExploreGroup
-// over ALL their tools + narration. Folds to "Explored N steps" (the run is all finished turns), click to
-// expand the full list — each inner tool still opens to its own result/diff.
-function ExploreSegment({ msgs, expert, expertById }: { msgs: ChatMessage[]; expert: Expert; expertById: Record<string, Expert> }): ReactElement {
-  const first = msgs[0]
-  const renderExpert: Expert = (first.expertId ? expertById[first.expertId] : undefined) ?? expert
-  const allBlocks: MsgBlock[] = msgs.flatMap((m) => m.blocks ?? [])
-  const allTools: ToolCall[] = msgs.flatMap((m) => m.tools ?? [])
-  const byId = (id: string): ToolCall | undefined => allTools.find((t) => t.id === id)
+// Consecutive assistant messages merge into one segment when they share the expert, the dispatch chain, and
+// the synthesis-ness — the codex/claude-code "one turn, one speaker" model. User messages never merge.
+function canMerge(a: ChatMessage, b: ChatMessage): boolean {
+  const chainsEqual = Array.isArray(a.dispatch) || Array.isArray(b.dispatch) ? sameChain(a.dispatch, b.dispatch) : true
   return (
-    <div className="segment" style={{ '--seg-color': renderExpert.color } as CSSProperties}>
-      <div className="seg-head">
-        <Avatar expert={renderExpert} you={false} size={28} streaming={false} />
-        <div className="seg-meta">
-          <NameChip expert={renderExpert} />
-        </div>
-      </div>
-      <div className="seg-body">
-        <ExploreGroup blocks={allBlocks} byId={byId} />
-      </div>
-    </div>
+    a.role === 'assistant' &&
+    b.role === 'assistant' &&
+    (a.expertId ?? null) === (b.expertId ?? null) &&
+    chainsEqual &&
+    isSynthesis(a) === isSynthesis(b)
   )
+}
+function groupRuns(messages: ChatMessage[]): ChatMessage[][] {
+  const runs: ChatMessage[][] = []
+  for (const m of messages) {
+    const cur = runs[runs.length - 1]
+    if (cur && canMerge(cur[cur.length - 1], m)) cur.push(m)
+    else runs.push([m])
+  }
+  return runs
 }
 
 // Conversation-level "working" readout for the gap BETWEEN turns: the agent has finished a step (tool done /
@@ -749,13 +798,12 @@ export function ChatView({ expert, onOpenSettings, onBackToProject }: { expert: 
           {messages.length === 0 ? (
             <EmptyState expert={expert} onChip={setValue} />
           ) : (
-            groupMessages(messages).map((unit, ui, units) => {
-              const firstMsg = unit.kind === 'explore' ? unit.msgs[0] : unit.msg
-              // Dispatch badge above the FIRST message of each pipeline turn — detected by a non-empty
-              // dispatch chain differing from the previous RENDER UNIT's last message (an explore fold is one
-              // unit, so the badge still lands on the run's start). Single-mode turns have dispatch=null → none.
-              const prevUnit = ui > 0 ? units[ui - 1] : null
-              const prevMsg = prevUnit ? (prevUnit.kind === 'explore' ? prevUnit.msgs[prevUnit.msgs.length - 1] : prevUnit.msg) : null
+            groupRuns(messages).map((run, ri, runs) => {
+              const firstMsg = run[0]
+              // Dispatch badge above the FIRST run of each pipeline turn — detected by a non-empty dispatch
+              // chain differing from the previous run's last message. Single-mode turns have dispatch=null → none.
+              const prevRun = ri > 0 ? runs[ri - 1] : null
+              const prevMsg = prevRun ? prevRun[prevRun.length - 1] : null
               const showBadge =
                 firstMsg.role === 'assistant' &&
                 Array.isArray(firstMsg.dispatch) &&
@@ -764,19 +812,22 @@ export function ChatView({ expert, onOpenSettings, onBackToProject }: { expert: 
               return (
                 <Fragment key={firstMsg.id}>
                   {showBadge ? <DispatchBadge chain={firstMsg.dispatch as string[]} /> : null}
-                  {unit.kind === 'explore' ? (
-                    <ExploreSegment msgs={unit.msgs} expert={expert} expertById={expertById} />
-                  ) : (
-                    <ChatSegment msg={unit.msg} expert={expert} expertById={expertById} onOpenImage={openImage} inputTokens={baseIn} outputTokens={baseOut} />
-                  )}
+                  <ChatSegment
+                    msgs={run}
+                    expert={expert}
+                    expertById={expertById}
+                    onOpenImage={openImage}
+                    inputTokens={baseIn}
+                    outputTokens={baseOut}
+                    pendingLive={convStreaming && ri === runs.length - 1 && firstMsg.role === 'assistant'}
+                  />
                 </Fragment>
               )
             })
           )}
-          {convStreaming &&
-          messages.length > 0 &&
-          !messages[messages.length - 1].streaming &&
-          !messages[messages.length - 1].tools?.some((t) => t.status === 'running') ? (
+          {/* Between-turn liveness lives INSIDE the last assistant run (pendingLive) — a standalone pending
+              segment only appears before the FIRST assistant message, when there's no run to host it yet. */}
+          {convStreaming && messages.length > 0 && messages[messages.length - 1].role === 'user' ? (
             <PendingReadout expert={expert} inputTokens={baseIn} outputTokens={baseOut} />
           ) : null}
           {retry ? <RetryReadout attempt={retry.attempt} max={retry.max} since={retry.since} /> : null}
