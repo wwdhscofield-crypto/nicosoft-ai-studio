@@ -131,7 +131,6 @@
   "profile.resetFailed": "양식을 초기화할 수 없습니다",
   "memory.layer": "레이어",
   "ep.editTitle": "엔드포인트 편집",
-  "ep.addTitle": "엔드포인트 추가",
   "ep.name": "이름",
   "ep.namePlaceholder": "내 엔드포인트",
   "ep.protocol": "프로토콜",
@@ -325,7 +324,6 @@
   "epPage.noKey": "키 없음",
   "epPage.edit": "편집",
   "epPage.empty": "아직 구성된 엔드포인트가 없습니다.",
-  "epPage.add": "엔드포인트 추가",
   "epPage.removed": "엔드포인트가 제거되었습니다",
   "epPage.removeFailed": "엔드포인트를 제거할 수 없습니다",
   "epPage.saved": "엔드포인트가 저장되었습니다",
@@ -346,7 +344,6 @@
   "rolesPage.noModels": "— 모델 없음 —",
   "rolesPage.defaultThinking": "기본 사고",
   "rolesPage.needsEndpoint": "엔드포인트 필요",
-  "rolesPage.addEndpoint": "엔드포인트 추가",
   "projects.created": "프로젝트가 생성되었습니다",
   "projects.createFailed": "프로젝트를 생성할 수 없습니다",
   "projects.startFailed": "실행을 시작할 수 없습니다",
@@ -376,5 +373,6 @@
   "scope.allExperts": "모든 전문가",
   "scope.specific": "특정",
   "scope.noAgent": "agent 없음",
-  "scope.agentScopeNote": "현재는 agent가 있는 전문가만 확장을 실행합니다(현재 Engineer). 다른 전문가는 저장되지만 agent를 받기 전까지 비활성 상태로 유지됩니다."
+  "scope.agentScopeNote": "현재는 agent가 있는 전문가만 확장을 실행합니다(현재 Engineer). 다른 전문가는 저장되지만 agent를 받기 전까지 비활성 상태로 유지됩니다.",
+  "common.addEndpoint": "엔드포인트 추가"
 }

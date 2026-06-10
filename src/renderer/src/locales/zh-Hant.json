@@ -131,7 +131,6 @@
   "profile.resetFailed": "無法重置表單",
   "memory.layer": "層級",
   "ep.editTitle": "編輯端點",
-  "ep.addTitle": "新增端點",
   "ep.name": "名稱",
   "ep.namePlaceholder": "我的端點",
   "ep.protocol": "協定",
@@ -325,7 +324,6 @@
   "epPage.noKey": "無金鑰",
   "epPage.edit": "編輯",
   "epPage.empty": "尚未設定端點。",
-  "epPage.add": "新增端點",
   "epPage.removed": "端點已移除",
   "epPage.removeFailed": "無法移除端點",
   "epPage.saved": "端點已儲存",
@@ -346,7 +344,6 @@
   "rolesPage.noModels": "— 無模型 —",
   "rolesPage.defaultThinking": "預設思考",
   "rolesPage.needsEndpoint": "需要端點",
-  "rolesPage.addEndpoint": "新增端點",
   "projects.created": "專案已建立",
   "projects.createFailed": "無法建立專案",
   "projects.startFailed": "無法啟動執行",
@@ -376,5 +373,6 @@
   "scope.allExperts": "所有專家",
   "scope.specific": "指定",
   "scope.noAgent": "無 agent",
-  "scope.agentScopeNote": "目前只有擁有 agent 的專家才會執行擴充功能（目前為 Engineer）。其他專家會被儲存，但在取得 agent 之前保持未啟用。"
+  "scope.agentScopeNote": "目前只有擁有 agent 的專家才會執行擴充功能（目前為 Engineer）。其他專家會被儲存，但在取得 agent 之前保持未啟用。",
+  "common.addEndpoint": "新增端點"
 }

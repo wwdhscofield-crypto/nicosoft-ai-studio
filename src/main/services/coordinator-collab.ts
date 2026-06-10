@@ -8,7 +8,7 @@
 import * as endpointRepo from '../repos/endpoint.repo'
 import * as keychain from '../keychain/keychain'
 import * as rolesService from './roles.service'
-import * as agentService from './agent.service'
+import * as agentService from './agent-collab'
 import * as convService from './conversation.service'
 import * as collabProject from './collab-project.service'
 import { resolveDepth } from '../llm/thinking'

@@ -131,7 +131,6 @@
   "profile.resetFailed": "Couldn't reset form",
   "memory.layer": "Layer",
   "ep.editTitle": "Edit endpoint",
-  "ep.addTitle": "Add endpoint",
   "ep.name": "Name",
   "ep.namePlaceholder": "My endpoint",
   "ep.protocol": "Protocol",
@@ -325,7 +324,6 @@
   "epPage.noKey": "no key",
   "epPage.edit": "Edit",
   "epPage.empty": "No endpoints configured yet.",
-  "epPage.add": "Add endpoint",
   "epPage.removed": "Endpoint removed",
   "epPage.removeFailed": "Couldn’t remove endpoint",
   "epPage.saved": "Endpoint saved",
@@ -346,7 +344,6 @@
   "rolesPage.noModels": "— no models —",
   "rolesPage.defaultThinking": "Default thinking",
   "rolesPage.needsEndpoint": "Needs an endpoint",
-  "rolesPage.addEndpoint": "Add endpoint",
   "projects.created": "Project created",
   "projects.createFailed": "Couldn’t create project",
   "projects.startFailed": "Couldn’t start the run",
@@ -376,5 +373,6 @@
   "scope.allExperts": "All experts",
   "scope.specific": "Specific",
   "scope.noAgent": "no agent",
-  "scope.agentScopeNote": "Only experts with an agent run extensions today (currently Engineer). Others are saved but stay inactive until they get an agent."
+  "scope.agentScopeNote": "Only experts with an agent run extensions today (currently Engineer). Others are saved but stay inactive until they get an agent.",
+  "common.addEndpoint": "Add endpoint"
 }

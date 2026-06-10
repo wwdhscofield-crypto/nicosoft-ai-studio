@@ -131,7 +131,6 @@
   "profile.resetFailed": "フォームをリセットできませんでした",
   "memory.layer": "レイヤー",
   "ep.editTitle": "エンドポイントを編集",
-  "ep.addTitle": "エンドポイントを追加",
   "ep.name": "名前",
   "ep.namePlaceholder": "マイエンドポイント",
   "ep.protocol": "プロトコル",
@@ -325,7 +324,6 @@
   "epPage.noKey": "キーなし",
   "epPage.edit": "編集",
   "epPage.empty": "まだエンドポイントが構成されていません。",
-  "epPage.add": "エンドポイントを追加",
   "epPage.removed": "エンドポイントを削除しました",
   "epPage.removeFailed": "エンドポイントを削除できませんでした",
   "epPage.saved": "エンドポイントを保存しました",
@@ -346,7 +344,6 @@
   "rolesPage.noModels": "— モデルなし —",
   "rolesPage.defaultThinking": "デフォルトの思考",
   "rolesPage.needsEndpoint": "エンドポイントが必要",
-  "rolesPage.addEndpoint": "エンドポイントを追加",
   "projects.created": "プロジェクトを作成しました",
   "projects.createFailed": "プロジェクトを作成できませんでした",
   "projects.startFailed": "実行を開始できませんでした",
@@ -376,5 +373,6 @@
   "scope.allExperts": "すべての専門家",
   "scope.specific": "特定",
   "scope.noAgent": "agent なし",
-  "scope.agentScopeNote": "現在は agent を持つ専門家のみが拡張機能を実行します（現在は Engineer）。他の専門家は保存されますが、agent を取得するまで非アクティブのままです。"
+  "scope.agentScopeNote": "現在は agent を持つ専門家のみが拡張機能を実行します（現在は Engineer）。他の専門家は保存されますが、agent を取得するまで非アクティブのままです。",
+  "common.addEndpoint": "エンドポイントを追加"
 }

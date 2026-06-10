@@ -4,7 +4,7 @@
 // real defect or proves a false positive. Automatic re-work loops are Gate C's (e2e) job.
 
 import * as rolesService from './roles.service'
-import * as agentService from './agent.service'
+import * as agentService from './agent-dispatch'
 import { COORDINATOR_VERIFIER_PROMPT } from '../agent/roles/prompts'
 import { route } from './coordinator-route'
 import { runRoleStep, type RunStepOptions } from './coordinator-step'

@@ -52,13 +52,14 @@ interface EquippedItem {
 // Roles settings table). endpoint/model come from the bound endpoint; the default thinking depth is
 // dynamic by (family, model). Every change persists through roles:binding:set inside the hook.
 function InlineBinding({ expert, onOpenEndpoint }: { expert: Expert; onOpenEndpoint: () => void }): ReactElement {
+  const t = useT()
   const b = useRoleBinding(expert)
 
   if (expert.unconfigured) {
     return (
       <div className="detail-card unconfigured">
         <div className="rb-needs"><Icons.alert size={15} /> No endpoint bound — this role can't run yet.</div>
-        <button className="btn primary sm" onClick={onOpenEndpoint}><Icons.plus size={14} /> Add endpoint</button>
+        <button className="btn primary sm" onClick={onOpenEndpoint}><Icons.plus size={14} /> {t('common.addEndpoint')}</button>
       </div>
     )
   }
@@ -67,7 +68,7 @@ function InlineBinding({ expert, onOpenEndpoint }: { expert: Expert; onOpenEndpo
     return (
       <div className="detail-card unconfigured">
         <div className="rb-needs"><Icons.alert size={15} /> No endpoint configured — add one to bind this role.</div>
-        <button className="btn primary sm" onClick={onOpenEndpoint}><Icons.plus size={14} /> Add endpoint</button>
+        <button className="btn primary sm" onClick={onOpenEndpoint}><Icons.plus size={14} /> {t('common.addEndpoint')}</button>
       </div>
     )
   }

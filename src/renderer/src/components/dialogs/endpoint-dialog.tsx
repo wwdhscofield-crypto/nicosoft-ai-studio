@@ -92,7 +92,7 @@ export function EndpointDialog({
 
   return (
     <Modal
-      title={editing ? t('ep.editTitle') : t('ep.addTitle')}
+      title={editing ? t('ep.editTitle') : t('common.addEndpoint')}
       onClose={onClose}
       foot={
         <>

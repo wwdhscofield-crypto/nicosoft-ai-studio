@@ -131,7 +131,6 @@
   "profile.resetFailed": "无法重置表单",
   "memory.layer": "层级",
   "ep.editTitle": "编辑端点",
-  "ep.addTitle": "添加端点",
   "ep.name": "名称",
   "ep.namePlaceholder": "我的端点",
   "ep.protocol": "协议",
@@ -325,7 +324,6 @@
   "epPage.noKey": "无密钥",
   "epPage.edit": "编辑",
   "epPage.empty": "尚未配置端点。",
-  "epPage.add": "添加端点",
   "epPage.removed": "端点已移除",
   "epPage.removeFailed": "无法移除端点",
   "epPage.saved": "端点已保存",
@@ -346,7 +344,6 @@
   "rolesPage.noModels": "— 无模型 —",
   "rolesPage.defaultThinking": "默认思考",
   "rolesPage.needsEndpoint": "需要端点",
-  "rolesPage.addEndpoint": "添加端点",
   "projects.created": "项目已创建",
   "projects.createFailed": "无法创建项目",
   "projects.startFailed": "无法启动运行",
@@ -376,5 +373,6 @@
   "scope.allExperts": "所有专家",
   "scope.specific": "指定",
   "scope.noAgent": "无 agent",
-  "scope.agentScopeNote": "目前只有拥有 agent 的专家才会运行扩展（当前为 Engineer）。其他专家会被保存，但在获得 agent 之前保持未激活。"
+  "scope.agentScopeNote": "目前只有拥有 agent 的专家才会运行扩展（当前为 Engineer）。其他专家会被保存，但在获得 agent 之前保持未激活。",
+  "common.addEndpoint": "添加端点"
 }

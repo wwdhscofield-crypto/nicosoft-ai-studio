@@ -14,7 +14,8 @@
 
 import { scheduledTaskStore } from './store'
 import type { ScheduledTask, TaskStep } from '../../ipc/contracts'
-import { run, type AgentCallbacks } from '../../services/agent.service'
+import { run } from '../../services/agent.service'
+import type { AgentCallbacks } from '../../services/agent-dispatch'
 import * as projectService from '../../services/project.service'
 import * as rolesService from '../../services/roles.service'
 import * as endpointRepo from '../../repos/endpoint.repo'

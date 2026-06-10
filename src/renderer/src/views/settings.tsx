@@ -162,7 +162,7 @@ function EndpointsPage({
         })}
         {endpoints.length === 0 && <div className="endpoint-row" style={{ color: "var(--text-4)", fontSize: 13 }}>{t('epPage.empty')}</div>}
         <div className="add-endpoint-row" onClick={onAdd}>
-          <Icons.plus size={15} /> {t('epPage.add')}
+          <Icons.plus size={15} /> {t('common.addEndpoint')}
         </div>
       </div>
     </div>
@@ -266,7 +266,7 @@ function RolesPage({ onAddEndpoint }: { onAddEndpoint: () => void }): ReactEleme
             <div className="rb-binding">
               <span className="rb-needs"><Icons.alert size={14} /> {tr('rolesPage.needsEndpoint')}</span>
               <div className="rb-controls">
-                <button className="mini-select" onClick={onAddEndpoint}>{tr('rolesPage.addEndpoint')} <Icons.arrowRight size={12} /></button>
+                <button className="mini-select" onClick={onAddEndpoint}>{tr('common.addEndpoint')} <Icons.arrowRight size={12} /></button>
               </div>
             </div>
           </div>
