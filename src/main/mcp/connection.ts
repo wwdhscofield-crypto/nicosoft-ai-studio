@@ -1,3 +1,4 @@
+import { app } from 'electron'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { McpTimeoutError } from './errors'
 import { buildTransport } from './transport'
@@ -6,7 +7,9 @@ import type { ConnectedServer, McpServerConfig } from './types'
 const CONNECT_TIMEOUT_MS = 30_000
 
 export function createMcpClient(): Client {
-  return new Client({ name: 'nicosoft-ai-studio', version: '0.0.1' }, { capabilities: {} })
+  // Client identity sent to MCP servers (like a User-Agent): the brand display name + the app's real
+  // version, read dynamically from package.json via Electron rather than hardcoded.
+  return new Client({ name: 'NicoSoft AI Studio', version: app.getVersion() }, { capabilities: {} })
 }
 
 // Connect to a server: build the transport, connect under a 30s timeout, read capabilities, and return
