@@ -46,12 +46,17 @@ async function reviewExitPlanMode(convId: string, planAuthorRoleId: string, req:
     cb.onToolEvent?.(planAuthorRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: 'coordinator-gate-a', name: 'DannyPlanReview', isError: true, result: feedback })
     return { allow: false, message: feedback }
   }
+  // Gate A is CONFIRMATORY, not a hard safety gate (the red-zone classifier still guards dangerous actions
+  // during execution). If the reviewer (Danny) can't run — no binding / disabled endpoint / missing key —
+  // FAIL OPEN and approve, so the plan author isn't trapped in plan mode forever (dogfood deadlock: a
+  // reviewer config gap fail-CLOSED and wedged an otherwise-fine run).
   const binding = rolesService.getBinding(reviewerRoleId)
-  if (!binding?.endpointId || !binding.model) return { allow: false, message: 'Gate A blocked: Danny has no model binding for independent plan review.' }
-  const ep = endpointRepo.getById(binding.endpointId)
-  if (!ep?.enabled) return { allow: false, message: 'Gate A blocked: Danny endpoint is disabled.' }
-  const apiKey = keychain.getApiKey(binding.endpointId)
-  if (!apiKey) return { allow: false, message: 'Gate A blocked: Danny endpoint API key is unavailable.' }
+  const ep = binding?.endpointId ? endpointRepo.getById(binding.endpointId) : null
+  const apiKey = binding?.endpointId ? keychain.getApiKey(binding.endpointId) : null
+  if (!binding?.endpointId || !binding.model || !ep?.enabled || !apiKey) {
+    cb.onToolEvent?.(planAuthorRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: 'coordinator-gate-a', name: 'DannyPlanReview', isError: false, result: 'APPROVE (reviewer unavailable — fail-open)' })
+    return { allow: true }
+  }
 
   const reviewInput = [
     `Task:\n${taskPrompt}`,

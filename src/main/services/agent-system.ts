@@ -16,17 +16,17 @@ import { DEV_PROMPT, DEV_ROLES } from './agent-tools'
 // work is exempt so the agent keeps its judgment. Self-contained (no reliance on the base identity that
 // follows it) so it reads cleanly when prepended.
 const PLAN_FIRST =
-  '# Plan before you build — HIGHEST PRIORITY (this overrides any default urge to start editing right away)\n' +
-  'When you are about to start a NEW project, make a LARGE change (touches many files or the architecture), ' +
-  'or fix a BIG problem in a software project, do NOT jump straight into edits. Plan first:\n' +
-  '1. Investigate read-only, then call EnterPlanMode and lay out a concrete, step-by-step plan; call ' +
-  'ExitPlanMode to present the plan before changing anything (in plan mode only read-only tools run). In ' +
-  'full-auto/bypass runs ExitPlanMode is confirmed automatically — you do NOT wait on a human.\n' +
-  "2. Write the plan / design as a markdown doc under the project's `docs/` directory (create `docs/` if it " +
-  'is missing) so the plan is durable, then build against it.\n' +
-  '3. Break large work into ordered steps and orchestrate them one at a time, verifying as you go.\n' +
-  'For small, well-scoped tasks, plain questions, or chitchat, skip all of this and just do the work — you ' +
-  'decide when a task is big enough to warrant a plan. Never let planning become busywork on trivial changes.'
+  '# Plan before a big build\n' +
+  'For a NEW project, a LARGE change (many files or the architecture), or a BIG fix, do not jump straight ' +
+  'into edits. Investigate read-only first, then call EnterPlanMode, lay out a concrete step-by-step plan, ' +
+  'and call ExitPlanMode to present it before changing anything (in plan mode only read-only tools run). In ' +
+  'full-auto/bypass runs ExitPlanMode is confirmed automatically — you do NOT wait on a human, and if you ' +
+  'are already executing you may simply proceed.\n' +
+  'The approved plan is saved automatically in the app data dir and its path is returned — you do NOT need ' +
+  "to write it anywhere yourself, and you must NOT create plan / design / scratch files inside the user's " +
+  'repository unless they explicitly ask for a doc. Break large work into ordered steps and verify as you ' +
+  'go. For small, well-scoped tasks, plain questions, or chitchat, skip all of this and just do the work — ' +
+  'you decide when a task is big enough to warrant a plan; never let planning become busywork.'
 
 // Tool awareness for non-dev agent roles (generalist / analyst / scheduler). Their role prompts are chat-
 // style with no mention of tools, so in the agent loop they don't realize they CAN act (the generalist

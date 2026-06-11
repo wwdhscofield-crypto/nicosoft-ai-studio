@@ -2,6 +2,7 @@
 // Records content + mtime into readFileState so Edit/Write can detect a stale write later.
 
 import { readFile, stat } from 'node:fs/promises'
+import { resolve, relative, isAbsolute } from 'node:path'
 import { PDFParse } from 'pdf-parse'
 import { z } from 'zod'
 import { semanticNumber } from './semantic'
@@ -21,6 +22,21 @@ const DEFAULT_LINE_LIMIT = 2000 // default slice when no limit given (Claude Cod
 const MAX_LINE_CHARS = 2000 // truncate a single very long line (minified bundles) so one line can't flood the context
 const PDF_TEXT_MAX_CHARS = 100_000 // ~25K tokens — cap extracted PDF text instead of injecting a whole book
 
+// Read (read-only) may also reach this run's OWN persisted session files under ~/.nsai/sessions/<conv> —
+// ExitPlanMode writes the approved plan there and persistLargeResult writes over-cap tool output there,
+// then hands back the path so the agent can recover it after a context compaction. Every other path stays
+// confined to the project cwd; Edit/Write/Grep/Glob keep the strict project-only confinement.
+async function confineReadable(cwd: string, p: string, sessionDir: string): Promise<string> {
+  try {
+    return await confineReal(cwd, p)
+  } catch (err) {
+    const abs = isAbsolute(p) ? resolve(p) : resolve(cwd, p)
+    const rel = relative(sessionDir, abs)
+    if (rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)) return abs
+    throw err
+  }
+}
+
 export const readTool = buildTool<typeof inputSchema, string>({
   name: 'Read',
   inputSchema,
@@ -31,7 +47,7 @@ export const readTool = buildTool<typeof inputSchema, string>({
   isConcurrencySafe: () => true,
   maxResultSizeChars: Infinity, // Read self-bounds (256KB file cap); its output must never be persisted
   async call(input, ctx) {
-    const abs = await confineReal(ctx.cwd, input.file_path)
+    const abs = await confineReadable(ctx.cwd, input.file_path, ctx.sessionDir)
     const st = await stat(abs)
     if (!st.isFile()) throw new Error(`Not a regular file: ${input.file_path}`) // block device/FIFO hangs
     // PDF: extract text via pdf-parse (the raw bytes aren't utf-8). No line-number framing or stale-write
