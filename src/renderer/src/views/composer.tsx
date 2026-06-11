@@ -90,10 +90,10 @@ export function Composer({
   const tokenAmber = b.contextLength > 0 && usedTokens / b.contextLength > 0.85
   const selectedEp = b.endpoints.find((e) => e.id === b.endpointId)
   const agent = roleHasAgent(expert.id)
-  // Engineer (coding agent) needs a project folder; other agent roles run without one (folder = an
-  // optional restricted-read boundary). Agent roles need an Anthropic / OpenAI / Gemini endpoint — the
-  // loop's three tool-use protocols (doc 29 wired Gemini's function-calling agent loop).
-  const needsCwd = agent && (expert.id === 'engineer' || expert.id === 'shuri')
+  // A project folder is OPTIONAL for every agent role, Flynn/Shuri included: they can chat folder-free,
+  // and the backend falls back to a per-conversation scratch workspace (the agent asks the user where to
+  // save real work). Agent roles still need an Anthropic / OpenAI / Gemini endpoint — the loop's three
+  // tool-use protocols (doc 29 wired Gemini's function-calling agent loop).
   const needAgentProto =
     agent &&
     !!selectedEp &&
@@ -104,7 +104,7 @@ export function Composer({
   const noEndpoint =
     b.loaded &&
     (b.endpoints.length === 0 || !selectedEp || !selectedEp.enabled || selectedEp.keyState !== 'ok' || !b.model || needAgentProto)
-  const ready = b.loaded && !noEndpoint && (!needsCwd || !!cwd)
+  const ready = b.loaded && !noEndpoint
   // No stored pick → the model's TOP tier (think as hard as possible unless the user dials it down);
   // 'medium' only as the final fallback for capability gaps.
   const effectiveDepth = (b.depth || defaultThinkingChoice(b.family, b.model) || 'medium') as ThinkingChoice
@@ -245,11 +245,7 @@ export function Composer({
             className="cmp-textarea"
             rows={1}
             value={value}
-            placeholder={
-              needsCwd && !cwd
-                ? t('conv.chooseFolder')
-                : t('conv.askPlaceholder', { name: expert.name })
-            }
+            placeholder={t('conv.askPlaceholder', { name: expert.name })}
             onChange={(e) => {
               setValue(e.target.value)
               setCmdIndex(0)

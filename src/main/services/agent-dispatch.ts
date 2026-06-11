@@ -104,6 +104,12 @@ export async function runAgentLoop(
 ): Promise<{ text: string; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number; reason: string; turns: number; attachments: MessageAttachmentDto[] }> {
   const sessionDir = join(dataDir(), 'sessions', loop.convId)
   await mkdir(join(sessionDir, 'tool-results'), { recursive: true })
+  // No project folder selected (Flynn/Shuri can chat folder-free) → fall back to a per-conversation scratch
+  // workspace under ~/.nsai so the file tools get a valid, confined cwd instead of escaping to the app's
+  // process cwd. The agent works here; the system prompt tells it to ASK the user for a real folder before
+  // persisting work that belongs in their project.
+  const cwd = loop.cwd || join(sessionDir, 'workspace')
+  if (!loop.cwd) await mkdir(cwd, { recursive: true })
   const transcript = createWriteStream(join(sessionDir, 'transcript.jsonl'), { flags: 'a' })
   // Without an 'error' listener a failed write (disk full / perms) crashes the main process — swallow.
   transcript.on('error', () => {})
@@ -119,9 +125,9 @@ export async function runAgentLoop(
   const subAgents = new AsyncSubAgentPool(signal)
   // Per-run language server (batch 4) — only dev roles (they have a project cwd + the lsp tool). Lazily
   // spawns typescript-language-server on the first query; tree-killed in the finally so none lingers.
-  const lsp = DEV_ROLES.has(loop.roleId) ? new LSPManager(loop.cwd) : undefined
+  const lsp = DEV_ROLES.has(loop.roleId) ? new LSPManager(cwd) : undefined
   const ctx: AgentContext = {
-    cwd: loop.cwd,
+    cwd,
     signal,
     runId: loop.runId, // run-scoped resource ownership — e2e_browser sessions are reclaimed by it below
     readFileState: new Map(),
