@@ -44,6 +44,23 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
   let outputTokens = result.outputTokens + verdict.outputTokens
   if (verdict.passed) return { ...result, inputTokens, outputTokens, gateOutcome: 'pass' }
 
+  // Verification infrastructure failure (the verifier's LLM call failed or produced no verdict at all):
+  // there is no defect evidence to act on, so dispatching the fail handler is garbage-in — in round8 the
+  // handler hit the same broken upstream, also returned nothing, and a fully-green implementation was
+  // declared "NOT delivered". Treat it like the existing no-verifier-bound case: deliver the result
+  // unverified with a loud note (the user decides), instead of voiding the turn.
+  if (verdict.infraFailure) {
+    console.warn(`[coordinator] gate-b verifier infrastructure failure — delivering unverified: ${verdict.feedback}`)
+    return {
+      ...result,
+      inputTokens,
+      outputTokens,
+      gateOutcome: 'pass',
+      gateEvidence: verdict.feedback,
+      text: `${result.text}\n\n[Independent verification could not run — result delivered UNVERIFIED. ${verdict.feedback}]`
+    }
+  }
+
   // Gate B FAILED → close the loop (don't leave the FAIL dangling): the verdict+evidence is routed to the
   // expert who OWNS the failing domain; that expert fixes the real defect or proves a false positive.
   const followUp = await runGateBFailFollowUp(roleId, opts, gate, result.text, verdict.feedback, signal)
@@ -150,7 +167,7 @@ export function chooseVerifierRole(implementerRoleId: string): string {
   )
 }
 
-async function runVerifierStep(implementerRoleId: string, opts: RunStepOptions, gate: { originalPrompt: string; approvedPlan?: string }, implementationText: string, signal?: AbortSignal): Promise<{ passed: boolean; feedback: string; inputTokens: number; outputTokens: number }> {
+async function runVerifierStep(implementerRoleId: string, opts: RunStepOptions, gate: { originalPrompt: string; approvedPlan?: string }, implementationText: string, signal?: AbortSignal): Promise<{ passed: boolean; feedback: string; inputTokens: number; outputTokens: number; infraFailure?: boolean }> {
   const verifierRoleId = chooseVerifierRole(implementerRoleId)
   // No independent agent role is bound besides the implementer → there's no one to verify. Don't FAIL/throw
   // the turn over a config gap; deliver the result unverified with a note (synthesis surfaces it).
@@ -168,24 +185,40 @@ async function runVerifierStep(implementerRoleId: string, opts: RunStepOptions, 
     `Implementer role (do NOT defer to them): ${implementerRoleId}`,
     `Implementer's own summary (a claim to verify, not ground truth):\n${implementationText}`
   ].filter(Boolean).join('\n\n')
-  const verifier = await runRoleStep({
-    ...opts,
-    roleId: verifierRoleId,
-    prompt: verifierPrompt,
-    dispatch: [...(opts.dispatch ?? []), verifierRoleId],
-    permissionMode: 'default',
-    includeHistory: false,
-    // Read-only kit + Bash so the verifier can ACTUALLY run the checks (most non-dev roles lack Bash), and
-    // its own adversarial persona instead of the borrowed role's "don't touch code" system prompt.
-    toolNames: ['Read', 'Grep', 'Glob', 'Bash'],
-    systemPromptOverride: COORDINATOR_VERIFIER_PROMPT,
-    signal: signal ?? opts.signal
-  })
+  let verifier: Awaited<ReturnType<typeof runRoleStep>>
+  try {
+    verifier = await runRoleStep({
+      ...opts,
+      roleId: verifierRoleId,
+      prompt: verifierPrompt,
+      dispatch: [...(opts.dispatch ?? []), verifierRoleId],
+      // Inherit the run's permission mode (opts.permissionMode), same as the implementer: a bypass run's verifier
+      // runs bypass too and skips the self-approve classifier entirely (execution.ts), so it can run the project's
+      // build/vet/test checks unattended. Hard-coding 'default' here forced every bypass run's verifier through the
+      // classifier — which hard-denied harmless verification commands (e.g. `go test … >/dev/null`). The kit is
+      // already read-only (toolNames below: no Write/Edit), so inheriting bypass adds no write capability.
+      includeHistory: false,
+      // Read-only kit + Bash so the verifier can ACTUALLY run the checks (most non-dev roles lack Bash), and
+      // its own adversarial persona instead of the borrowed role's "don't touch code" system prompt.
+      toolNames: ['Read', 'Grep', 'Glob', 'Bash'],
+      systemPromptOverride: COORDINATOR_VERIFIER_PROMPT,
+      signal: signal ?? opts.signal
+    })
+  } catch (err) {
+    // The verifier's own LLM call failed (e.g. upstream empty-response / channel fault — round8). That is
+    // an infrastructure failure, not a verdict: report it as such so the caller skips the fail handler.
+    const msg = err instanceof Error ? err.message : String(err)
+    const feedback = `verifier LLM call failed: ${msg}`
+    opts.cb.onToolEvent?.(implementerRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: 'coordinator-gate-b', name: 'IndependentVerifier', isError: true, result: feedback })
+    return { passed: false, feedback, inputTokens: 0, outputTokens: 0, infraFailure: true }
+  }
   const text = verifier.text.trim()
   // First PASS/FAIL token wins. An ^-anchored match silently failed on markdown verdicts ("## Verdict\n\n
   // **FAIL** — …"), which would have judged every markdown-styled PASS as FAIL.
   const verdictToken = text.match(/\b(PASS|FAIL)\b/i)
   const passed = verdictToken?.[1].toUpperCase() === 'PASS'
   opts.cb.onToolEvent?.(implementerRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: 'coordinator-gate-b', name: 'IndependentVerifier', isError: !passed, result: text })
-  return { passed, feedback: text || 'Verifier returned no verdict.', inputTokens: verifier.inputTokens, outputTokens: verifier.outputTokens }
+  // Empty text = the verifier ran but produced nothing (belt to the loop's empty-turn guard) — that is
+  // an absent verdict, not a FAIL with evidence; mark infra so the caller doesn't dispatch the handler.
+  return { passed, feedback: text || 'Verifier returned no verdict.', inputTokens: verifier.inputTokens, outputTokens: verifier.outputTokens, infraFailure: text ? undefined : true }
 }

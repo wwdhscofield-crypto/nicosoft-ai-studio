@@ -240,6 +240,28 @@ export async function* runAgent(
   // ends the run instead of looping.
   let truncationRetries = 0
   const MAX_TRUNCATION_RETRIES = 2
+  // Empty-turn guard (dogfood 2026-06-11 round8): the upstream streamed 200s with ZERO content blocks
+  // (a proxy channel fault), and the loop treated each as a normal tool-less turn — Gate B's verifier
+  // "completed" in 1.4s with turns=0 and no verdict, voiding the whole delivery. An empty non-refusal
+  // turn is never a valid end: retry it like a transient failure; if it persists on a run that has
+  // produced NOTHING, fail loudly instead of fabricating an empty success.
+  let emptyTurnRetries = 0
+  const MAX_EMPTY_TURN_RETRIES = 2
+  // After compaction folds the transcript — including the model's own TodoWrite calls — into one summary
+  // message, the model loses sight of its todo list and stops maintaining statuses (dogfood round8: 11
+  // items, all the work finished, none ever marked completed after two autocompacts). Re-inject the
+  // CURRENT list into the post-compaction context. Appended as a text block on the trailing user message
+  // (the summary) — a separate user message would break strict role alternation on Anthropic upstreams.
+  const appendTodoSnapshot = (msgs: AgentMessage[]): void => {
+    const todos = ctx.todos
+    if (!todos || todos.length === 0) return
+    const text =
+      'Reminder — your current todo list (the context was just compacted). Keep maintaining it with TodoWrite: mark an item in_progress when you start it and completed the moment it is done.\n' +
+      todos.map((t) => `- [${t.status}] ${t.content}`).join('\n')
+    const last = msgs[msgs.length - 1]
+    if (last?.role === 'user' && Array.isArray(last.content)) last.content.push({ type: 'text', text })
+    else msgs.push({ role: 'user', content: [{ type: 'text', text }] })
+  }
 
   // Sub-agent spawner factory for the Task tool. Builds an isolated inner loop with the same LLM
   // config but no Task tool (recursion bounded to one level) and a fresh readFileState/todos,
@@ -359,6 +381,7 @@ export async function* runAgent(
           lastUsageAt = 0
           compactions.auto++
           prevAutoTurn = turns
+          appendTodoSnapshot(messages)
         }
       }
     }
@@ -452,6 +475,7 @@ export async function* runAgent(
           lastUsageAt = 0
           reactiveCompacted = true
           compactions.auto++
+          appendTodoSnapshot(messages)
           continue
         }
       }
@@ -466,7 +490,24 @@ export async function* runAgent(
         const note: AgentMessage = { role: 'assistant', content: [{ type: 'text', text: 'The model declined to respond to this request (refusal).' }] }
         messages.push(note)
         yield { type: 'assistant', message: note, usage: assistant.usage }
+        return { reason: 'completed', messages, turns, compactions }
       }
+      // Zero content blocks on a non-refusal turn = an upstream anomaly (dogfood round8: a proxy channel
+      // fault streamed empty 200s), not the model deciding to stop. The turn was never pushed, so a
+      // `continue` re-sends the identical request — retry like a transient failure.
+      if (emptyTurnRetries < MAX_EMPTY_TURN_RETRIES && !ctx.signal.aborted) {
+        emptyTurnRetries++
+        console.warn(`[agent] empty turn (zero content blocks, stop=${assistant.stopReason ?? 'null'}) — retry ${emptyTurnRetries}/${MAX_EMPTY_TURN_RETRIES} run=${ctx.runId} turn=${turns}`)
+        params.onRetry?.({ attempt: emptyTurnRetries, max: MAX_EMPTY_TURN_RETRIES, code: 'empty_response', waitMs: 0 })
+        continue
+      }
+      if (turns === 0) {
+        // The run produced literally nothing. Surfacing it as a successful empty "completed" voids the
+        // step downstream (a verifier with no verdict, a fail handler with no closure) — fail loudly so
+        // the caller can surface a real error instead.
+        throw new LlmError('upstream', 'upstream returned empty responses (zero content blocks) on every attempt')
+      }
+      console.warn(`[agent] empty turn after ${turns} turns of real work — ending the run as completed run=${ctx.runId}`)
       return { reason: 'completed', messages, turns, compactions }
     }
 
@@ -488,6 +529,7 @@ export async function* runAgent(
 
     const assistantMsg: AgentMessage = { role: 'assistant', content: assistant.content }
     messages.push(assistantMsg)
+    emptyTurnRetries = 0 // a real turn arrived — the next empty (if any) is a fresh incident
     lastUsage = assistant.usage
     lastUsageAt = messages.length // after the assistant push → slice(lastUsageAt) = tool_results below
     yield { type: 'assistant', message: assistantMsg, usage: assistant.usage }

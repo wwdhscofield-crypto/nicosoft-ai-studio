@@ -23,8 +23,8 @@ const PROTO_LABEL: Record<Proto, string> = { openai: 'OpenAI', anthropic: 'Anthr
 // experts to (the user refines the model list in Settings later). Without it, endpoints.test fails with
 // "no model configured to test" and the whole connect/auto-bind flow dies.
 const PROTO_DEFAULT_MODEL: Record<Proto, { slug: string; contextLength: number } | null> = {
-  anthropic: { slug: 'nicosoft/claude-opus-4-8', contextLength: 200000 },
-  openai: { slug: 'nicosoft/gpt-5.5', contextLength: 128000 },
+  anthropic: { slug: 'nicosoft/claude-opus-4-8', contextLength: 1000000 },
+  openai: { slug: 'nicosoft/gpt-5.5', contextLength: 272000 },
   gemini: { slug: 'gemini-2.5-flash', contextLength: 1048576 },
   custom: null
 }
@@ -36,11 +36,14 @@ type Drafts = Record<Proto, { baseURL: string; apiKey: string }>
 type StatusMap = Partial<Record<Proto, { state: 'testing' | 'ok' | 'fail'; msg?: string }>>
 
 // Context lengths for the seeded slugs (existing entries keep whatever they already have).
+// Values mirror the nsai catalog (POST https://api.nicosoft.ai/models/list, no key needed) — keep them
+// in sync with it: a low value here silently shrinks the agent's autocompact window, not just the meter
+// (opus-4-8 seeded at 200K made every long agent run compact at ~167K on a 1M-window model).
 const SEED_CTX: Record<string, number> = {
-  'nicosoft/claude-opus-4-8': 200000,
+  'nicosoft/claude-opus-4-8': 1000000,
   'nicosoft/claude-haiku-4-5-20251001': 200000,
-  'nicosoft/gpt-5.5': 128000,
-  'nicosoft/gpt-5.4-mini': 128000,
+  'nicosoft/gpt-5.5': 272000,
+  'nicosoft/gpt-5.4-mini': 272000,
   'gemini-pro-latest': 1048576,
   'nicosoft/gemini-3-flash-agent': 1048576,
   'gemini-2.5-flash': 1048576

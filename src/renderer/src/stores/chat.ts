@@ -482,13 +482,20 @@ export const useChat = create<ChatState>((set, get) => {
           if (cur.inputTokens === undefined && typeof d.inputTokens === 'number') cur.inputTokens = d.inputTokens
           if (cur.outputTokens === undefined && typeof d.outputTokens === 'number') cur.outputTokens = d.outputTokens
         }
-        // The "/ window" meter wants the CURRENT context size — the last step's prompt tokens, which
-        // step:done already stored per-message (res.contextTokens). NOT d.inputTokens: for a gated /
-        // multi-expert turn that is the AGGREGATE input (Gate B sums implementer + verifier cumulative →
-        // run-stats `inTokens`, e.g. 10.99M) — a billing total, not window occupancy.
+        // The "/ window" meter shows the CURRENT context of the COMPOSER's role (the coordinator), NOT
+        // whichever expert ran last. Two traps, both seen in dogfood:
+        //   • NOT d.inputTokens — for a gated / multi-expert turn that's the AGGREGATE input (Gate B sums
+        //     implementer + verifier cumulative → run-stats `inTokens`, e.g. 10.99M), a billing total.
+        //   • NOT the last assistant message's context — that message is the last DISPATCHED sub-expert (e.g.
+        //     the Gate B verifier), whose agent-loop context (100K+ of files it read) is not the coordinator's
+        //     window occupancy. Surfacing it made the meter jump to the sub-expert's size the instant a turn
+        //     ended — the live onConvUsage path already keeps sub-steps out (BUG 1 there); this was the one
+        //     place that re-introduced them on done.
+        // Take the last COORDINATOR step's OWN context (its synthesis / direct turn). If the coordinator only
+        // dispatched (intro is 0-context, no synthesis), leave the live-maintained value untouched.
         const lastCtx = [...msgs]
           .reverse()
-          .find((m) => m.role === 'assistant' && typeof m.inputTokens === 'number' && m.inputTokens > 0)?.inputTokens
+          .find((m) => m.role === 'assistant' && m.expertId === 'coordinator' && typeof m.inputTokens === 'number' && m.inputTokens > 0)?.inputTokens
         return {
           byConversation: { ...s.byConversation, [meta.convId]: msgs },
           streaming: { ...s.streaming, [meta.convId]: false },

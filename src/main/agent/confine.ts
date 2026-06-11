@@ -12,18 +12,6 @@ class ConfinementError extends Error {
   }
 }
 
-// Lexical-only: resolve `p` against `cwd` and ensure it stays inside `cwd`. Cheap but blind to
-// symlinks — use confineReal for anything that actually gets opened.
-function confinePath(cwd: string, p: string): string {
-  const abs = isAbsolute(p) ? resolve(p) : resolve(cwd, p)
-  const rel = relative(cwd, abs)
-  if (rel === '') return abs // the cwd itself
-  if (rel.startsWith('..') || isAbsolute(rel)) {
-    throw new ConfinementError(`Path escapes the project directory: ${p}`)
-  }
-  return abs
-}
-
 // realpath the nearest EXISTING ancestor of `abs`, re-appending the non-existent tail. So a symlinked
 // parent dir of a not-yet-created file still gets resolved — closing the create-path symlink escape
 // that a plain realpath(abs) misses (realpath throws on a missing target).
@@ -46,7 +34,12 @@ async function resolveNearest(abs: string): Promise<string> {
 // Lexical confinement + realpath of the nearest existing ancestor (resolves symlinks on both the
 // existing-file read path and the create/write path). Use for any path that gets read/opened/written.
 export async function confineReal(cwd: string, p: string): Promise<string> {
-  const abs = confinePath(cwd, p) // lexical gate first
+  // Compute the absolute path WITHOUT a lexical escape gate. A lexical relative(cwd, abs) mis-fires whenever
+  // cwd and p are expressed in different symlink forms — macOS /tmp is a symlink to /private/tmp, so cwd=
+  // /tmp/x + p=/private/tmp/x/f gives relative()=../../private/tmp/x/f → a false "escape" (a dispatched
+  // verifier that resolved its own cwd to the real path hit exactly this). The check below realpaths BOTH
+  // sides, so symlink form no longer matters — that is the single source of truth for confinement.
+  const abs = isAbsolute(p) ? resolve(p) : resolve(cwd, p)
   let cwdReal: string
   try {
     cwdReal = await realpath(cwd)
@@ -56,7 +49,7 @@ export async function confineReal(cwd: string, p: string): Promise<string> {
   const real = await resolveNearest(abs)
   const rel = relative(cwdReal, real)
   if (rel !== '' && (rel.startsWith('..') || isAbsolute(rel))) {
-    throw new ConfinementError(`Path resolves outside the project via symlink: ${p}`)
+    throw new ConfinementError(`Path escapes the project directory: ${p}`)
   }
   return real
 }

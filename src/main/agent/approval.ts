@@ -8,7 +8,7 @@
 // PURE RULES, deliberately not an LLM judge: a classifier you can talk into allowing `rm -rf /` is worse
 // than useless. Red is a hard floor and fails CLOSED — anything the rules can't prove safe lands in red or
 // yellow, never green by omission. Write/Edit/MultiEdit are green because the loop already confines their
-// paths to cwd (confinePath throws on escape before this is ever consulted); Bash is the real surface since
+// paths to cwd (confineReal throws on escape before this is ever consulted); Bash is the real surface since
 // its command string isn't path-confined, so it gets the most scrutiny.
 
 import { isReadOnlyCommand } from './tools/bash-classifier'
@@ -52,8 +52,11 @@ const DANGEROUS_CMD = /(^|[;&|]\s*)(sudo|su|doas|rm|rmdir|unlink|shred|dd|mkfs|f
 // upload/POST/PUT or a remote-copy tool is red. Bare `curl host` (a GET) is NOT matched here → falls to yellow.
 const NET_EGRESS = /\b(scp|sftp|rsync|ssh|nc|ncat|telnet|ftp)\b|\b(curl|wget)\b[^\n|;&]*(?:-d\b|--data|-F\b|--form|-T\b|--upload-file|-X\s*(?:POST|PUT|DELETE|PATCH))/i
 // Redirecting a write to an absolute path OUTSIDE a project — system dirs. cwd is itself absolute, but these
-// well-known system roots are never a project cwd, so writing into them is out-of-bounds.
-const OUT_OF_CWD_WRITE = /(^|\s)>>?\s*(\/(etc|usr|bin|sbin|var|boot|sys|proc|dev|Library|System|Applications)\b|~|\$HOME)/i
+// well-known system roots are never a project cwd, so writing into them is out-of-bounds. EXCEPTION: the
+// standard null sinks / std streams under /dev (/dev/null, /dev/stdout, /dev/stderr, /dev/zero, /dev/tty,
+// /dev/[u]random) — `cmd >/dev/null 2>&1` is the single most common shell idiom for discarding output, not a
+// system write. The /dev branch's negative lookahead lets those through while still flagging `>/dev/sda` etc.
+const OUT_OF_CWD_WRITE = /(^|\s)>>?\s*(\/(etc|usr|bin|sbin|var|boot|sys|proc|Library|System|Applications)\b|\/dev\b(?!\/(?:null|stdout|stderr|zero|tty|u?random)\b)|~|\$HOME)/i
 // chmod/chown with a recursive or world-writable bit on something broad — privilege/permission tampering.
 const PERM_TAMPER = /\b(chmod|chown|chgrp)\b[^\n|;&]*(-R\b|\s777\b|\sa\+|\/(etc|usr|bin|var)\b)/i
 // Git commands that DISCARD uncommitted work or rewrite history — never safe to run unattended (dogfood
