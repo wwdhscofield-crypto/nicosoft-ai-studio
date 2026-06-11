@@ -154,6 +154,7 @@ export async function run(
       attachments: loopRes.attachments,
       runId,
       inputTokens: loopRes.contextTokens, // DISPLAY: current context size (last turn's prompt, NOT accumulated). usage_events below keeps the accumulated total for billing.
+      cacheReadTokens: loopRes.cacheReadTokens, // cache-read share of that last turn — drives the persistent "(+N cached)" note
       outputTokens: loopRes.outTokens,
     })
   }

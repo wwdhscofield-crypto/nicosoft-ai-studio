@@ -214,6 +214,7 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
         attachments: res.attachments,
         dispatch: dispatch ?? undefined,
         inputTokens: res.contextTokens, // DISPLAY: current context size (last turn, not accumulated). Billing below uses total.
+        cacheReadTokens: res.cacheReadTokens, // cache-read share of that last turn — persistent "(+N cached)" note
         outputTokens: res.outTokens
       })
     }

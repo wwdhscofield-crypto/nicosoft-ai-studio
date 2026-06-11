@@ -114,13 +114,25 @@ export function RetryReadout({ attempt, max, since }: { attempt: number; max: nu
 // kept visible after the live readout's dot clears. The live ↓ was a chars/4 estimate; these are the
 // corrected upstream numbers from the done event. All four paths (chat/agent/coordinator/image) converge
 // on this one component, so the finalized cost reads identically no matter which produced the turn.
-function TokenSummary({ inputTokens, outputTokens }: { inputTokens?: number; outputTokens?: number }): ReactElement | null {
+function TokenSummary({ inputTokens, outputTokens, cachedTokens = 0 }: { inputTokens?: number; outputTokens?: number; cachedTokens?: number }): ReactElement | null {
   const t = useT()
-  const parts: string[] = []
-  if (inputTokens) parts.push(`↑ ${fmtReadoutTokens(inputTokens)}`)
-  if (outputTokens) parts.push(`↓ ${fmtReadoutTokens(outputTokens)}`)
-  if (!parts.length) return null
-  return <span className="token-summary">{parts.join(' · ')} {t('conv.tokensSuffix')}</span>
+  if (!inputTokens && !outputTokens) return null
+  // Codex-style ↑ split (matches the live ThinkingReadout): the main number is fresh (full prompt −
+  // cache reads); the cache-served bulk rides as a dim "(+N cached)" note. Pairs with this turn's prompt.
+  const cached = Math.min(Math.max(cachedTokens, 0), inputTokens ?? 0)
+  const fresh = (inputTokens ?? 0) - cached
+  return (
+    <span className="token-summary">
+      {inputTokens ? (
+        <>
+          ↑ {fmtReadoutTokens(fresh)}
+          {cached > 0 ? <span className="tr-cached"> (+{fmtReadoutTokens(cached)} cached)</span> : null}
+        </>
+      ) : null}
+      {inputTokens && outputTokens ? ' · ' : null}
+      {outputTokens ? <>↓ {fmtReadoutTokens(outputTokens)}</> : null} {t('conv.tokensSuffix')}
+    </span>
+  )
 }
 
 // True when this assistant message represents Coordinator's synthesis step — the final pipeline message
@@ -260,7 +272,11 @@ export function ChatSegment({
   // Finished-run token summary: ↓ totals the whole run's output; ↑ is the newest call's prompt size
   // (each call's input already includes the prior context — summing inputs would overstate).
   const sumOut = msgs.reduce((n, m) => n + (m.outputTokens ?? 0), 0)
-  const lastIn = [...msgs].reverse().find((m) => m.inputTokens)?.inputTokens
+  const lastInMsg = [...msgs].reverse().find((m) => m.inputTokens)
+  const lastIn = lastInMsg?.inputTokens
+  // Cache-read share of that same last turn: the persisted value after reload, else the live overlay
+  // captured during streaming (segment messages carry liveCachedTokens; it isn't cleared at turn end).
+  const lastCached = (lastInMsg?.cacheReadTokens ?? lastInMsg?.liveCachedTokens) || 0
   return (
     <div className={'segment' + (isUser ? ' user' : '')} style={{ '--seg-color': segColor } as CSSProperties}>
       <div className="seg-head">
@@ -301,7 +317,7 @@ export function ChatSegment({
           // the conv-level total; single chat/agent turns have no per-message live → fall back to the conv prop.
           <ThinkingReadout chars={last.text.length} inputTokens={last.liveInputTokens ?? inputTokens} outputTokens={last.liveOutputTokens ?? outputTokens} cachedTokens={last.liveInputTokens !== undefined ? (last.liveCachedTokens ?? 0) : cachedTokens} activity={segmentActivity(last.tools)} />
         ) : !isUser && (lastIn || sumOut) ? (
-          <TokenSummary inputTokens={lastIn} outputTokens={sumOut || undefined} />
+          <TokenSummary inputTokens={lastIn} outputTokens={sumOut || undefined} cachedTokens={lastCached} />
         ) : null}
       </div>
     </div>

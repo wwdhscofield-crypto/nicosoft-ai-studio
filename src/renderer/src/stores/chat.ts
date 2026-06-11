@@ -713,6 +713,7 @@ export const useChat = create<ChatState>((set, get) => {
           expertId: m.author === 'user' ? null : m.expertId,
           dispatch: m.dispatch,
           inputTokens: m.author !== 'user' && m.inputTokens > 0 ? m.inputTokens : undefined,
+          cacheReadTokens: m.author !== 'user' && m.cacheReadTokens > 0 ? m.cacheReadTokens : undefined,
           outputTokens: m.author !== 'user' && m.outputTokens > 0 ? m.outputTokens : undefined
         }
       })

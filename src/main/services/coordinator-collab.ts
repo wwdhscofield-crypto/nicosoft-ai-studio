@@ -93,7 +93,7 @@ export async function runCollaboration(
   const results = await agentService.runCollabSession(input.convId, experts, hooks, signal, () => Date.now())
 
   const outputs: { role: string; text: string }[] = []
-  for (const [roleId, { text, contextTokens, outTokens }] of results) {
+  for (const [roleId, { text, contextTokens, cacheReadTokens, outTokens }] of results) {
     if (text) {
       convService.append(input.convId, {
         author: 'expert',
@@ -101,6 +101,7 @@ export async function runCollaboration(
         model: models.get(roleId) ?? '',
         content: text,
         inputTokens: contextTokens, // DISPLAY: current context size (collab path not instrumented for billing)
+        cacheReadTokens, // cache-read share of that last turn — persistent "(+N cached)" note
         outputTokens: outTokens,
         dispatch: fullChain
       })

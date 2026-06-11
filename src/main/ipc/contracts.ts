@@ -549,6 +549,7 @@ export interface MessageDto {
   attachments: MessageAttachmentDto[]
   runId: string | null // agent run id (Engineer); null for plain chat
   inputTokens: number // exact prompt context counted before this turn was sent (0 if unknown)
+  cacheReadTokens: number // cache-read share of inputTokens for this turn (0 if none / unknown) — persistent "(+N cached)" note
   outputTokens: number // real output tokens for this turn (0 if unknown / user message)
   dispatch: string[] | null // coordinator pipeline chain; null for single-expert / direct chat / agent turns
   createdAt: string
@@ -561,6 +562,7 @@ export interface MessageAppendDto {
   attachments?: MessageAttachmentDto[]
   runId?: string
   inputTokens?: number // exact prompt context for this turn (assistant messages)
+  cacheReadTokens?: number // cache-read share of inputTokens (assistant messages)
   outputTokens?: number // real output tokens for this turn (assistant messages)
   dispatch?: string[] // set by coordinator.service for pipeline steps; renderer reads it via MessageDto.dispatch
 }

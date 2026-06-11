@@ -33,6 +33,7 @@ export interface MessageRow {
   content: string
   attachments: unknown[]
   inTokens: number
+  cacheReadTokens: number
   outTokens: number
   dispatch: string[] | null
   runId: string | null
@@ -46,6 +47,7 @@ export interface MessageAppendInput {
   content: string
   attachments?: unknown[]
   inTokens?: number
+  cacheReadTokens?: number
   outTokens?: number
   dispatch?: string[]
   runId?: string
@@ -72,6 +74,7 @@ interface MessageRaw {
   content: string
   attachments: string
   in_tokens: number
+  cache_read_tokens: number
   out_tokens: number
   dispatch: string | null
   run_id: string | null
@@ -102,6 +105,7 @@ function mapMessage(raw: MessageRaw): MessageRow {
     content: raw.content,
     attachments: JSON.parse(raw.attachments) as unknown[],
     inTokens: raw.in_tokens,
+    cacheReadTokens: raw.cache_read_tokens,
     outTokens: raw.out_tokens,
     dispatch: raw.dispatch ? (JSON.parse(raw.dispatch) as string[]) : null,
     runId: raw.run_id,
@@ -192,12 +196,13 @@ export function append(conversationId: string, input: MessageAppendInput): Messa
   const attachments = JSON.stringify(input.attachments ?? [])
   const dispatch = input.dispatch ? JSON.stringify(input.dispatch) : null
   const inTokens = input.inTokens ?? 0
+  const cacheReadTokens = input.cacheReadTokens ?? 0
   const outTokens = input.outTokens ?? 0
   const runId = input.runId ?? null
   getDb()
     .prepare(
-      `INSERT INTO messages (id, conversation_id, author, expert_id, model, content, attachments, in_tokens, out_tokens, dispatch, run_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO messages (id, conversation_id, author, expert_id, model, content, attachments, in_tokens, cache_read_tokens, out_tokens, dispatch, run_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id,
@@ -208,6 +213,7 @@ export function append(conversationId: string, input: MessageAppendInput): Messa
       input.content,
       attachments,
       inTokens,
+      cacheReadTokens,
       outTokens,
       dispatch,
       runId,
@@ -222,6 +228,7 @@ export function append(conversationId: string, input: MessageAppendInput): Messa
     content: input.content,
     attachments: input.attachments ?? [],
     inTokens,
+    cacheReadTokens,
     outTokens,
     dispatch: input.dispatch ?? null,
     runId,

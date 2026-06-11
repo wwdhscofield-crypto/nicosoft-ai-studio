@@ -35,6 +35,7 @@ export interface ChatMessage {
   expertId?: string | null
   dispatch?: string[] | null
   inputTokens?: number // measured prompt (sent) tokens for THIS turn — per-message so collab experts each show their own; drives the finalized readout
+  cacheReadTokens?: number // cache-read share of inputTokens for THIS turn (persisted via MessageDto) — drives the finalized "(+N cached)" note after the live overlay clears + across reloads
   outputTokens?: number // real output tokens for THIS turn (upstream usage) — finalized ↓ readout once the turn completes
   liveInputTokens?: number // coordinator only: live ↑ for THIS segment while it streams (per-message, so concurrent segments don't all read the conv-level overlay — BUG 2). step:done supersedes it with inputTokens.
   liveOutputTokens?: number // coordinator only: live ↓ for THIS segment while it streams

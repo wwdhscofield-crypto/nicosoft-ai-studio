@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS messages (
   content         TEXT NOT NULL DEFAULT '',
   attachments     TEXT NOT NULL DEFAULT '[]',     -- JSON
   in_tokens       INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
   out_tokens      INTEGER NOT NULL DEFAULT 0,
   dispatch        TEXT,                           -- JSON string[] | null
   run_id          TEXT,                           -- agent run id (Engineer); links to transcript. null for plain chat

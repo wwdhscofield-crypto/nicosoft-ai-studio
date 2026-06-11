@@ -92,13 +92,14 @@ export async function runCollabSession(
   hooks: CollabHooks,
   signal: AbortSignal,
   nowMs: () => number,
-): Promise<Map<string, { text: string; inTokens: number; contextTokens: number; outTokens: number }>> {
+): Promise<Map<string, { text: string; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number }>> {
   // One service registry per collaboration, shared by all its experts (Flynn starts a backend, Shuri
   // lists + connects). Tree-killed in the finally below when the session ends — no zombie ports survive.
   const registry = new ServiceRegistry()
   const inTokensByRole = new Map<string, number>() // accumulated TOTAL prompt tokens (incl. cache) per expert → billing
   const contextByRole = new Map<string, number>() // per expert: LAST turn's context size → per-message ↑ display (overwrite, NOT accumulated)
   const outTokensByRole = new Map<string, number>() // accumulated output tokens per expert → its per-message ↓ readout
+  const cacheReadByRole = new Map<string, number>() // per expert: LAST turn's cache-read share → per-message "(+N cached)" note (overwrite, NOT accumulated)
   const roster = experts.map((x) => ({ id: x.roleId, name: displayName(x.roleId) ?? x.roleId }))
   const lspByExpert: LSPManager[] = [] // one per dev expert; tree-killed in the finally
   const specs: ExpertSpec[] = experts.map((x) => {
@@ -165,6 +166,7 @@ export async function runCollabSession(
         let result!: AgentResult
         let turnIn = 0 // total incl. cache → billing
         let turnContext = 0 // last turn's context size → display (overwrite)
+        let turnCacheRead = 0 // last turn's cache-read share → display (overwrite)
         let turnOut = 0
         for (;;) {
           const { value, done } = await gen.next()
@@ -177,6 +179,7 @@ export async function runCollabSession(
           if (value.type === 'assistant') {
             turnIn += promptTokensFromUsage(value.usage) // total incl. cache → billing
             turnContext = promptTokensFromUsage(value.usage) // current context size (last turn's prompt) — overwrite
+            turnCacheRead = value.usage.cacheReadTokens ?? 0 // cache-read share of last turn — overwrite
             turnOut += value.usage.outTokens
             for (const b of value.message.content) {
               if (isContentBlock(b) && b.type === 'tool_use') {
@@ -195,6 +198,7 @@ export async function runCollabSession(
         }
         inTokensByRole.set(x.roleId, (inTokensByRole.get(x.roleId) ?? 0) + turnIn)
         contextByRole.set(x.roleId, turnContext) // overwrite with this run's last context size (not accumulated)
+        cacheReadByRole.set(x.roleId, turnCacheRead) // overwrite with this run's last cache-read share
         outTokensByRole.set(x.roleId, (outTokensByRole.get(x.roleId) ?? 0) + turnOut)
         return result.messages
       },
@@ -209,7 +213,7 @@ export async function runCollabSession(
   try {
     const texts = await new CollabSession(specs, onEvent, nowMs).run(signal)
     return new Map(
-      [...texts].map(([roleId, text]): [string, { text: string; inTokens: number; contextTokens: number; outTokens: number }] => [roleId, { text, inTokens: inTokensByRole.get(roleId) ?? 0, contextTokens: contextByRole.get(roleId) ?? 0, outTokens: outTokensByRole.get(roleId) ?? 0 }])
+      [...texts].map(([roleId, text]): [string, { text: string; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number }] => [roleId, { text, inTokens: inTokensByRole.get(roleId) ?? 0, contextTokens: contextByRole.get(roleId) ?? 0, cacheReadTokens: cacheReadByRole.get(roleId) ?? 0, outTokens: outTokensByRole.get(roleId) ?? 0 }])
     )
   } finally {
     hooks.onServices?.([])

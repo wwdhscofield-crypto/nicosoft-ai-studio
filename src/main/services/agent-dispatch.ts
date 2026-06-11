@@ -101,7 +101,7 @@ export async function runAgentLoop(
   loop: AgentLoopInput,
   cb: AgentCallbacks,
   signal: AbortSignal,
-): Promise<{ text: string; inTokens: number; contextTokens: number; outTokens: number; reason: string; turns: number; attachments: MessageAttachmentDto[] }> {
+): Promise<{ text: string; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number; reason: string; turns: number; attachments: MessageAttachmentDto[] }> {
   const sessionDir = join(dataDir(), 'sessions', loop.convId)
   await mkdir(join(sessionDir, 'tool-results'), { recursive: true })
   const transcript = createWriteStream(join(sessionDir, 'transcript.jsonl'), { flags: 'a' })
@@ -162,6 +162,7 @@ export async function runAgentLoop(
   let result!: AgentResult
   let inTokens = 0 // TOTAL prompt tokens incl. cache, accumulated across turns → billing (usage_events)
   let lastContext = 0 // current context size = LAST turn's prompt (display ↑). OVERWRITE, never accumulate — accumulating ANY per-turn input (fresh/non-cached/total) re-counts history N× and balloons on long runs (engineer hit 5.3M). = codex last_token_usage.
+  let lastCacheRead = 0 // cache-read share of the LAST turn's prompt (display "(+N cached)"). OVERWRITE alongside lastContext so fresh = lastContext − lastCacheRead pairs with the same turn.
   let outTokens = 0
   const toolImages: MessageAttachmentDto[] = [] // images any tool produced this run → assistant-message attachments
   const toolNames = new Map<string, string>() // tool_use id → name, to pair tool:post with its tool
@@ -183,6 +184,7 @@ export async function runAgentLoop(
       if (value.type === 'assistant') {
         inTokens += promptTokensFromUsage(value.usage) // total incl. cache → billing
         lastContext = promptTokensFromUsage(value.usage) // current context size = this (latest) turn's full prompt incl. cache. OVERWRITE: the last turn's prompt IS the conversation context — cache- AND length-invariant.
+        lastCacheRead = value.usage.cacheReadTokens ?? 0 // cache-read share of THIS turn's prompt, paired with lastContext
         outTokens += value.usage.outTokens
         cb.onUsage?.(promptTokensFromUsage(value.usage)) // live ↑ readout: this turn's prompt size (current context, last)
         for (const b of value.message.content) {
@@ -244,6 +246,7 @@ export async function runAgentLoop(
       turns: result.turns,
       inTokens,
       contextTokens: lastContext,
+      cacheReadTokens: lastCacheRead,
       outTokens,
       toolCalls,
       compactions: result.compactions,
@@ -254,6 +257,7 @@ export async function runAgentLoop(
     text: finalAssistantText(result.messages),
     inTokens,
     contextTokens: lastContext,
+    cacheReadTokens: lastCacheRead,
     outTokens,
     reason: result.reason,
     turns: result.turns,
@@ -312,7 +316,7 @@ export async function runDispatchedAgent(
   d: DispatchedAgentInput,
   cb: AgentCallbacks,
   signal: AbortSignal,
-): Promise<{ text: string; inTokens: number; contextTokens: number; outTokens: number; attachments: MessageAttachmentDto[] }> {
+): Promise<{ text: string; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number; attachments: MessageAttachmentDto[] }> {
   let tools: Tool[]
   if (d.toolNames) {
     // Fixed-kit dispatch (Gate B verifier): an explicit whitelist instead of the role's default kit — a
@@ -382,7 +386,7 @@ export async function runDispatchedAgent(
     cb,
     signal,
   )
-  return { text: res.text, inTokens: res.inTokens, contextTokens: res.contextTokens, outTokens: res.outTokens, attachments: res.attachments }
+  return { text: res.text, inTokens: res.inTokens, contextTokens: res.contextTokens, cacheReadTokens: res.cacheReadTokens, outTokens: res.outTokens, attachments: res.attachments }
 }
 
 // Persisted conversation messages → agent seed. Assistant turns are prior runs' FINAL replies (plain

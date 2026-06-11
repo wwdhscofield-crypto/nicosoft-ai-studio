@@ -42,6 +42,7 @@ function toMsgDto(r: convRepo.MessageRow): MessageDto {
     attachments: (r.attachments as MessageAttachmentDto[]) ?? [],
     runId: r.runId,
     inputTokens: r.inTokens,
+    cacheReadTokens: r.cacheReadTokens,
     outputTokens: r.outTokens,
     dispatch: r.dispatch,
     createdAt: r.createdAt
@@ -75,6 +76,7 @@ export function append(convId: string, input: MessageAppendDto): MessageDto {
     attachments,
     runId: input.runId,
     inTokens: input.inputTokens,
+    cacheReadTokens: input.cacheReadTokens,
     outTokens: input.outputTokens,
     dispatch: input.dispatch
   })
