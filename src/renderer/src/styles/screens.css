@@ -242,7 +242,10 @@
 .cmd-desc { color: var(--text-3); font-size: 12px; }
 
 /* top toolbar */
-.cmp-toolbar { display: flex; align-items: center; gap: 10px; padding: 9px 11px 4px; }
+/* flex-wrap: at narrow widths (small window + open drawer) the pickers + meter exceed the row —
+   without wrap the overflow is silently clipped (mode picker cut in half, the "/ window" meter gone).
+   Wrapping drops the meter to a second row instead; row-gap stays tight so the dock barely grows. */
+.cmp-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 9px 11px 4px; }
 .cmp-model {
   display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px; border-radius: 6px;
   background: var(--bg-3); border: 1px solid var(--border-1); cursor: pointer; color: var(--text-3); position: relative;

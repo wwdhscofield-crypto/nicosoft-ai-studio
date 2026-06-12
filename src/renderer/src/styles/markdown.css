@@ -1,7 +1,10 @@
 /* ============================================================
    Markdown rendering (assistant messages) — react-markdown + Shiki code blocks
    ============================================================ */
-.md { font-size: 14px; line-height: 1.62; color: var(--text-2); }
+/* overflow-wrap anywhere: an unbreakable token (long URL, hash, WWWW…) otherwise widens the inline
+   box past the window and the overflow is silently clipped — the content becomes unreadable with no
+   scroll. Code blocks keep their own horizontal scroll (pre > code is not affected by overflow-wrap). */
+.md { font-size: 14px; line-height: 1.62; color: var(--text-2); overflow-wrap: anywhere; }
 .md > *:first-child { margin-top: 0; }
 .md > *:last-child { margin-bottom: 0; }
 .md p { margin: 0 0 10px; }
