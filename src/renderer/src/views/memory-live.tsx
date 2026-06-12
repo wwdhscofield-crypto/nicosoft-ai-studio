@@ -130,6 +130,19 @@ const REPULSE_CUT2 = 144 // repulsion cutoff distance², keeps the O(n²) loop c
 const DAMP_PER_S = 0.002 // velocity retained after 1s — strong damping, settles into drift
 const VEL_MAX = 24
 
+// ---- stage growth ----
+// The core GROWS with the memory pool — knowledge volume ∝ count, radius ∝ ∛, so it reads as a brain
+// filling out rather than a fixed sphere getting denser: a near-empty pool starts just above the demo
+// replica (~0.67), GROWTH_REF memories reach the original full size (1.0), and MAX_POOL (~200, the
+// prune cap) lands around 1.22 — GROWTH_MAX only guards the frame, the fixed camera never clips.
+// Computed once per open; in-session growth is a rare event not worth live geometry rebuilds.
+const GROWTH_REF = 60 // memory count that renders at the original full stage size
+const GROWTH_MIN = 0.55
+const GROWTH_MAX = 1.35
+function stageScaleForCount(n: number): number {
+  return Math.min(GROWTH_MAX, Math.max(GROWTH_MIN, GROWTH_MIN + 0.45 * Math.cbrt(n / GROWTH_REF)))
+}
+
 // ---- demo cloud (empty state) ----
 // With zero memories the view must still feel alive: a synthetic core runs through the exact
 // same pipeline (buildEdges → physics → pulses), only scaled down, with hover/click disabled.
@@ -583,7 +596,7 @@ export function MemoryLive({ onClose }: { onClose: () => void }): ReactElement {
     // alive. Hover/click are disabled in demo mode; stats stay hidden (the counts would be fake).
     const isDemo = memories.length === 0
     const data = isDemo ? buildDemoMemories() : memories
-    const S = isDemo ? DEMO_SCALE : 1 // uniform stage scale: layout, node size, breathing, pulses
+    const S = isDemo ? DEMO_SCALE : stageScaleForCount(memories.length) // uniform stage scale: layout, node size, breathing, pulses — grows with the pool
 
     let renderer: THREE.WebGLRenderer
     try {
