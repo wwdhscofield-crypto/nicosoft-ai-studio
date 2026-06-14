@@ -157,13 +157,15 @@ export function parseRouteDecision(raw: string, enabled: readonly string[]): Rou
 // this the verifier re-derives "what correct means" from the raw task every time — which is where
 // verification goes soft on tasks without an obvious test oracle (it re-reads the code and nods).
 // Best-effort: any failure returns [] and the gate runs exactly as before.
-const ACCEPTANCE_INSTRUCTION = `Given a coding task, write the MACHINE-CHECKABLE acceptance criteria an independent verifier will run against the finished change. Return a JSON array of 2-4 strings. Each: one concrete check — a command and what it must show, a behavior that must be observable, or an error that must no longer occur. Rules:
+const ACCEPTANCE_INSTRUCTION = `Given a coding task, write the MACHINE-CHECKABLE acceptance criteria an independent verifier will run against the finished change. Return a JSON array of strings — as many as the task's scope needs (one or more). Each: one concrete check — a command and what it must show, a behavior that must be observable, or an error that must no longer occur. Rules:
 - Only criteria checkable from the repository (commands, file contents, observable behavior) — never vague qualities ("clean code", "good UX").
 - Include the project's own checks (build / type check / tests) when relevant.
 - Prefer criteria that PROVE the main path executed — not just "no errors appear".
+- If the task names MULTIPLE modules / components to build, emit at least one dedicated criterion PER named module (e.g. "the order state machine has unit tests" AND "webhook signing has unit tests") — treat the enumeration as CONJUNCTIVE; never cover only some of the named modules.
 - Output ONLY the JSON array — no preamble, no markdown fence.`
 
-const CRITERION_MAX_CHARS = 240
+const CRITERION_MAX_CHARS = 320
+const MAX_CRITERIA = 24 // was 4 — per-named-module conjunctive criteria must scale with module count (e.g. nspay 18 modules)
 
 export async function deriveAcceptanceCriteria(task: string, signal?: AbortSignal): Promise<string[]> {
   const binding = rolesService.getBinding('coordinator')
@@ -174,17 +176,17 @@ export async function deriveAcceptanceCriteria(task: string, signal?: AbortSigna
   if (!apiKey) return []
   try {
     const text = await chatOnce(ep, apiKey, binding.model, [
-      { role: 'user', content: `${ACCEPTANCE_INSTRUCTION}\n\nTask:\n${task.slice(0, 3000)}` }
+      { role: 'user', content: `${ACCEPTANCE_INSTRUCTION}\n\nTask:\n${task.slice(0, 8000)}` }
     ], { signal })
     const start = text.indexOf('[')
     const end = text.lastIndexOf(']')
-    if (start < 0 || end <= start) return []
+    if (start < 0 || end <= start) { console.warn('[coordinator] acceptance-criteria: model returned no JSON array — gate runs without criteria'); return [] }
     const arr = JSON.parse(text.slice(start, end + 1)) as unknown
-    if (!Array.isArray(arr)) return []
+    if (!Array.isArray(arr)) { console.warn('[coordinator] acceptance-criteria: parsed value is not an array — gate runs without criteria'); return [] }
     const out = arr
       .filter((c): c is string => typeof c === 'string' && !!c.trim())
       .map((c) => c.trim().slice(0, CRITERION_MAX_CHARS))
-      .slice(0, 4)
+      .slice(0, MAX_CRITERIA)
     if (out.length) console.log(`[coordinator] acceptance criteria derived (${out.length}): ${out.join(' | ').slice(0, 300)}`)
     return out
   } catch (e) {
