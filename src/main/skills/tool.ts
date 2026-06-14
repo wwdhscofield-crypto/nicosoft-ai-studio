@@ -74,5 +74,9 @@ How to invoke:
 - skill: the skill name from the listing (e.g. "code-review")
 - args: optional arguments to pass along
 
+When a loaded skill references its own scripts, templates, assets, or examples, prefer those over
+recreating the workflow from memory. If no listed skill matches the request, just proceed normally — do
+not load an unrelated skill to satisfy a rule.
+
 Do not call a skill that isn't in the listing, and never claim to use a skill without actually calling
 this tool.`

@@ -183,6 +183,7 @@ const DESCRIPTION = `- Fetches a URL and extracts information from it using a sm
 - Fetches the page, converts HTML to markdown, runs the prompt over the content, returns the answer.
 - HTTP URLs are upgraded to HTTPS. This tool is read-only and modifies nothing.
 - When a URL redirects to a different host, the tool reports the redirect URL; re-issue WebFetch with that URL.
+- When the user gives a specific URL, fetch it here directly before falling back to a general web search or answering from memory.
 - For GitHub URLs, prefer the gh CLI via Bash (gh pr view / gh issue view / gh api) when you can.`
 
 export const webFetchTool = buildTool<typeof inputSchema, WebFetchOutput>({

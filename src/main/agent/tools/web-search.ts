@@ -136,7 +136,9 @@ async function delegatedSearchGemini(
 const DESCRIPTION = `- Searches the web for current information and returns matching result links (title + URL).
 - Input: a search query, optionally scoped with allowed_domains or blocked_domains.
 - Read-only. After using results, cite the source URLs in your answer.
-- To fetch and read a specific page's full content, use WebFetch instead.`
+- To fetch and read a specific page's full content, use WebFetch instead.
+- Search for things that genuinely change — prices, policies, versions, schedules, who-holds-what-role, recent events — NOT for stable facts or facts that live in the user's own files/project (read those instead).
+- For the user's PRIVATE workspace data (their repos, issues, calendar, email, docs, analytics), prefer a connected / MCP tool over web search. If that connector isn't available, say what access is missing — do not substitute public web results for the user's private data.`
 
 export const webSearchTool = buildTool<typeof inputSchema, WebSearchOutput>({
   name: 'WebSearch',
