@@ -31,7 +31,7 @@
 | 假阳性(无雷不乱报) | ✗ 缺 | — |
 | thrash 收敛实证 | ✗ 缺 | — |
 | 内化闭环·召回格(collab 被召回+注入 LLM) | ✓ 确定性 | 轮 D:三重证据(memory:recalled + llm-wire system 字段 + touchRecalled) |
-| 内化闭环·产生格(失败→collab 教训) | ✓ **大项目点亮 ×2(已复现)** | nspay 首跑 + measure 重跑两次独立大项目均 Gate B FAIL→fixed → 各 2 collab lesson(C5 等小 case 未触发,**项目规模**两次都触发) |
+| 内化闭环·产生格(失败→collab 教训) | ✓ **冻结 N=2(已结论)** | nspay 首跑 + measure 重跑两次独立大项目均 Gate B FAIL→fixed → 各 2 collab lesson(全落在测试质量维度,C5 等小 case 未触发、**项目规模**两次都触发)→ 产生闭环已确立可复现,**冻结不再测**(详见 [benchmark.md](benchmark.md) C 格结论) |
 | 内化闭环·归因格(召回生效避坑) | ○ 受阻(有证据) | 轮 E:p0=0——强 agent 在自己领域、面对自己 lesson 主题,零 lesson 也教科书级正确(抽纯核 `CanTransition` + 两模块都测/54 测)→ 归因无可测信号,强-agent 墙结构性阻挡 |
 
 ## 缺口 → 还需的测试
@@ -43,7 +43,7 @@
 2. **诚实失败(命门)**:只测了顺风局(真任务 + agent 真做到)→ 给**注定失败 / 做不到**的任务,验 agent **诚实认输,不 fabricate "全绿"**。自检的全部价值前提是"报告 = 实际",这条一次都没压过
 3. **假阳性**:没测"无雷时不乱报" → 给**本来就对、不该改**的任务,验不幻觉问题、不乱改、不假报发现 bug
 4. **thrash 收敛**:guard 存在但实战未触发(轮 C thrash=0)→ 给**反复失败**任务,验 N 次后 bounded steer→stop(不无限烧 token)
-5. **内化闭环**:lesson 机制在,"失败→存教训→复用"。拆成 5 格(A 共享 / B recall 管道 / C 失败产 collab / D collab 被召回 / E 召回生效避坑)→ **轮 D 确定性点亮召回格 D** + **nspay 大项目实战点亮产生格 C、且 measure 重跑复现(N=2)**(两次独立大项目各 Gate B FAIL→fixed → 各 2 collab lesson;C5 小 case 未触发、项目规模两次都触发,突破点是测试完整性而非架构);**轮 E 实测归因格受阻(有证据)**:用 nspay 自己的 2 条 lesson + 同领域两模块载体跑无-lesson 臂,p0=0(强 agent 零 lesson 也抽纯核 + 两模块都测)→ 没有"被 lesson 纠正"的错误可言;E 与"C 仅项目规模点亮"是同一堵强-agent 墙——归因需强 agent 先犯错,而它只在 ≈27h 不可行的项目规模才犯
+5. **内化闭环**:lesson 机制在,"失败→存教训→复用"。拆成 5 格(A 共享 / B recall 管道 / C 失败产 collab / D collab 被召回 / E 召回生效避坑)→ **轮 D 确定性点亮召回格 D** + **产生格 C 冻结于 N=2(已结论,不再测)**——两次独立大项目各 Gate B FAIL→fixed → 各 2 collab lesson(全落测试质量维度;C5 小 case 未触发、项目规模两次都触发,突破点是测试完整性而非架构),一致的机制 + 一致的失败域 = 产生闭环确立可复现;**轮 E 实测归因格受阻(有证据)**:用 nspay 自己的 2 条 lesson + 同领域两模块载体跑无-lesson 臂,p0=0(强 agent 零 lesson 也抽纯核 + 两模块都测)→ 没有"被 lesson 纠正"的错误可言;E 与"C 仅项目规模点亮"是同一堵强-agent 墙——归因需强 agent 先犯错,而它只在 ≈27h 不可行的项目规模才犯
 
 > **#2 / #3 是核心空白** —— L4 的"诚实率"和"对抗性"恰恰考**失败时诚实**和**无雷不乱报**,而目前所有轮次都是顺风局。
 

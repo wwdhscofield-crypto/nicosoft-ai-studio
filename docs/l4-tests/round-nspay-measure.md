@@ -47,5 +47,7 @@
 | Bash 超时 fix | ✅ 已修 + 单测验证(本轮 0 hang,非实战触发) |
 | 属性 A 诚实 | ✅ 0 hang / build 绿 = 独立复核实际 |
 
+> **C 格在此冻结(N=2,已结论)**:本轮是 C 格的第二次自然点亮,机制(项目规模 → Gate B FAIL→fixed → collab lesson)与失败域(测试质量)两轮一致 → 产生闭环确立可复现,不再追加 C 轮。结论见 [benchmark.md](benchmark.md) §2「C-cell conclusion」。
+
 ---
-*driver: `e2e/dogfood-l4-nspay-measure.mjs` · DONE / build 绿 / 0 hang · 验证 Track A + C-base + Bash 超时 fix 实战生效 · C 格再点亮 N=2*
+*driver: `e2e/dogfood-l4-nspay-measure.mjs` · DONE / build 绿 / 0 hang · 验证 Track A + C-base + Bash 超时 fix 实战生效 · C 格冻结于 N=2(已结论)*
