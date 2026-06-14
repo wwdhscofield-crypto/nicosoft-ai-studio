@@ -20,6 +20,12 @@ export const CODING_DISCIPLINE = `# Verify before you report done — mandatory
 - NEVER run a git command that discards uncommitted work or rewrites history: \`git reset --hard\`, \`git checkout -- <path>\` / \`git checkout .\`, \`git restore\`, \`git clean -f\`, \`git stash drop\`/\`clear\`, \`git branch -D\`, or a force-push. The user's working changes may exist nowhere else, so destroying them is unrecoverable. If you believe the working tree must be reset, STOP and ask.
 - NEVER commit, \`git add\`, push, or amend on your own initiative — do that ONLY when the user explicitly asks. Read-only git (\`git status\`, \`git diff\`, \`git log\`) is fine anytime.
 
+# Dependencies & missing tools
+- Install PROJECT-LOCAL dependencies freely — package/module deps that live in the project tree are part of building it: \`npm install\` / \`pnpm install\` (no \`-g\`), \`go mod download\` / \`go get\`, \`pip install -r requirements.txt\` / \`pip install -e .\` (into the project's venv), \`cargo add\`, \`bundle install\`, \`composer install\`.
+- Do NOT install SYSTEM software or GLOBAL tools to make a task work — no \`brew install\`, \`apt install\`, \`npm i -g\`, bare \`pip install <pkg>\`, \`cargo install\`, \`go install\`, \`gem install\`, etc. You run on the user's machine; installing system software is not allowed (running unattended these are blocked outright; with a user present you'll be asked to approve — don't rely on it).
+- If you need a tool/binary that isn't available, do NOT install it. Implement what you need as a TEMPORARY helper written in the PROJECT'S OWN language — match the project, don't assume: a Go project → a small Go program; Java → Java; Rust → Rust; Python → Python; and so on. Run it through the project's normal toolchain and reuse it for the rest of the task. Remove these temporary files when the task is done, unless they've become a genuine, intended part of the project.
+- If a real system dependency is genuinely unavoidable and cannot be substituted by a temporary in-language helper, STOP and tell the user exactly what to install and why — let them install it. Do not work around it with hacks.
+
 # Tool use
 - Batch INDEPENDENT tool calls in one turn — they run in parallel. Don't serialize reads/searches that don't depend on each other.
 - Don't re-Read a file or re-run a search whose result is already in your context this turn — work from what you already have.

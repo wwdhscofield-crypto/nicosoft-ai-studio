@@ -11,7 +11,7 @@
 // paths to cwd (confineReal throws on escape before this is ever consulted); Bash is the real surface since
 // its command string isn't path-confined, so it gets the most scrutiny.
 
-import { isReadOnlyCommand } from './tools/bash-classifier'
+import { isReadOnlyCommand, isSystemSoftwareInstall } from './tools/bash-classifier'
 
 export type ApprovalZone = 'green' | 'yellow' | 'red'
 
@@ -79,6 +79,11 @@ function classifyBashCommand(command: string): ApprovalVerdict {
   if (OUT_OF_CWD_WRITE.test(command)) return { zone: 'red', reason: 'write to a system path outside the project' }
   if (PERM_TAMPER.test(command)) return { zone: 'red', reason: 'permission/ownership tampering' }
   if (DESTRUCTIVE_GIT.test(command)) return { zone: 'red', reason: 'destructive git — discards uncommitted work / rewrites history' }
+  // System-software / global-tool install — must not run unattended (it mutates the user's machine outside
+  // the project). Red → hard-deny + surface for the user to approve; the agent is steered (CODING_DISCIPLINE)
+  // to a temporary in-language helper instead. Project-LOCAL dep installs (npm i, go mod, pip -r) are NOT
+  // matched and stay yellow (auto + logged).
+  if (isSystemSoftwareInstall(command)) return { zone: 'red', reason: 'system-software / global-tool install — must not run unattended' }
   // Read-only check last: a dangerous flag wouldn't be read-only anyway, but this keeps the green path tight.
   if (isReadOnlyCommand(command)) return { zone: 'green', reason: 'read-only command' }
   return { zone: 'yellow', reason: 'in-cwd mutating command' }

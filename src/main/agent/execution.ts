@@ -7,9 +7,29 @@ import type { ZodError } from 'zod'
 import type { AgentContext } from './context'
 import { findTool, type Tool } from './tool'
 import { persistLargeResult } from './tool-result-storage'
+import { isSystemSoftwareInstall } from './tools/bash-classifier'
 import type { ToolResultBlock, ToolUseBlock } from './types'
 
 const MAX_CONCURRENCY = 10
+
+// Returned to the agent when bypass blocks a system-software install. Bypass auto-runs everything else, but
+// it must never SILENTLY install software on the user's machine — the agent is steered to a temporary
+// in-language helper instead, or to surfacing a genuine system dependency to the user.
+const BYPASS_INSTALL_DENIED =
+  'Blocked: installing system software / global tools is not allowed (you are running unattended on the ' +
+  "user's machine). Project-LOCAL dependency installs are fine (e.g. npm install, go mod download/go get, " +
+  'pip install -r requirements.txt, cargo add) — only system/global installs (brew/apt/-g/bare pip/cargo ' +
+  'install/go install/…) are blocked. If you need a tool that is missing, do NOT install it: implement a ' +
+  "TEMPORARY helper in the PROJECT'S OWN language (match the project — a Go project → Go, Java → Java, " +
+  'Rust → Rust, Python → Python, …), run it via the project toolchain, reuse it for the task, and remove ' +
+  'it when done. If a real system dependency is genuinely unavoidable, STOP and tell the user exactly what ' +
+  'to install and why — let them install it.'
+
+// Pull a Bash tool_use's command string for the install check (best-effort; non-string → '').
+function bashCommandOf(input: Record<string, unknown>): string {
+  const c = input.command
+  return typeof c === 'string' ? c : ''
+}
 
 // Errors never go through a tool's mapResult — the engine builds the is_error block directly.
 function errorResult(toolUseId: string, message: string): ToolResultBlock {
@@ -32,9 +52,18 @@ async function checkPermission(
   input: Record<string, unknown>,
   ctx: AgentContext,
 ): Promise<{ allow: boolean; message?: string; updatedInput?: Record<string, unknown> }> {
-  // ExitPlanMode is the coordinator autonomy Gate A boundary. Even when the dispatched
-  // expert runs with bypass approvals, bypass must not directly approve its plan; route
-  // the submission through requestPermission so Danny/coordinator can independently review it.
+  // Bypass auto-approves every tool EXCEPT two carve-outs:
+  //   • A system-software install — bypass runs unattended, so it must never SILENTLY install software on
+  //     the user's machine (brew/apt/-g/bare pip/cargo install/…). Deny it with guidance so the agent
+  //     implements a temporary in-language helper or surfaces a real system dependency to the user.
+  //     Project-LOCAL dependency installs (npm i, go mod, pip -r) are NOT caught — they only touch the
+  //     project tree. Checked before the blanket allow so the carve-out also applies under bypass.
+  //   • ExitPlanMode — the coordinator autonomy Gate A boundary. Even when the dispatched expert runs with
+  //     bypass approvals, bypass must not directly approve its plan; route it through requestPermission so
+  //     Danny/coordinator can independently review it.
+  if (ctx.permissionMode === 'bypass' && tool.name === 'Bash' && isSystemSoftwareInstall(bashCommandOf(input))) {
+    return { allow: false, message: BYPASS_INSTALL_DENIED }
+  }
   if (ctx.permissionMode === 'bypass' && tool.name !== 'ExitPlanMode') return { allow: true }
   if (ctx.permissionMode === 'plan' && !tool.isReadOnly(input) && tool.name !== 'ExitPlanMode') {
     return { allow: false, message: 'In plan mode — mutations are not allowed. Present a plan instead.' }
