@@ -9,7 +9,7 @@
 // from pasted text. Flynn's AGENT prompt (../system-prompt.ts) is used when the user talks to Flynn
 // directly from the sidebar — full tool access on the project directory.
 
-import { COMMON_PREAMBLE } from './common-preamble'
+import { COMMON_PREAMBLE, CHAT_MODE_NOTE } from './common-preamble'
 
 // Display names live in @shared/roles (single source with the renderer's expert roster) — re-exported here
 // so the rest of main keeps importing them from the prompts module they conceptually belong to.
@@ -55,6 +55,8 @@ Rules:
 - Use ONLY the names listed above, exact spelling.`
 
 export const COORDINATOR_PLAN_REVIEW_PROMPT = `${COMMON_PREAMBLE}
+
+${CHAT_MODE_NOTE}
 
 You are Danny performing plan confirmation. You are NOT the plan author.
 
@@ -104,6 +106,8 @@ The classifier reads ONLY the final VERDICT: line; verdict words inside your evi
 
 export const COORDINATOR_SYNTHESIS_PROMPT = `${COMMON_PREAMBLE}
 
+${CHAT_MODE_NOTE}
+
 You are Danny, coordinating multiple experts. You are now SYNTHESIZING the pipeline you just ran.
 
 Produce ONE coherent reply in the user's language:
@@ -126,6 +130,8 @@ export const COORDINATOR_DIRECT_PROMPT = `You are Danny, the coordinator of Nico
 // B1: Danny synthesizes a PARALLEL panel — N experts who each answered the same question independently.
 // Distinct from pipeline synthesis (serial hand-off merge): here the value is comparing perspectives.
 export const COORDINATOR_PARALLEL_SYNTHESIS_PROMPT = `${COMMON_PREAMBLE}
+
+${CHAT_MODE_NOTE}
 
 You are Danny, coordinating a panel of experts who each answered the SAME question INDEPENDENTLY — perspectives to compare, not a pipeline to merge. Synthesize for the user:
 
@@ -150,6 +156,8 @@ Bias toward "converge" once positions stop moving — endless debate wastes the 
 // B2: Danny closes out a multi-round debate with a final verdict (distinct from parallel synthesis — here
 // the experts challenged each other, so the story is how the disagreement resolved).
 export const COORDINATOR_COUNCIL_SYNTHESIS_PROMPT = `${COMMON_PREAMBLE}
+
+${CHAT_MODE_NOTE}
 
 You are Danny, closing out a panel of experts who DEBATED a question over multiple rounds — challenging each other and refining their positions. Write the final answer for the user:
 
@@ -300,9 +308,12 @@ export type DispatchableRoleId = (typeof DISPATCHABLE_ROLE_IDS)[number]
 // unknown role id (the caller decides whether to fall back or 404). Danny router/synthesis are NOT
 // returned here — they're separate exports because their lifecycle and content differ from a normal
 // dispatched expert (router skips the preamble; synthesis only runs after a pipeline).
-export function buildRolePrompt(roleId: string): string | null {
+export function buildRolePrompt(roleId: string, opts?: { toolless?: boolean }): string | null {
   const section = ROLE_SECTIONS[roleId]
   if (!section) return null
-  return `${COMMON_PREAMBLE}\n\n${section}`
+  // Tool-less by default (coordinator chat-mode dispatch / synthesis). The agent-loop caller passes
+  // toolless:false so the "no tools to call" note isn't prepended to a role that actually has tools.
+  const chatNote = opts?.toolless === false ? '' : `${CHAT_MODE_NOTE}\n\n`
+  return `${COMMON_PREAMBLE}\n\n${chatNote}${section}`
 }
 

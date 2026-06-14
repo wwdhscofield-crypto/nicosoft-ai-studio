@@ -80,7 +80,9 @@ export function buildAgentSystem(
   skillListing: string,
   cwd?: string,
 ): string {
-  const base = DEV_ROLES.has(roleId) ? DEV_PROMPT[roleId] : (buildRolePrompt(roleId) ?? ENGINEER_SYSTEM_PROMPT)
+  // toolless:false — this is the agent-loop path (the role really has a tool kit), so buildRolePrompt must
+  // NOT prepend the "no tools to call" chat-mode note. TOOL_AWARENESS below tells non-dev roles they can act.
+  const base = DEV_ROLES.has(roleId) ? DEV_PROMPT[roleId] : (buildRolePrompt(roleId, { toolless: false }) ?? ENGINEER_SYSTEM_PROMPT)
   // Verify-before-done + stay-in-scope discipline applies to EVERY tool-wielding expert, not just the dev
   // roles — a non-dev expert (e.g. the translator editing source files) must verify + stay in scope too.
   const parts = [PLAN_FIRST, base, CODING_DISCIPLINE]
