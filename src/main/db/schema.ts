@@ -275,6 +275,9 @@ CREATE TABLE IF NOT EXISTS gate_outcomes (
   outcome     TEXT NOT NULL,                      -- B: pass|fixed|false-positive|unresolved|unverified  C: PASS|FAIL|BLOCKED|SKIP
   rounds      INTEGER NOT NULL DEFAULT 1,         -- verifier passes run (B) / e2e rounds (C)
   evidence    TEXT NOT NULL DEFAULT '',           -- verdict tail, truncated — enough to recognize the case
+  row_kind    TEXT NOT NULL DEFAULT 'floor',      -- multi-lens Gate B (gate-b-multilens §6): 'floor' (single verifier, existing behavior) | 'aggregate' (worst-of fold) | 'lens' (per-dimension)
+  step_id     TEXT,                               -- one ulid per gated step; links a floor/aggregate row to its lens rows
+  lens        TEXT,                               -- LensDimension key for row_kind='lens'; NULL otherwise
   created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_gate_outcomes_created ON gate_outcomes (created_at);

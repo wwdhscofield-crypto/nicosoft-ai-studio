@@ -11,6 +11,7 @@ import { COORDINATOR_VERIFIER_PROMPT, displayName } from '../agent/roles/prompts
 import { deriveAcceptanceCriteria, route } from './coordinator-route'
 import { describeSnapshot, snapshotWorkspace } from './git-snapshot'
 import { runRoleStep, type RunStepOptions } from './coordinator-step'
+import { ulid } from '../db/id'
 
 // How the gated step ended. 'pass' = verifier approved the implementer's change directly. 'fixed' =
 // verifier FAILed, the fail handler claimed a fix AND a re-verification confirmed it. 'false-positive' =
@@ -28,6 +29,9 @@ export type GatedStepResult = Awaited<ReturnType<typeof runRoleStep>> & { gateOu
 export async function runGatedRoleStep(roleId: string, prompt: string, opts: RunStepOptions, gate: { enabled: boolean; originalPrompt: string; approvedPlan?: string; acceptance?: string[] }, signal?: AbortSignal): Promise<GatedStepResult> {
   if (!gate.enabled) return runRoleStep({ ...opts, roleId, prompt, signal: signal ?? opts.signal })
 
+  // One ulid per gated step — links this step's floor row (and, post-M3/M4, its lens/aggregate rows) in
+  // gate_outcomes (gate-b-multilens §6). M1: only the floor row is written, tagged rowKind='floor'.
+  const stepId = ulid()
   // Acceptance criteria, derived ONCE here and handed verbatim to implementer + verifier + fail handler
   // (one source of "what correct means" for the whole gated step). Empty on any failure → the gate runs
   // exactly as before. Outcome recording (gate_outcomes) is equally best-effort: stats must never be
@@ -38,7 +42,7 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
     : ''
   const recordOutcome = (outcome: string, rounds: number, evidence: string): void => {
     try {
-      gateOutcomeRepo.record({ convId: opts.convId, gate: 'B', roleId, outcome, rounds, evidence })
+      gateOutcomeRepo.record({ convId: opts.convId, gate: 'B', roleId, outcome, rounds, evidence, rowKind: 'floor', stepId })
     } catch (e) {
       console.warn('[coordinator] gate outcome record failed:', e instanceof Error ? e.message : e)
     }
