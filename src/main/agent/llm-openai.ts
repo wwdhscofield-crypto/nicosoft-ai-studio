@@ -163,9 +163,11 @@ export async function* callWithToolsOpenAI(
       signal: guard.signal,
     })
     for await (const payload of iterSSE(reader)) {
-      guard.reset()
       const ev = parseJSON(payload) as RespEvent | null
       if (!ev || typeof ev.type !== 'string') continue
+      // Reset only on a VALID protocol event — malformed/keepalive data frames are not signs of life
+      // (an enveloped-but-empty stream hung the loop forever; see the Anthropic path in llm.ts).
+      guard.reset()
       switch (ev.type) {
         case 'response.output_item.added': {
           const it = ev.item

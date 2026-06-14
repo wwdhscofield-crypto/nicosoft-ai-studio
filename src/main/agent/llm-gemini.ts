@@ -157,9 +157,11 @@ export async function* callWithToolsGemini(
       signal: guard.signal,
     })
     for await (const payload of iterSSE(reader)) {
-      guard.reset()
       const chunk = parseJSON(payload) as GeminiChunk | null
       if (!chunk) continue
+      // Reset only on a VALID parsed chunk — malformed/keepalive frames are not signs of life
+      // (an enveloped-but-empty stream hung the loop forever; see the Anthropic path in llm.ts).
+      guard.reset()
       for (const c of chunk.candidates ?? []) {
         for (const p of c.content?.parts ?? []) {
           if (typeof p.text === 'string' && p.text.length > 0) {

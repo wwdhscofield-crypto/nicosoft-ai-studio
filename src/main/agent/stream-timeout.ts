@@ -41,3 +41,33 @@ export function streamIdleGuard(runSignal: AbortSignal | undefined, idleMs: numb
   }
   return { signal: ctrl.signal, reset, dispose }
 }
+
+// A stream that opens, emits message_start, then NEVER produces a content block (only periodic ping
+// keepalives) is a silent-failure envelope — the routed upstream returned an enveloped-but-empty stream
+// (the Studio-side mirror of nsai's stream silent-failure / 0cd5dac2). The idle guard CANNOT catch this:
+// pings reset it, and they MUST (or a slow-first-block / long-thinking response that only keepalive-pings
+// for >idleMs gets killed mid-flight — dogfood 2026-06-13). So a SEPARATE, longer one-shot deadline fires
+// only if NO real content block ever arrives. markProductive() on the first content block disarms it
+// permanently — a live stream, however slow its first block, is never killed.
+export const LLM_EMPTY_ENVELOPE_MS = 300_000
+
+export interface EnvelopeGuard {
+  signal: AbortSignal
+  markProductive: () => void
+  dispose: () => void
+}
+
+export function streamEnvelopeGuard(emptyMs: number): EnvelopeGuard {
+  const ctrl = new AbortController()
+  let productive = false
+  const timer = setTimeout(() => {
+    if (productive) return
+    console.warn(`[agent] llm stream: no content block in ${emptyMs}ms — aborting empty envelope (silent failure)`)
+    ctrl.abort(new Error(`LLM stream produced no content in ${emptyMs}ms — aborting empty envelope`))
+  }, emptyMs)
+  return {
+    signal: ctrl.signal,
+    markProductive: (): void => { if (!productive) { productive = true; clearTimeout(timer) } },
+    dispose: (): void => clearTimeout(timer),
+  }
+}

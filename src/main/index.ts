@@ -114,6 +114,17 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
+  // Swallow keyboard reload shortcuts (Cmd/Ctrl+R, Cmd/Ctrl+Shift+R, F5). A page reload throws away ALL
+  // renderer state; combined with the stream-lifecycle behaviour it used to also abort an in-flight agent
+  // run and lose the work — a stray Cmd+R (a child at the keyboard, dogfood 2026-06-13) must never wipe a
+  // live session. This blocks ONLY the keyboard accelerators; programmatic reloads (Playwright
+  // page.reload in e2e, webContents.reload) are unaffected, so the test harness still works.
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return
+    const k = input.key.toLowerCase()
+    if (((input.meta || input.control) && k === 'r') || k === 'f5') event.preventDefault()
+  })
+
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) {
     win.loadURL(devUrl)

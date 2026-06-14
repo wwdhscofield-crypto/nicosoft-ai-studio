@@ -246,6 +246,12 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .traffic .tl-min   { background: #f4bf4f; }
 .traffic .tl-zoom  { background: #61c554; }
 .topbar .spacer { flex: 1; }
+.topbar .topbar-title {
+  flex: 1; min-width: 0; padding-right: 8px;
+  display: flex; align-items: baseline;
+  font-size: 13px; overflow: hidden;
+}
+.topbar .topbar-title .tt-name { color: var(--text-1); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .topbar .health-cluster { display: flex; gap: 4px; align-items: center; }
 .topbar .top-actions { display: flex; gap: 4px; align-items: center; }
 

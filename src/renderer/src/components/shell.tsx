@@ -50,7 +50,13 @@ export function Topbar({
   }
   return (
     <div className="topbar">
-      <div className="spacer" />
+      {workspace && cid ? (
+        <div className="topbar-title" title={curTitle || t('sidebar.untitled')}>
+          <span className="tt-name">{curTitle || t('sidebar.untitled')}</span>
+        </div>
+      ) : (
+        <div className="spacer" />
+      )}
       <div className="top-actions">
         {workspace && (
           <>

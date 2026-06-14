@@ -222,3 +222,7 @@ Desktop.ini
 *.local
 tmp/
 .tmp/
+
+# Dogfood archives & temp specs — contain Electron user-data caches + credentials.json; never commit
+docs/dogfood-archive-*/
+.dogfood-e2e-spec.md

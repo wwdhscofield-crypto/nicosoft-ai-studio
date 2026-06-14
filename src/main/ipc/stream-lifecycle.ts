@@ -22,15 +22,21 @@ export class StreamRegistry {
     const controller = new AbortController()
     this.streams.set(streamId, { controller, sender })
 
-    // If the renderer goes away without calling :stop, abort the run so the loop unwinds instead of
-    // hanging forever (which would pin the AbortController, suspended generators + their SSE
-    // connections, and the fd). Cover all three ways: window close (destroyed), recoverable crash
-    // (render-process-gone), and reload (did-start-loading, which fires page-level while a run is
-    // active — the initial load already finished before the run started).
+    // If the renderer goes away PERMANENTLY without calling :stop, abort the run so the loop unwinds
+    // instead of hanging forever (which would pin the AbortController, suspended generators + their SSE
+    // connections, and the fd). Cover the two TERMINAL cases only: window close (destroyed) and an
+    // unrecoverable crash (render-process-gone).
+    //
+    // A page RELOAD (did-start-loading) is deliberately NOT treated as gone. A reload is transient — the
+    // renderer comes right back — and a user (or a child) hitting Cmd+R mid-run must NOT silently kill an
+    // in-flight agent run and lose the work (dogfood 2026-06-13: a stray Cmd+R aborted a 70-min build and
+    // dropped everything). On reload the run keeps going in the main process and its output is persisted
+    // to the transcript/messages DB; the reloaded page recovers the conversation from there. send() is
+    // isDestroyed-guarded, so streaming into a mid-reload webContents is a safe no-op, and the webContents
+    // stays alive across a reload, so nothing leaks — the run finishes normally and finish() cleans up.
     const onGone = (): void => controller.abort()
     sender.once('destroyed', onGone)
     sender.once('render-process-gone', onGone)
-    sender.once('did-start-loading', onGone)
 
     return {
       controller,
@@ -41,7 +47,6 @@ export class StreamRegistry {
         if (!sender.isDestroyed()) {
           sender.removeListener('destroyed', onGone)
           sender.removeListener('render-process-gone', onGone)
-          sender.removeListener('did-start-loading', onGone)
         }
         this.streams.delete(streamId)
       },

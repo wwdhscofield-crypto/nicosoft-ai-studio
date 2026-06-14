@@ -3,9 +3,10 @@
 // start executing it before the turn completes), returning the full assistant turn at the end.
 // Reuses the shared SSE plumbing. See docs/nicosoft-studio/12-hex-coding-agent.md §2.4.
 
+import { appendFileSync } from 'node:fs'
 import { iterSSE, openStream, parseJSON, toLlmError, trimBase } from '../llm/_shared'
 import { anthropicHeaders, anthropicThinkingDirective, applyAnthropicCacheControls } from '../llm/anthropic-wire'
-import { streamIdleGuard, LLM_STREAM_IDLE_MS } from './stream-timeout'
+import { streamIdleGuard, LLM_STREAM_IDLE_MS, streamEnvelopeGuard, LLM_EMPTY_ENVELOPE_MS } from './stream-timeout'
 import { callWithToolsOpenAI } from './llm-openai'
 import { callWithToolsGemini } from './llm-gemini'
 import type { ThinkingParam } from '../llm/types'
@@ -95,6 +96,18 @@ async function* callWithToolsAnthropic(
   onEvent?: (e: AgentLlmEvent) => void,
 ): AsyncGenerator<ToolUseBlock, AssistantTurn, void> {
   const url = `${trimBase(req.baseUrl)}/v1/messages`
+  // Dogfood wire tap (env-gated, no-op in normal use): full request body + every raw SSE payload to a
+  // JSONL file, so the LLM HTTP wire (system prompt + messages + tools + raw deltas) leaves no monitoring
+  // blind spot. Best-effort — logging must never break the run.
+  const WIRE = process.env.LLM_WIRE_LOG
+  const wireDump = (rec: Record<string, unknown>) => {
+    if (!WIRE) return
+    try {
+      appendFileSync(WIRE, JSON.stringify({ ts: Date.now(), conv: req.conversationId, role: req.roleId, ...rec }) + '\n')
+    } catch {
+      /* ignore */
+    }
+  }
   // Last-line defense: a user message with EMPTY content hard-400s strict upstreams ("user messages
   // must have non-empty content") and poisons every subsequent request. No known path produces one
   // anymore (truncated tool_use blocks are dropped, empty drains are back-filled), but the cost of a
@@ -122,6 +135,7 @@ async function* callWithToolsAnthropic(
   }
   if (req.thinking?.effort) body.output_config = { effort: req.thinking.effort }
   if (req.cacheEnabled) applyAnthropicCacheControls(body)
+  wireDump({ dir: 'req', url, body })
   const blocks: (Accum | undefined)[] = []
   let stopReason: StopReason = null
   let inTokens = 0
@@ -132,18 +146,28 @@ async function* callWithToolsAnthropic(
   // Idle-timeout: the fetch has no per-request timeout, so a hung upstream would wedge the loop forever.
   // Arm before opening (covers a hang before the first byte) + reset on every payload; dispose in finally.
   const guard = streamIdleGuard(req.signal, LLM_STREAM_IDLE_MS)
+  const envelope = streamEnvelopeGuard(LLM_EMPTY_ENVELOPE_MS)
   try {
     guard.reset()
     const reader = await openStream(PROVIDER, url, {
       method: 'POST',
       headers: anthropicHeaders(req.apiKey),
       body: JSON.stringify(body),
-      signal: guard.signal,
+      // idle guard catches a dead connection (no payload at all); envelope guard catches an
+      // enveloped-but-empty stream (message_start then only pings, zero content). See stream-timeout.ts.
+      signal: AbortSignal.any([guard.signal, envelope.signal]),
     })
     for await (const payload of iterSSE(reader)) {
-      guard.reset()
+      wireDump({ dir: 'resp', payload })
       const ev = parseJSON(payload) as StreamEvent | null
       if (!ev || typeof ev.type !== 'string') continue
+      // ANY payload (incl. ping keepalive) means the connection is alive — reset the idle guard. Pings
+      // MUST reset it, or a slow-first-block / long-thinking response that only keepalive-pings for
+      // >idleMs gets killed mid-flight (dogfood 2026-06-13: opus on a 1M-context turn pinged ~120s before
+      // its first content block → idle abort at message_start+120s, surfacing as nsai `context canceled`
+      // at a constant ~133s). A truly dead connection sends no payload at all and still trips idle. The
+      // enveloped-but-EMPTY case (pings forever, zero content) is caught separately by the envelope guard.
+      guard.reset()
       const idx = ev.index ?? 0
       switch (ev.type) {
         case 'message_start':
@@ -153,6 +177,7 @@ async function* callWithToolsAnthropic(
           onEvent?.({ type: 'usage', inputTokens: inTokens + cacheReadTokens + cacheCreationTokens, outputTokens: 0, cachedTokens: cacheReadTokens })
           break
         case 'content_block_start': {
+          envelope.markProductive() // first content block → stream is live, not an empty envelope; disarm the envelope guard
           const cb = ev.content_block
           if (cb?.type === 'text') {
             blocks[idx] = { type: 'text', text: cb.text ?? '' }
@@ -222,6 +247,7 @@ async function* callWithToolsAnthropic(
     throw toLlmError(PROVIDER, err)
   } finally {
     guard.dispose()
+    envelope.dispose()
   }
 
   // Assemble the full turn in index order. Server blocks are pushed verbatim (round-tripped, never
