@@ -19,7 +19,7 @@ import { countContext } from './token-count.service'
 import { pickSmallModel } from './model-select'
 import { LlmError, type ChatAttachment, type ChatMessage } from '../llm/types'
 import { resolveToDataUrl } from '../media/storage'
-import type { AgentContext, PermissionMode } from '../agent/context'
+import type { AgentContext, PermissionMode, WrittenFile } from '../agent/context'
 import type { MemoryRow } from '../repos/memory.repo'
 import {
   COORDINATOR_COUNCIL_SYNTHESIS_PROMPT,
@@ -105,7 +105,7 @@ export function withCoordinatorContext(base: string, memories: MemoryRow[], summ
   return parts.join('\n\n')
 }
 
-export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputTokens: number; outputTokens: number; endpointId: string; model: string }> {
+export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; inputTokens: number; outputTokens: number; endpointId: string; model: string; writtenFiles: WrittenFile[] }> {
   const { convId, roleId, prompt, dispatch, cb, signal, cwd, includeHistory = false, isSynthesis = false, isDirect = false, isParallelSynthesis = false, isCouncilSynthesis = false } = opts
   const binding = rolesService.getBinding(roleId)
   if (!binding?.endpointId || !binding.model) {
@@ -236,7 +236,7 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
     // meter + compression threshold, NOT the cumulative loop total (res.inTokens, already recorded for billing
     // above). Returning the cumulative made a multi-expert turn's contextTokens read as millions instead of
     // the real ~window-bounded size (Gate B summed implementer + verifier cumulative → 10.99M).
-    return { text, inputTokens: res.contextTokens, outputTokens: res.outTokens, endpointId: binding.endpointId, model: binding.model }
+    return { text, inputTokens: res.contextTokens, outputTokens: res.outTokens, endpointId: binding.endpointId, model: binding.model, writtenFiles: res.writtenFiles }
   }
 
   // --- Tool-less path: coordinator-self synthesis/direct + designer/translator/editor → one llmChat turn ---
@@ -327,7 +327,8 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
   usageRepo.record({ conversationId: convId, expertId: roleId, model: binding.model, provider: ep.protocol, inTokens: result.usage.inTokens, outTokens: result.usage.outTokens })
   cb.onStepDone(roleId, text, inputTokens, result.usage.outTokens, result.usage.inTokens)
 
-  return { text, inputTokens, outputTokens: result.usage.outTokens, endpointId: binding.endpointId, model: binding.model }
+  // Tool-less path (synthesis / direct / designer-translator-editor) never edits the tree → no event-bus files.
+  return { text, inputTokens, outputTokens: result.usage.outTokens, endpointId: binding.endpointId, model: binding.model, writtenFiles: [] }
 }
 
 // Convert a persisted message's attachments column to the ChatMessage attachment shape adapters

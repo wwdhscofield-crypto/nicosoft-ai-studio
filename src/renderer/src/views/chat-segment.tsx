@@ -110,30 +110,11 @@ export function RetryReadout({ attempt, max, since }: { attempt: number; max: nu
   )
 }
 
-// Persistent token summary under a FINISHED assistant turn: the real ↑ input + ↓ output (upstream usage),
-// kept visible after the live readout's dot clears. The live ↓ was a chars/4 estimate; these are the
-// corrected upstream numbers from the done event. All four paths (chat/agent/coordinator/image) converge
-// on this one component, so the finalized cost reads identically no matter which produced the turn.
-function TokenSummary({ inputTokens, outputTokens, cachedTokens = 0 }: { inputTokens?: number; outputTokens?: number; cachedTokens?: number }): ReactElement | null {
-  const t = useT()
-  if (!inputTokens && !outputTokens) return null
-  // Codex-style ↑ split (matches the live ThinkingReadout): the main number is fresh (full prompt −
-  // cache reads); the cache-served bulk rides as a dim "(+N cached)" note. Pairs with this turn's prompt.
-  const cached = Math.min(Math.max(cachedTokens, 0), inputTokens ?? 0)
-  const fresh = (inputTokens ?? 0) - cached
-  return (
-    <span className="token-summary">
-      {inputTokens ? (
-        <>
-          ↑ {fmtReadoutTokens(fresh)}
-          {cached > 0 ? <span className="tr-cached"> (+{fmtReadoutTokens(cached)} cached)</span> : null}
-        </>
-      ) : null}
-      {inputTokens && outputTokens ? ' · ' : null}
-      {outputTokens ? <>↓ {fmtReadoutTokens(outputTokens)}</> : null} {t('conv.tokensSuffix')}
-    </span>
-  )
-}
+// NOTE: there is deliberately NO persistent token summary under a finished turn. Token state shows ONLY
+// while a turn is running (the live ThinkingReadout); the moment the turn/run ends it clears and nothing is
+// shown — uniformly across single chat, coordinator group, and collaboration. This removed a whole class of
+// settlement-math bugs (summing per-loop cumulatives ballooned to "↑ 48.1m"); cumulative billing lives in
+// usage_events, not in any per-segment readout.
 
 // True when this assistant message represents Coordinator's synthesis step — the final pipeline message
 // where Coordinator merges the experts' outputs. Detected by being expertId='coordinator' inside a dispatch chain.
@@ -269,15 +250,6 @@ export function ChatSegment({
   useEffect(() => {
     if (windowed && bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
   }, [last.text, last.tools?.length, last.servers?.length, last.streaming, msgs.length, windowed])
-  // Finished-run SETTLEMENT summary: this turn is over, so report the cumulative totals for the whole run —
-  // ↓ totals every message's output, ↑ totals every message's SENT input (sentTokens). Per-message
-  // sentTokens is the cumulative billing input — cache included — for that message's own LLM loop, so
-  // summing across a run's messages is the genuine grand total sent upstream, NOT a re-count of shared
-  // context. Do NOT sum inputTokens for ↑: that's per-turn CURRENT context (re-includes history each turn),
-  // and summing it balloons to millions (guard: git 360c2fe). inputTokens stays the composer "/ window"
-  // meter's job (current context), untouched here.
-  const sumOut = msgs.reduce((n, m) => n + (m.outputTokens ?? 0), 0)
-  const sumSent = msgs.reduce((n, m) => n + (m.sentTokens ?? 0), 0)
   return (
     <div className={'segment' + (isUser ? ' user' : '')} style={{ '--seg-color': segColor } as CSSProperties}>
       <div className="seg-head">
@@ -311,16 +283,13 @@ export function ChatSegment({
         ) : (
           <RunBody msgs={msgs} onOpenImage={onOpenImage} live={segStreaming} />
         )}
-        {/* ONE live readout for the whole run (pulsing dot · elapsed · ↑↓ tokens), gone the moment the run
-            finishes; then the run-total token summary takes its place. */}
+        {/* ONE live readout (pulsing dot · elapsed · ↑↓ tokens) shown ONLY while the run streams; it is gone
+            the moment the run finishes and nothing replaces it — no persistent per-turn token summary, in
+            every mode (single / coordinator group / collaboration). */}
         {segStreaming ? (
           // Coordinator segments carry their own live ↑/↓ (per-message) so concurrent segments don't all show
           // the conv-level total; single chat/agent turns have no per-message live → fall back to the conv prop.
           <ThinkingReadout chars={last.text.length} inputTokens={last.liveInputTokens ?? inputTokens} outputTokens={last.liveOutputTokens ?? outputTokens} cachedTokens={last.liveInputTokens !== undefined ? (last.liveCachedTokens ?? 0) : cachedTokens} activity={segmentActivity(last.tools)} />
-        ) : !isUser && (sumSent || sumOut) ? (
-          // Settlement: ↑ and ↓ are BOTH cumulative for the run. No fresh/cached split here — sentTokens
-          // already folds cache reads into the total sent, and we don't track a cumulative cache-read sum.
-          <TokenSummary inputTokens={sumSent || undefined} outputTokens={sumOut || undefined} cachedTokens={0} />
         ) : null}
       </div>
     </div>

@@ -48,6 +48,7 @@ export const multiEditTool = buildTool<typeof inputSchema, MultiEditOutput>({
     await writeFile(abs, content, 'utf-8')
     const st = await stat(abs)
     ctx.readFileState.set(abs, { content, mtimeMs: st.mtimeMs })
+    ctx.writtenPaths?.add(abs) // record on the git-free change event bus (Gate B subject trigger)
     return { data: { path: input.file_path, edits: input.edits.length } }
   },
   mapResult(out, toolUseId): ToolResultBlock {

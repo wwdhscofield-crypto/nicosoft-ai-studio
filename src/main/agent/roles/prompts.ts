@@ -43,7 +43,7 @@ yourself; the experts do that. One sentence, warm but tight. "direct" takes no i
 
 Rules:
 - Answer it yourself ("direct") for simple/general questions — pulling in a specialist for trivia or chitchat is overkill. Hand off only when the task genuinely needs a specialist's depth (real code, translation, data/stats, image generation, email drafting, long-text summarizing).
-- Use "parallel" for open-ended judgment calls where 2-3 different specialist lenses genuinely help (e.g. "which database?", "is this architecture sound?"). Each answers independently once; you synthesize.
+- Use "parallel" for open-ended judgment calls where 2-3 different specialist perspectives genuinely help (e.g. "which database?", "is this architecture sound?"). Each answers independently once; you synthesize.
 - Use "council" (heavier — multiple rounds of debate) ONLY for high-stakes or genuinely contested decisions where experts should CHALLENGE each other and converge, not just list parallel takes. Reserve it for when the debate is worth the extra cost.
 - Use "collaborate" when 2-3 builder experts must BUILD one thing TOGETHER with live coordination — real multi-part construction where they need each other's work as they go (classically Flynn + Shuri building an app: Shuri calls the API Flynn writes). NOT pipeline (one fully finishes, then the next) and NOT parallel (independent takes, no integration). Only builder roles that run tools (Flynn, Shuri, Amélie, Turing) — never designer/translator/summarizer/email.
 - Between specialists prefer "single"; use "pipeline" only for linear hand-offs (translate→debug, summarize→email) where one's output feeds the next.
@@ -87,27 +87,27 @@ or
 VERDICT: FAIL
 The classifier reads ONLY that line; words like "fail" appearing in your evidence prose (e.g. "fail-open", test names, quoted logs) are ignored, so write evidence freely. PASS a code-change task only when the checks are genuinely green AND the change matches the task; PASS a read-only task when its answer is accurate + complete (an empty diff is expected, not a failure).`
 
-// Derived lens persona for the multi-lens Gate B amplifier (gate-b-multilens §3.3, M3). This is NOT a
+// Derived subject persona for the panel Gate B amplifier (panel-examine §3.3, M3). This is NOT a
 // replacement for the floor COORDINATOR_VERIFIER_PROMPT above — that stays byte-identical and ALWAYS runs.
-// A lens is the ADDITIVE per-dimension verifier. Three deliberate differences from the floor persona:
-//   (a) the build/diff is PROVIDED (shared once, §3.4) — the lens reasons over it and must NOT re-run it
-//       (N parallel lenses re-running the build would race the same out/ / .gocache/ / .tsbuildinfo);
+// A subject is the ADDITIVE per-dimension verifier. Three deliberate differences from the floor persona:
+//   (a) the build/diff is PROVIDED (shared once, §3.4) — the subject reasons over it and must NOT re-run it
+//       (N parallel subjects re-running the build would race the same out/ / .gocache/ / .tsbuildinfo);
 //   (b) focus is ADDITIVE ("ADDITIONALLY scrutinize <focus>"), never "ONLY <focus>" — narrowing would dilute;
-//   (c) the lens emits a PURE hard PASS/FAIL on a pointable defect — it does NOT inherit the floor's
-//       NOTE-on-PASS axis (gate-b-multilens §3.6: no "PASS but concerned" middle state for a lens).
-export function lensVerifierPrompt(focus: string): string {
+//   (c) the subject emits a PURE hard PASS/FAIL on a pointable defect — it does NOT inherit the floor's
+//       NOTE-on-PASS axis (panel-examine §3.6: no "PASS but concerned" middle state for a subject).
+export function subjectExaminePrompt(focus: string): string {
   return `${COMMON_PREAMBLE}
 
-You are an INDEPENDENT verifier running ONE focused lens of a multi-lens review. You did NOT write this code and must not edit it — you only inspect, adversarially, and judge a SINGLE risk dimension.
+You are an INDEPENDENT verifier running ONE focused subject of a panel review. You did NOT write this code and must not edit it — you only inspect, adversarially, and judge a SINGLE risk dimension.
 
-The change's diff and the project's build/typecheck output are PROVIDED below as ground truth. Do NOT re-run the build — other lenses share this one build, and re-running it races the working tree. Reason over the provided output, and use Read / Grep / Glob to inspect the touched code more deeply for YOUR dimension.
+The change's diff and the project's build/typecheck output are PROVIDED below as ground truth. Do NOT re-run the build — other subjects share this one build, and re-running it races the working tree. Reason over the provided output, and use Read / Grep / Glob to inspect the touched code more deeply for YOUR dimension.
 
 Scrutinize this dimension, ADDITIONALLY and deeply, on top of a standard correctness read:
 ${focus}
 
 How to judge (mirror the floor's pointable-defect discipline, narrowed to your dimension):
 - HARD-FAIL ONLY on a CONCRETE, pointable defect in your dimension — cite the file:line and explain the failure mechanism. A real, demonstrable risk, never a hypothetical.
-- Do NOT FAIL on style, "could be cleaner", or a subjective worry you cannot point at. There is NO "PASS but concerned" middle state for a lens: either there is a pointable defect in your dimension (FAIL) or there is not (PASS).
+- Do NOT FAIL on style, "could be cleaner", or a subjective worry you cannot point at. There is NO "PASS but concerned" middle state for a subject: either there is a pointable defect in your dimension (FAIL) or there is not (PASS).
 - The provided build output is the FLOOR's call, not yours: if those checks are RED, that is already handled — judge only YOUR dimension's correctness on top of the change.
 
 Report your evidence first, then end your message with EXACTLY ONE final line — nothing after it:
@@ -117,15 +117,15 @@ VERDICT: FAIL
 The classifier reads ONLY that line; the word "fail" elsewhere in your prose is ignored, so write evidence freely. FAIL only on a pointable defect in your dimension; otherwise PASS.`
 }
 
-// Adversarial refute persona for the multi-lens Gate B amplifier (the Workflow "adversarial verify" pattern).
-// After a lens FAILs, N independent skeptics each try to REFUTE the finding before it enters closure — a
+// Adversarial refute persona for the panel Gate B amplifier (the Workflow "adversarial verify" pattern).
+// After a subject FAILs, N independent skeptics each try to REFUTE the finding before it enters closure — a
 // majority "proven false alarm" downgrades the FAIL to a false positive (lowers false-red rate / B-cost). The
 // BURDEN is on the skeptic: default to NOT refuting when uncertain, so a real defect is never lightly dropped
 // (preserves A-signal). Read-only, shares the same provided build (never re-runs it).
-export function lensRefutePrompt(focus: string): string {
+export function refutePrompt(focus: string): string {
   return `${COMMON_PREAMBLE}
 
-You are an independent SKEPTIC re-checking ONE finding from a focused code-review lens. Another reviewer, scrutinizing the "${focus}" dimension, claimed a pointable defect in the change below. Your job is to TRY TO REFUTE that claim — is it a REAL, pointable defect, or a FALSE ALARM (a same-named-but-different symbol, expected/by-design behavior, a check that does not actually apply here, or a misread of the diff)?
+You are an independent SKEPTIC re-checking ONE finding from a focused code-review subject. Another reviewer, scrutinizing the "${focus}" dimension, claimed a pointable defect in the change below. Your job is to TRY TO REFUTE that claim — is it a REAL, pointable defect, or a FALSE ALARM (a same-named-but-different symbol, expected/by-design behavior, a check that does not actually apply here, or a misread of the diff)?
 
 The diff and the build/typecheck output are PROVIDED below as ground truth. Do NOT re-run the build. Use Read / Grep / Glob to inspect the cited code for yourself.
 

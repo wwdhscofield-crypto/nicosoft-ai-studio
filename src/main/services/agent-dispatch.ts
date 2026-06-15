@@ -5,11 +5,11 @@
 // the persisted-conversation → agent-seed mapping both entry points share.
 
 import { createWriteStream } from 'node:fs'
-import { appendFile, mkdir } from 'node:fs/promises'
+import { appendFile, mkdir, realpath } from 'node:fs/promises'
 import { dataDir } from '../db/connection'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { ulid } from '../db/id'
-import type { AgentContext, RequestPermission, AskUser } from '../agent/context'
+import type { AgentContext, RequestPermission, AskUser, WrittenFile } from '../agent/context'
 import type { AgentLlmEvent } from '../agent/llm'
 import { runAgent, type AgentEvent, type AgentResult } from '../agent/loop'
 import { promptTokensFromUsage } from '../agent/compact'
@@ -102,7 +102,7 @@ export async function runAgentLoop(
   loop: AgentLoopInput,
   cb: AgentCallbacks,
   signal: AbortSignal,
-): Promise<{ text: string; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number; reason: string; turns: number; attachments: MessageAttachmentDto[] }> {
+): Promise<{ text: string; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number; reason: string; turns: number; attachments: MessageAttachmentDto[]; writtenFiles: WrittenFile[] }> {
   const sessionDir = join(dataDir(), 'sessions', loop.convId)
   await mkdir(join(sessionDir, 'tool-results'), { recursive: true })
   // No project folder selected (Flynn/Shuri can chat folder-free) → fall back to a per-conversation scratch
@@ -132,6 +132,7 @@ export async function runAgentLoop(
     signal,
     runId: loop.runId, // run-scoped resource ownership — e2e_browser sessions are reclaimed by it below
     readFileState: new Map(),
+    writtenPaths: new Set(), // git-free change event bus — Write/Edit/MultiEdit record here; harvested below for Gate B
     permissionMode: loop.permissionMode,
     requestPermission: cb.requestPermission,
     askUser: cb.askUser,
@@ -260,6 +261,18 @@ export async function runAgentLoop(
     }) + '\n',
   ).catch(() => {}) // stats are best-effort — never fail the run over them
 
+  // Harvest the git-free change event bus: pair each written path with its final content (from the
+  // stale-write cache the same tools populated). Relativize against the REALPATH of cwd, not raw cwd —
+  // confineReal returns realpath-resolved absolute paths (it documents the macOS /tmp→/private/tmp
+  // divergence), so relative(rawCwd, realAbs) would emit `../../private/…` garbage that mismatches git's
+  // repo-relative paths and (worse) poisons the `git diff -- <pathspec>` call → fatal → all hunks lost.
+  // realpath(cwd) makes these clean repo-relative paths that match git's output. Drops any path whose
+  // content the cache somehow lacks (defensive — never happens for Write/Edit, which set both in lockstep).
+  const realCwd = await realpath(cwd).catch(() => cwd)
+  const writtenFiles: WrittenFile[] = [...(ctx.writtenPaths ?? [])]
+    .map((abs) => ({ path: relative(realCwd, abs), content: ctx.readFileState.get(abs)?.content }))
+    .filter((w): w is WrittenFile => typeof w.content === 'string')
+
   return {
     text: finalAssistantText(result.messages),
     inTokens,
@@ -269,6 +282,7 @@ export async function runAgentLoop(
     reason: result.reason,
     turns: result.turns,
     attachments: toolImages,
+    writtenFiles,
   }
 }
 
@@ -323,7 +337,7 @@ export async function runDispatchedAgent(
   d: DispatchedAgentInput,
   cb: AgentCallbacks,
   signal: AbortSignal,
-): Promise<{ text: string; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number; reason: string; attachments: MessageAttachmentDto[] }> {
+): Promise<{ text: string; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number; reason: string; attachments: MessageAttachmentDto[]; writtenFiles: WrittenFile[] }> {
   let tools: Tool[]
   if (d.toolNames) {
     // Fixed-kit dispatch (Gate B verifier): an explicit whitelist instead of the role's default kit — a
@@ -393,7 +407,7 @@ export async function runDispatchedAgent(
     cb,
     signal,
   )
-  return { text: res.text, inTokens: res.inTokens, contextTokens: res.contextTokens, cacheReadTokens: res.cacheReadTokens, outTokens: res.outTokens, reason: res.reason, attachments: res.attachments }
+  return { text: res.text, inTokens: res.inTokens, contextTokens: res.contextTokens, cacheReadTokens: res.cacheReadTokens, outTokens: res.outTokens, reason: res.reason, attachments: res.attachments, writtenFiles: res.writtenFiles }
 }
 
 // Persisted conversation messages → agent seed. Assistant turns are prior runs' FINAL replies (plain

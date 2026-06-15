@@ -17,7 +17,7 @@ import { chatOnce } from './llm-once'
 import { resolveDepth } from '../llm/thinking'
 import type { ChatMessage } from '../llm/types'
 import { COORDINATOR_ROUTER_PROMPT, DISPATCHABLE_ROLE_IDS, displayName, roleIdFromName } from '../agent/roles/prompts'
-import { LENS_DIMENSIONS, LENS_DIMENSION_KEYS, type LensDimension } from './lens-dimensions'
+import { DEFAULT_REVIEW_SUBJECTS, REVIEW_SUBJECT_KEYS, type ReviewSubject } from './examine/subjects'
 import { CODE_FILE_RE } from './lang-registry'
 import type { RouteDecision } from './coordinator-types'
 
@@ -197,24 +197,24 @@ export async function deriveAcceptanceCriteria(task: string, signal?: AbortSigna
   }
 }
 
-// --- Multi-lens Gate B content trigger (gate-b-multilens §3.2 / M2) --------------------------------------
+// --- Panel Gate B content trigger (panel-examine §3.2 / M2) --------------------------------------
 
-export interface SelectedLens {
-  key: LensDimension
+export interface SelectedSubject {
+  key: ReviewSubject
   why: string
 }
 
-const LENS_TRIGGER_INSTRUCTION = `You decide which independent verification LENSES a code change needs, BEYOND the standard correctness review that already runs. Judge from the DIFF CONTENT below (what the change actually does), NOT from file names — a risk lives in the edit's meaning (an edit weakening a token check = security; one adding a lock = concurrency), not in what a file is called. Pick ZERO OR MORE dimensions from this CLOSED list — only ones a real, pointable risk in THIS diff justifies:
-${LENS_DIMENSIONS.map((d) => `- ${d.key}: ${d.focus}`).join('\n')}
+const SUBJECT_SELECT_INSTRUCTION = `You decide which independent review SUBJECTS a code change needs, BEYOND the standard correctness review that already runs. Judge from the DIFF CONTENT below (what the change actually does), NOT from file names — a risk lives in the edit's meaning (an edit weakening a token check = security; one adding a lock = concurrency), not in what a file is called. Pick ZERO OR MORE dimensions from this CLOSED list — only ones a real, pointable risk in THIS diff justifies:
+${DEFAULT_REVIEW_SUBJECTS.map((d) => `- ${d.key}: ${d.focus}`).join('\n')}
 
 Return ONLY a JSON array of {"key":"<a dimension key from the list>","why":"<one line citing the specific change — a file:hunk or concrete behavior — that risks that dimension>"}. Choose a dimension ONLY when the diff genuinely risks it; an empty array [] is the right answer for a low-risk change. NEVER invent a key outside the list. Output ONLY the JSON array — no prose, no markdown fence.`
 
-// The lens trigger: an LLM reads the actual DIFF and picks the risk dimensions the change implicates — purely
+// The subject trigger: an LLM reads the actual DIFF and picks the risk dimensions the change implicates — purely
 // content-driven, language-agnostic, no file-name heuristic (a path-token table assumed one project's naming
-// and broke on the next; see lens-dimensions.ts). Keys are validated against the closed enum in CODE
-// (LENS_DIMENSION_KEYS) and deduped by key — the model proposes, code constrains. Best-effort: any failure →
+// and broke on the next; see examine/subjects.ts). Keys are validated against the closed enum in CODE
+// (REVIEW_SUBJECT_KEYS) and deduped by key — the model proposes, code constrains. Best-effort: any failure →
 // [] (the step stays floor-only). Mirrors deriveAcceptanceCriteria's binding/chatOnce/try-catch shape.
-async function deriveSemanticLensDimensions(changedPaths: string[], diff: string, task: string, signal?: AbortSignal): Promise<SelectedLens[]> {
+async function deriveSubjects(changedPaths: string[], diff: string, task: string, signal?: AbortSignal): Promise<SelectedSubject[]> {
   const binding = rolesService.getBinding('coordinator')
   if (!binding?.endpointId || !binding.model) return []
   const ep = endpointRepo.getById(binding.endpointId)
@@ -226,26 +226,26 @@ async function deriveSemanticLensDimensions(changedPaths: string[], diff: string
     // The diff is the primary signal; the file list covers brand-new files whose body git diff can't show.
     const diffBlock = diff.trim() ? `Diff:\n${diff}` : '(no textual diff available — judge from the changed-file list and task)'
     const text = await chatOnce(ep, apiKey, binding.model, [
-      { role: 'user', content: `${LENS_TRIGGER_INSTRUCTION}\n\nTask:\n${task.slice(0, 4000)}\n\nChanged files:\n${fileList}\n\n${diffBlock}` }
+      { role: 'user', content: `${SUBJECT_SELECT_INSTRUCTION}\n\nTask:\n${task.slice(0, 4000)}\n\nChanged files:\n${fileList}\n\n${diffBlock}` }
     ], { signal })
     const start = text.indexOf('[')
     const end = text.lastIndexOf(']')
     if (start < 0 || end <= start) return []
     const arr = JSON.parse(text.slice(start, end + 1)) as unknown
     if (!Array.isArray(arr)) return []
-    const seen = new Set<LensDimension>()
-    const out: SelectedLens[] = []
+    const seen = new Set<ReviewSubject>()
+    const out: SelectedSubject[] = []
     for (const item of arr) {
       const key = (item as { key?: unknown })?.key
       const why = (item as { why?: unknown })?.why
-      if (typeof key === 'string' && LENS_DIMENSION_KEYS.has(key as LensDimension) && !seen.has(key as LensDimension)) {
-        seen.add(key as LensDimension)
-        out.push({ key: key as LensDimension, why: typeof why === 'string' ? why.trim().slice(0, 200) : '' })
+      if (typeof key === 'string' && REVIEW_SUBJECT_KEYS.has(key as ReviewSubject) && !seen.has(key as ReviewSubject)) {
+        seen.add(key as ReviewSubject)
+        out.push({ key: key as ReviewSubject, why: typeof why === 'string' ? why.trim().slice(0, 200) : '' })
       }
     }
     return out
   } catch (e) {
-    console.warn('[coordinator] lens-trigger derivation failed (step stays floor-only):', e instanceof Error ? e.message : e)
+    console.warn('[coordinator] subject-trigger derivation failed (step stays floor-only):', e instanceof Error ? e.message : e)
     return []
   }
 }
@@ -259,13 +259,13 @@ async function deriveSemanticLensDimensions(changedPaths: string[], diff: string
 // real code reaches the trigger (correct: it's code); a docs/ dir of .md still short-circuits via the ext arm.
 const NO_RISK_PATH = /(\.md|\.markdown|\.txt|\.rst|\.adoc)$|(^|\/)(LICENSE|CHANGELOG|README|CONTRIBUTING|NOTICE)(\.[a-z0-9]+)?$/i
 
-// Which lens dimensions a real change implicates — PURELY from the diff content (language-agnostic, no
+// Which subject dimensions a real change implicates — PURELY from the diff content (language-agnostic, no
 // file-name heuristic). Best-effort: a failed/empty LLM layer → [] (the step stays floor-only). Cost
 // pre-filter: an empty change, or one where EVERY changed path is no-risk (docs/prose), short-circuits in
 // CODE with no LLM spend; any code-bearing change reaches the trigger, which reads the diff and judges on merit.
-export async function selectLensDimensions(changedPaths: string[], diff: string, task: string, signal?: AbortSignal): Promise<SelectedLens[]> {
+export async function selectSubjects(changedPaths: string[], diff: string, task: string, signal?: AbortSignal): Promise<SelectedSubject[]> {
   if (changedPaths.length === 0 || changedPaths.every((p) => NO_RISK_PATH.test(p))) return []
-  return deriveSemanticLensDimensions(changedPaths, diff, task, signal)
+  return deriveSubjects(changedPaths, diff, task, signal)
 }
 
 export function isNonTrivialTask(prompt: string): boolean {

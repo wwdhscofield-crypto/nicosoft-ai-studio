@@ -32,11 +32,11 @@ export function runMigrations(db: DatabaseSync): void {
   ensureColumn(db, 'memories', 'source_conv_id', 'TEXT')
   ensureColumn(db, 'memories', 'last_recalled_at', 'TEXT')
   ensureColumn(db, 'extraction_state', 'last_extracted_id', 'TEXT')
-  // Multi-lens Gate B (gate-b-multilens §6): floor/aggregate/lens row discrimination + per-step linkage.
+  // panel-examine (§6): floor/aggregate/subject row discrimination + per-step linkage.
   // row_kind defaults to 'floor' so every existing row keeps the single-verifier pass-rate semantics.
   ensureColumn(db, 'gate_outcomes', 'row_kind', "TEXT NOT NULL DEFAULT 'floor'")
   ensureColumn(db, 'gate_outcomes', 'step_id', 'TEXT')
-  ensureColumn(db, 'gate_outcomes', 'lens', 'TEXT')
+  ensureColumn(db, 'gate_outcomes', 'subject', 'TEXT')
 }
 
 // Add a column only if the table doesn't already have it (SQLite lacks ADD COLUMN IF NOT EXISTS).

@@ -38,6 +38,7 @@ export const writeTool = buildTool<typeof inputSchema, WriteOutput>({
     await writeFile(abs, input.content, 'utf-8')
     const st = await stat(abs)
     ctx.readFileState.set(abs, { content: input.content, mtimeMs: st.mtimeMs })
+    ctx.writtenPaths?.add(abs) // record on the git-free change event bus (Gate B subject trigger)
     return { data: { path: input.file_path, bytes: Buffer.byteLength(input.content), created: !existing } }
   },
   mapResult(out, toolUseId): ToolResultBlock {

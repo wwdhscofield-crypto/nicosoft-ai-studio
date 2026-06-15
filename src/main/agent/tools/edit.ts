@@ -39,6 +39,7 @@ export const editTool = buildTool<typeof inputSchema, EditOutput>({
     await writeFile(abs, next, 'utf-8')
     const st = await stat(abs)
     ctx.readFileState.set(abs, { content: next, mtimeMs: st.mtimeMs })
+    ctx.writtenPaths?.add(abs) // record on the git-free change event bus (Gate B subject trigger)
     const replacements = replaceAll ? content.split(input.old_string).length - 1 : 1
     return { data: { path: input.file_path, replacements } }
   },

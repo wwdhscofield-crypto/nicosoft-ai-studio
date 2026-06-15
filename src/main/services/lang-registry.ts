@@ -1,13 +1,13 @@
 // Single source of truth for per-language toolchain knowledge — manifests, build/check commands, "is this a
 // verify command" patterns, and code-file extensions. Three call sites used to hard-code their OWN narrow
-// language lists and drifted apart: lens-build.detectChecks (shared build), loop-guards.VERIFY_COMMAND_RE
+// language lists and drifted apart: subject-build.detectChecks (shared build), loop-guards.VERIFY_COMMAND_RE
 // (edit-without-verify nudge), coordinator-route.isNonTrivialTask (fallback Gate-B trigger). They now ALL
 // derive from this registry, so adding a language is a one-place change and the three can't disagree.
 //
 // Coverage target: the mainstream of the TIOBE top-20 + the common rest. Honesty over breadth on buildChecks:
 // only languages whose build/typecheck can be driven RELIABLY and FAST from a manifest get a buildChecks (the
 // shared build runs it as ground truth). Interpreted / hard-to-automate stacks (python/ruby/php/r/cpp/…) get
-// NO buildChecks — the shared build is ran:false for them and the lens reasons from the diff + its own reads,
+// NO buildChecks — the shared build is ran:false for them and the subject reasons from the diff + its own reads,
 // rather than running a slow/flaky/wrong command. verifyPatterns + extensions still cover them fully.
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'

@@ -157,14 +157,14 @@ export function StatsPage(): ReactElement {
     const e = expertMeta(r.id)
     return { name: e.name, v: r.total ? r.ok / r.total : 0, val: `${r.ok}/${r.total}`, color: e.color }
   })
-  // M5 multi-lens A/B (gate-b-multilens §10): the amplifier's measured catches vs the floor-only baseline,
-  // read off the built-in floor/lens/aggregate row split. "caught beyond floor" is the A-signal (floor would
-  // have shipped it, a lens flagged); "false reds" is the B-cost (lens false positives).
-  const lensImpact = a.verification.lensImpact
-  const lensRows = [
-    { name: "caught beyond floor", v: lensImpact.caughtBeyondFloor, val: String(lensImpact.caughtBeyondFloor), color: GATE_COLOR.pass },
-    { name: "lens catches", v: lensImpact.lensCatches, val: String(lensImpact.lensCatches), color: GATE_COLOR.fixed },
-    { name: "false reds", v: lensImpact.lensFalseReds, val: String(lensImpact.lensFalseReds), color: GATE_COLOR.unresolved }
+  // M5 panel A/B (panel-examine §10): the amplifier's measured catches vs the floor-only baseline,
+  // read off the built-in floor/subject/aggregate row split. "caught beyond floor" is the A-signal (floor would
+  // have shipped it, a subject flagged); "false reds" is the B-cost (subject false positives).
+  const examineImpact = a.verification.examineImpact
+  const subjectRows = [
+    { name: "caught beyond floor", v: examineImpact.caughtBeyondFloor, val: String(examineImpact.caughtBeyondFloor), color: GATE_COLOR.pass },
+    { name: "subject catches", v: examineImpact.catches, val: String(examineImpact.catches), color: GATE_COLOR.fixed },
+    { name: "false reds", v: examineImpact.falseReds, val: String(examineImpact.falseReds), color: GATE_COLOR.unresolved }
   ].filter((r) => r.v > 0)
   const total = a.usage.conversationsTotal
   const inProgress = Math.min(streamingCount, total)
@@ -269,15 +269,15 @@ export function StatsPage(): ReactElement {
             {verifRows.length ? <BarList rows={verifRows} max={1} /> : <div className="an-mini-label">No gated runs yet.</div>}
           </AnCard>
 
-          <AnCard title="Multi-lens amplifier" sub={lensImpact.steps + " amplified"}>
-            {lensImpact.steps ? (
-              lensRows.length ? (
-                <BarList rows={lensRows} />
+          <AnCard title="Panel examine" sub={examineImpact.steps + " amplified"}>
+            {examineImpact.steps ? (
+              subjectRows.length ? (
+                <BarList rows={subjectRows} />
               ) : (
-                <div className="an-mini-label">{lensImpact.steps} step(s) amplified — every lens passed, nothing flagged.</div>
+                <div className="an-mini-label">{examineImpact.steps} step(s) amplified — every subject passed, nothing flagged.</div>
               )
             ) : (
-              <div className="an-mini-label">No multi-lens runs yet — high-risk code changes trigger extra lenses.</div>
+              <div className="an-mini-label">No panel runs yet — high-risk code changes trigger extra reviewers.</div>
             )}
           </AnCard>
         </div>

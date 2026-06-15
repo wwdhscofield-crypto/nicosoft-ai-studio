@@ -158,8 +158,6 @@
 /* Transient-failure retry status (between turns): same readout language, amber dot to flag the blip. */
 .retry-readout { display: inline-flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 12.5px; color: var(--text-3); margin-top: 10px; }
 .retry-readout .rr-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warning); flex: 0 0 auto; animation: tr-breathe 1.4s ease-in-out infinite; }
-/* Persistent per-turn token summary (real ↑in ↓out) under a finished assistant message — static, no dot. */
-.token-summary { display: inline-flex; align-items: center; font-family: var(--mono); font-size: 12.5px; color: var(--text-4); margin-top: 10px; }
 
 /* skeleton */
 

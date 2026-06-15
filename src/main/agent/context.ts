@@ -13,6 +13,16 @@ export interface ReadFileEntry {
   mtimeMs: number
 }
 
+// One file the agent CREATED or MODIFIED this run (path relative to cwd + its final content). This is the
+// git-free change event bus the panel Gate B trigger reads: even on a greenfield / non-git tree — where
+// `git diff` shows nothing for untracked files — gate-b learns exactly which files changed and what they now
+// contain straight from the agent's own Write/Edit/MultiEdit operations. Git, when the repo exists, ENRICHES
+// this with precise hunks for modified tracked files; the event bus is always-available ground truth.
+export interface WrittenFile {
+  path: string
+  content: string
+}
+
 export type PermissionMode = 'default' | 'plan' | 'auto' | 'bypass'
 
 export interface PermissionRequest {
@@ -86,6 +96,11 @@ export interface AgentContext {
   // per-turn (turnCtx spreads preserve it); concurrent runs each carry their own.
   runId?: string
   readFileState: Map<string, ReadFileEntry> // keyed by absolute path; powers stale-write detection
+  // Absolute paths the agent CREATED or MODIFIED this run (Write/Edit/MultiEdit). The git-free change event
+  // bus: runAgentLoop pairs each with its final content from readFileState to build WrittenFile[], so Gate B's
+  // subject trigger fires even on a greenfield / non-git tree where `git diff` is blind to untracked files.
+  // Undefined in contexts that don't track it (the tools no-op the add); a real run always sets it.
+  writtenPaths?: Set<string>
   permissionMode: PermissionMode
   // The run's ORIGINAL mode, captured before any EnterPlanMode flipped it. ExitPlanMode restores to this
   // (so a bypass run stays bypass instead of being silently downgraded to 'default'). Set per-turn by runAgent.

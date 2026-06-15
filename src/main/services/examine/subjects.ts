@@ -1,31 +1,31 @@
-// Multi-lens Gate B — the CLOSED enum of orthogonal risk dimensions a lens can target.
-// Design: docs/gate-b-multilens-amplifier.md §3.1.
+// Panel Gate B — the CLOSED enum of orthogonal risk dimensions a subject can target.
+// Design: docs/panel-examine.md §3.1.
 //
 // Why a CLOSED, code-owned enum (not model-chosen):
-//   The lens TRIGGER is an LLM judgment; letting it self-certify "this is a distinct dimension" is the
+//   The subject TRIGGER is an LLM judgment; letting it self-certify "this is a distinct dimension" is the
 //   fox-guarding-the-henhouse failure the stress test flagged (a model happily labels correctness /
 //   soundness / robustness as three "dimensions"). So the dimension set lives HERE, in code; the trigger
-//   may only PROPOSE keys from this enum, and dedup is mechanical (LENS_DIMENSION_KEYS + first-per-key).
-//   The cap on lens count is therefore semantic = |enum|, enforced in code — not an arbitrary magic number.
+//   may only PROPOSE keys from this enum, and dedup is mechanical (REVIEW_SUBJECT_KEYS + first-per-key).
+//   The cap on subject count is therefore semantic = |enum|, enforced in code — not an arbitrary magic number.
 //   Adding a 9th dimension is a deliberate code change naming a new risk axis, never a runtime knob.
 //
 // Why these eight and not "correctness":
 //   The FLOOR verifier (COORDINATOR_VERIFIER_PROMPT + C-base, src/main/agent/roles/prompts.ts) already
 //   judges correctness / duplication / wrong-problem HOLISTICALLY and HARD-FAILs on a pointable defect
-//   there. A lens MUST target an axis the floor does NOT scrutinize at depth — so correctness /
+//   there. A subject MUST target an axis the floor does NOT scrutinize at depth — so correctness /
 //   duplication / wrong-problem are deliberately EXCLUDED. Every dimension below carries a `floorGap` line
-//   proving the floor underweights it; a lens here is ADDITIVE, never a re-run of the floor.
+//   proving the floor underweights it; a subject here is ADDITIVE, never a re-run of the floor.
 //
 // Trigger is PURELY SEMANTIC (no path-name heuristic). The risk axis of a change lives in the DIFF's
 // content (an edit that weakens a token check = security; one that adds a lock = concurrency), NOT in the
 // file's name — and a written-down token table (`repo`/`handler`/`worker`/…) silently assumes one project's
-// naming convention and breaks on the next language. So coordinator-route.deriveSemanticLensDimensions reads
+// naming convention and breaks on the next language. So coordinator-route.deriveSubjects reads
 // the actual diff and picks dimensions on merit; this module only owns the closed enum + its persona text.
 // (A path-name pre-filter was tried and removed: it over-fired on dir names — e.g. the monorepo segment
 // `nsai-api` matched an `api` token on every file — and under-fired on semantic risk in generically-named
-// files, while saving no LLM call since the semantic layer runs anyway. See gate-b-multilens-amplifier.md.)
+// files, while saving no LLM call since the semantic layer runs anyway. See panel-examine.md.)
 
-export type LensDimension =
+export type ReviewSubject =
   | 'security'
   | 'data-integrity'
   | 'perf'
@@ -35,9 +35,9 @@ export type LensDimension =
   | 'migration-safety'
   | 'test-quality'
 
-export interface LensDimensionMeta {
-  key: LensDimension
-  // Injected ADDITIVELY into the derived lens persona (§3.3): "ADDITIONALLY scrutinize <focus> deeply, on
+export interface ReviewSubjectMeta {
+  key: ReviewSubject
+  // Injected ADDITIVELY into the derived subject persona (§3.3): "ADDITIONALLY scrutinize <focus> deeply, on
   // top of your standard checks" — never "ONLY <focus>" (that would narrow and dilute the C-base floor).
   // Also handed to the semantic trigger so the LLM knows what each dimension means before proposing it.
   focus: string
@@ -46,7 +46,7 @@ export interface LensDimensionMeta {
   floorGap: string
 }
 
-export const LENS_DIMENSIONS: readonly LensDimensionMeta[] = [
+export const DEFAULT_REVIEW_SUBJECTS: readonly ReviewSubjectMeta[] = [
   {
     key: 'security',
     focus:
@@ -99,7 +99,7 @@ export const LENS_DIMENSIONS: readonly LensDimensionMeta[] = [
     focus:
       'api-contract: a change that COMPILES here but breaks an OUT-OF-REPO caller or a persisted/serialized ' +
       'consumer — an exported signature, wire format, or published contract that an in-repo build cannot ' +
-      'reveal as broken. (The floor already watches in-repo contract breaks the build catches; this lens ' +
+      'reveal as broken. (The floor already watches in-repo contract breaks the build catches; this subject ' +
       'targets the cross-boundary ones it cannot.)',
     floorGap:
       'The floor judges the diff against the task in isolation; it does not enumerate external callers or ' +
@@ -128,10 +128,10 @@ export const LENS_DIMENSIONS: readonly LensDimensionMeta[] = [
 
 // Mechanical dedup / validation surface (§3.1): the trigger's proposed keys are filtered against this set
 // (drop anything not in the enum) and deduped by key (first-per-key wins) in CODE — never by asking the model.
-// This Set IS the semantic cap: a step can trigger at most |enum| lenses, enforced in code, no magic number.
-export const LENS_DIMENSION_KEYS: ReadonlySet<LensDimension> = new Set(LENS_DIMENSIONS.map((d) => d.key))
+// This Set IS the semantic cap: a step can trigger at most |enum| subjects, enforced in code, no magic number.
+export const REVIEW_SUBJECT_KEYS: ReadonlySet<ReviewSubject> = new Set(DEFAULT_REVIEW_SUBJECTS.map((d) => d.key))
 
 // Resolve a proposed dimension key to its metadata, or null if it is not in the closed enum (dropped).
-export function lensDimensionMeta(key: string): LensDimensionMeta | null {
-  return LENS_DIMENSIONS.find((d) => d.key === key) ?? null
+export function subjectMeta(key: string): ReviewSubjectMeta | null {
+  return DEFAULT_REVIEW_SUBJECTS.find((d) => d.key === key) ?? null
 }

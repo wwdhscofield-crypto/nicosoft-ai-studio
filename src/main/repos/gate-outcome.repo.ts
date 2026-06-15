@@ -16,11 +16,11 @@ export interface GateOutcomeInput {
   outcome: string
   rounds: number
   evidence: string
-  // Multi-lens Gate B (gate-b-multilens §6). rowKind defaults to 'floor' — floor rows are the ONLY ones the
+  // Panel Gate B (panel-examine §6). rowKind defaults to 'floor' — floor rows are the ONLY ones the
   // pass-rate readers count, so the single-verifier semantics stay byte-identical. Optional for back-compat.
-  rowKind?: 'floor' | 'aggregate' | 'lens'
-  stepId?: string // one ulid per gated step; links floor/aggregate row to its lens rows
-  lens?: string | null // LensDimension key for a 'lens' row; null otherwise
+  rowKind?: 'floor' | 'aggregate' | 'subject'
+  stepId?: string // one ulid per gated step; links floor/aggregate row to its subject rows
+  subject?: string | null // ReviewSubject key for a 'subject' row; null otherwise
 }
 
 const EVIDENCE_MAX = 500
@@ -28,7 +28,7 @@ const EVIDENCE_MAX = 500
 export function record(input: GateOutcomeInput): void {
   getDb()
     .prepare(
-      `INSERT INTO gate_outcomes (id, conv_id, gate, role_id, outcome, rounds, evidence, row_kind, step_id, lens, created_at)
+      `INSERT INTO gate_outcomes (id, conv_id, gate, role_id, outcome, rounds, evidence, row_kind, step_id, subject, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
@@ -41,7 +41,7 @@ export function record(input: GateOutcomeInput): void {
       input.evidence.slice(0, EVIDENCE_MAX),
       input.rowKind ?? 'floor',
       input.stepId ?? null,
-      input.lens ?? null,
+      input.subject ?? null,
       new Date().toISOString()
     )
 }
@@ -52,8 +52,8 @@ export interface OutcomeCount {
   v: number
 }
 
-// Floor-only by design: lens / aggregate rows (multi-lens Gate B) are EXCLUDED so the existing Stats
-// distribution stays byte-identical to the single-verifier era. Lens rows have their own reader (countByLens).
+// Floor-only by design: subject / aggregate rows (panel Gate B) are EXCLUDED so the existing Stats
+// distribution stays byte-identical to the single-verifier era. Subject rows have their own reader (countBySubject).
 export function countByOutcome(): OutcomeCount[] {
   return getDb()
     .prepare(`SELECT gate, outcome, COUNT(*) v FROM gate_outcomes WHERE (row_kind = 'floor' OR row_kind IS NULL) GROUP BY gate, outcome`)
@@ -74,36 +74,36 @@ export function countByRole(): RoleGateCount[] {
     .all() as unknown as RoleGateCount[]
 }
 
-export interface LensGateCount {
+export interface SubjectGateCount {
   roleId: string
-  lens: string
+  subject: string
   outcome: string
   v: number
 }
 
-// Gate B per-dimension lens outcome counts — the per-dimension miss-tracking source (gate-b-multilens §6,
-// the §5.2 prerequisite for any panel). Reads ONLY row_kind='lens' rows, kept out of the floor pass-rate.
-// In the M5 A/B reading, a lens row's outcome tells real-catch from false-red: 'fixed' = the lens caught a
+// Gate B per-dimension subject outcome counts — the per-dimension miss-tracking source (panel-examine §6,
+// the §5.2 prerequisite for any panel). Reads ONLY row_kind='subject' rows, kept out of the floor pass-rate.
+// In the M5 A/B reading, a subject row's outcome tells real-catch from false-red: 'fixed' = the subject caught a
 // real defect that got fixed; 'false-positive' = a FALSE RED (the §10 red-line B cost to watch).
-export function countByLens(): LensGateCount[] {
+export function countBySubject(): SubjectGateCount[] {
   return getDb()
-    .prepare(`SELECT role_id roleId, lens, outcome, COUNT(*) v FROM gate_outcomes WHERE gate = 'B' AND row_kind = 'lens' AND lens IS NOT NULL GROUP BY role_id, lens, outcome`)
-    .all() as unknown as LensGateCount[]
+    .prepare(`SELECT role_id roleId, subject, outcome, COUNT(*) v FROM gate_outcomes WHERE gate = 'B' AND row_kind = 'subject' AND subject IS NOT NULL GROUP BY role_id, subject, outcome`)
+    .all() as unknown as SubjectGateCount[]
 }
 
-export interface LensImpactRow {
+export interface SubjectImpactRow {
   floorOutcome: string
   aggregateOutcome: string
   v: number
 }
 
-// Multi-lens A/B impact (gate-b-multilens §10 M5): join the floor row (the floor-only baseline outcome) to the
-// aggregate row (the multi-lens step result) for the SAME step. The headline A/B signal is the cell where
-// floorOutcome='pass' but aggregateOutcome≠'pass' — the multi-lens amplifier caught a real concern the
-// floor-only baseline would have shipped. Reads ONLY steps that ran lenses (an aggregate row exists); the
+// Panel A/B impact (panel-examine §10 M5): join the floor row (the floor-only baseline outcome) to the
+// aggregate row (the panel step result) for the SAME step. The headline A/B signal is the cell where
+// floorOutcome='pass' but aggregateOutcome≠'pass' — the panel amplifier caught a real concern the
+// floor-only baseline would have shipped. Reads ONLY steps that ran subjects (an aggregate row exists); the
 // floor pass-rate readers above are untouched. NO new tracking table — the M1-M4 row_kind split IS the A/B
 // fixture (floor row = baseline, aggregate row = amplified), so the comparison is built-in, not bolted on.
-export function lensVsFloor(): LensImpactRow[] {
+export function subjectVsFloor(): SubjectImpactRow[] {
   return getDb()
     .prepare(
       `SELECT f.outcome floorOutcome, a.outcome aggregateOutcome, COUNT(*) v
@@ -112,5 +112,5 @@ export function lensVsFloor(): LensImpactRow[] {
        WHERE a.gate = 'B' AND a.row_kind = 'aggregate'
        GROUP BY f.outcome, a.outcome`
     )
-    .all() as unknown as LensImpactRow[]
+    .all() as unknown as SubjectImpactRow[]
 }
