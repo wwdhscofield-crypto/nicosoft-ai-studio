@@ -1,5 +1,5 @@
 // Multi-lens Gate B — the CLOSED enum of orthogonal risk dimensions a lens can target.
-// Design: docs/gate-b-multilens-amplifier.md §3.1. This is M0 of the rollout (§10) — the prerequisite gate.
+// Design: docs/gate-b-multilens-amplifier.md §3.1.
 //
 // Why a CLOSED, code-owned enum (not model-chosen):
 //   The lens TRIGGER is an LLM judgment; letting it self-certify "this is a distinct dimension" is the
@@ -7,14 +7,23 @@
 //   soundness / robustness as three "dimensions"). So the dimension set lives HERE, in code; the trigger
 //   may only PROPOSE keys from this enum, and dedup is mechanical (LENS_DIMENSION_KEYS + first-per-key).
 //   The cap on lens count is therefore semantic = |enum|, enforced in code — not an arbitrary magic number.
-//   Adding an 8th dimension is a deliberate code change naming a new risk axis, never a runtime knob.
+//   Adding a 9th dimension is a deliberate code change naming a new risk axis, never a runtime knob.
 //
-// Why these seven and not "correctness":
-//   The FLOOR verifier (COORDINATOR_VERIFIER_PROMPT + C-base, src/main/agent/roles/prompts.ts:69-86) already
-//   judges correctness / duplication / wrong-problem HOLISTICALLY and HARD-FAILs on a pointable defect there
-//   (prompts.ts:79). A lens MUST target an axis the floor does NOT scrutinize at depth — so correctness /
+// Why these eight and not "correctness":
+//   The FLOOR verifier (COORDINATOR_VERIFIER_PROMPT + C-base, src/main/agent/roles/prompts.ts) already
+//   judges correctness / duplication / wrong-problem HOLISTICALLY and HARD-FAILs on a pointable defect
+//   there. A lens MUST target an axis the floor does NOT scrutinize at depth — so correctness /
 //   duplication / wrong-problem are deliberately EXCLUDED. Every dimension below carries a `floorGap` line
 //   proving the floor underweights it; a lens here is ADDITIVE, never a re-run of the floor.
+//
+// Trigger is PURELY SEMANTIC (no path-name heuristic). The risk axis of a change lives in the DIFF's
+// content (an edit that weakens a token check = security; one that adds a lock = concurrency), NOT in the
+// file's name — and a written-down token table (`repo`/`handler`/`worker`/…) silently assumes one project's
+// naming convention and breaks on the next language. So coordinator-route.deriveSemanticLensDimensions reads
+// the actual diff and picks dimensions on merit; this module only owns the closed enum + its persona text.
+// (A path-name pre-filter was tried and removed: it over-fired on dir names — e.g. the monorepo segment
+// `nsai-api` matched an `api` token on every file — and under-fired on semantic risk in generically-named
+// files, while saving no LLM call since the semantic layer runs anyway. See gate-b-multilens-amplifier.md.)
 
 export type LensDimension =
   | 'security'
@@ -30,19 +39,11 @@ export interface LensDimensionMeta {
   key: LensDimension
   // Injected ADDITIVELY into the derived lens persona (§3.3): "ADDITIONALLY scrutinize <focus> deeply, on
   // top of your standard checks" — never "ONLY <focus>" (that would narrow and dilute the C-base floor).
+  // Also handed to the semantic trigger so the LLM knows what each dimension means before proposing it.
   focus: string
   // Orthogonality proof (§3.1): why the floor verifier does NOT already cover this axis. The floor judges
   // correctness/duplication/wrong-problem and runs the build; these are the axes that survive a green build.
   floorGap: string
-  // Content-driven trigger hints (§3.2). Path-localized hints feed the pure-regex pass (zero LLM); when a
-  // small logic diff carries the risk in its SEMANTICS rather than its path (e.g. tightening a token check
-  // inside a generically-named middleware file), the LLM trigger decides — these hints only seed the regex.
-  // NOTE for M2's matcher: (1) a hint MAY intentionally seed >1 dimension when one path genuinely carries
-  // multiple risk axes (e.g. 'query' → data-integrity + perf; 'schema' → api-contract + migration-safety) —
-  // dedup is BY KEY, never by hint, so do NOT "dedupe the hints" (that would silently drop coverage).
-  // (2) Match hints on PATH SEGMENTS / token boundaries, NOT raw substring — else 'ddl' (migration-safety)
-  // would spuriously fire on every 'mi(ddl)eware' path. M2 owns this matcher discipline.
-  pathHints: readonly string[]
 }
 
 export const LENS_DIMENSIONS: readonly LensDimensionMeta[] = [
@@ -54,7 +55,6 @@ export const LENS_DIMENSIONS: readonly LensDimensionMeta[] = [
     floorGap:
       'A green build proves nothing about whether a 3-line edit weakened a token/permission check — the risk ' +
       'is in the access-control SEMANTICS, which the floor does not adversarially probe.',
-    pathHints: ['auth', 'crypto', 'permission', 'session', 'token', 'ssrf', 'sanitize', 'middleware', 'secret', 'jwt'],
   },
   {
     key: 'data-integrity',
@@ -64,7 +64,6 @@ export const LENS_DIMENSIONS: readonly LensDimensionMeta[] = [
     floorGap:
       'The floor checks the code compiles, not whether a write is transactional, idempotent, or consistent ' +
       'under a mid-operation failure — that requires reasoning about the DB interaction, not the diff alone.',
-    pathHints: ['repo', 'transaction', 'tx', 'db', 'query', 'insert', 'update', 'delete', 'store', 'persist'],
   },
   {
     key: 'perf',
@@ -74,7 +73,6 @@ export const LENS_DIMENSIONS: readonly LensDimensionMeta[] = [
     floorGap:
       'The floor runs build/typecheck, never a benchmark — a correct, compiling change can still ship an ' +
       'N+1 or a complexity blow-up that no green build reveals.',
-    pathHints: ['loop', 'query', 'index', 'cache', 'batch', 'paginate', 'stream'],
   },
   {
     key: 'concurrency',
@@ -84,7 +82,6 @@ export const LENS_DIMENSIONS: readonly LensDimensionMeta[] = [
     floorGap:
       'A single static read by the floor cannot see a race, a lock-ordering hazard, or a leaked process group ' +
       '— concurrency defects do not show up in a one-pass diff review or a single build.',
-    pathHints: ['lock', 'mutex', 'async', 'concurrent', 'spawn', 'goroutine', 'channel', 'atomic', 'worker', 'pool'],
   },
   {
     key: 'error-handling',
@@ -96,7 +93,6 @@ export const LENS_DIMENSIONS: readonly LensDimensionMeta[] = [
     floorGap:
       'A green build exercises only the happy path; it never proves a catch block is non-empty, a fallback ' +
       'is reachable, or a rejection is handled — failure-path soundness survives any compile.',
-    pathHints: ['catch', 'fallback', 'recover', 'abort', 'rethrow', 'reject'],
   },
   {
     key: 'api-contract',
@@ -108,7 +104,6 @@ export const LENS_DIMENSIONS: readonly LensDimensionMeta[] = [
     floorGap:
       'The floor judges the diff against the task in isolation; it does not enumerate external callers or ' +
       'wire consumers to confirm an exported signature / serialized shape stayed backward-compatible.',
-    pathHints: ['api', 'dto', 'contract', 'export', 'interface', 'proto', 'schema', 'wire', 'public'],
   },
   {
     key: 'migration-safety',
@@ -118,7 +113,6 @@ export const LENS_DIMENSIONS: readonly LensDimensionMeta[] = [
     floorGap:
       'The floor checks the migration code compiles, not whether the backfill is correct, the change is ' +
       'rollback-safe, or old-schema readers survive during a rolling deploy.',
-    pathHints: ['migration', 'migrate', 'ddl', 'alter', 'schema', 'backfill', 'ensurecolumn'],
   },
   {
     key: 'test-quality',
@@ -126,50 +120,18 @@ export const LENS_DIMENSIONS: readonly LensDimensionMeta[] = [
       'test-quality: do the tests actually run and assert? — are any vacuous, skipped, DB-gated-into-SKIP, or ' +
       'missing for a module the task explicitly named? (the strong-agent slip the big-project run caught.)',
     floorGap:
-      'The floor runs typecheck + build and does NOT execute the test suite at all (prompts.ts:75) — so test ' +
-      'EXECUTION plus quality (vacuous / silently SKIPped / DB-gated-into-SKIP / missing a mandated module) ' +
-      'is entirely floor-uncovered; "it compiles" is not "the right tests run and assert the right thing".',
-    pathHints: ['_test', '.test.', '.spec.', 'test/', '__tests__', 'testdata', 'fixture', 'mock'],
+      'The floor runs typecheck + build and does NOT execute the test suite at all — so test EXECUTION plus ' +
+      'quality (vacuous / silently SKIPped / DB-gated-into-SKIP / missing a mandated module) is entirely ' +
+      'floor-uncovered; "it compiles" is not "the right tests run and assert the right thing".',
   },
 ]
 
 // Mechanical dedup / validation surface (§3.1): the trigger's proposed keys are filtered against this set
 // (drop anything not in the enum) and deduped by key (first-per-key wins) in CODE — never by asking the model.
+// This Set IS the semantic cap: a step can trigger at most |enum| lenses, enforced in code, no magic number.
 export const LENS_DIMENSION_KEYS: ReadonlySet<LensDimension> = new Set(LENS_DIMENSIONS.map((d) => d.key))
-
-// The hard ceiling on lenses per gated step = the number of orthogonal dimensions the team has defined.
-// This is the SEMANTIC cap (§3.1), distinct from the physical concurrency cap min(16, cores−2) (§3.5).
-export const MAX_LENS_DIMENSIONS = LENS_DIMENSIONS.length
 
 // Resolve a proposed dimension key to its metadata, or null if it is not in the closed enum (dropped).
 export function lensDimensionMeta(key: string): LensDimensionMeta | null {
   return LENS_DIMENSIONS.find((d) => d.key === key) ?? null
-}
-
-// Token-boundary path-hint match (§3.2). A plain-token hint ('ddl', 'auth') must equal a path SEGMENT
-// exactly — so 'ddl' never fires on 'mi(ddl)eware'. A file-pattern hint (one containing . _ / -, e.g.
-// '_test' / '.spec.') matches as a substring of the full lowercased path. This is the matcher discipline
-// the M0 review flagged as M2's responsibility.
-function hintMatchesPath(hint: string, segments: readonly string[], lowerPath: string): boolean {
-  if (/[._/-]/.test(hint)) return lowerPath.includes(hint) // file-pattern hint ('_test', '.spec.')
-  // Long plain tokens (>=6) match a segment as a SUBSTRING so plurals/variants count ('migration' →
-  // 'migrations', 'schema' → 'schemas'); short tokens (<6) must EQUAL a segment, so 'ddl' can't fire on
-  // 'middleware' and 'api' can't fire on 'rapid'.
-  if (hint.length >= 6) return segments.some((s) => s.includes(hint))
-  return segments.includes(hint)
-}
-
-// Path-only (zero-LLM) dimension selection (§3.2): which dimensions the changed file PATHS implicate.
-// Deterministic; the semantic LLM trigger (coordinator-route.selectLensDimensions) layers on top to catch
-// risk that lives in a small logic diff rather than the path. Deduped by key.
-export function selectDimensionsByPath(changedPaths: readonly string[]): LensDimension[] {
-  const hit = new Set<LensDimension>()
-  for (const path of changedPaths) {
-    const lower = path.toLowerCase()
-    const segments = lower.split(/[/._\-]+/).filter(Boolean)
-    for (const dim of LENS_DIMENSIONS) {
-      if (!hit.has(dim.key) && dim.pathHints.some((h) => hintMatchesPath(h, segments, lower))) hit.add(dim.key)
-    }
-  }
-  return [...hit]
 }

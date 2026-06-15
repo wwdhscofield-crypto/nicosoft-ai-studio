@@ -10,7 +10,7 @@ import * as settingsService from './settings.service'
 import * as gateOutcomeRepo from '../repos/gate-outcome.repo'
 import { COORDINATOR_VERIFIER_PROMPT, lensVerifierPrompt, displayName } from '../agent/roles/prompts'
 import { deriveAcceptanceCriteria, route, selectLensDimensions } from './coordinator-route'
-import { gitHead, changedPathsSince } from './lens-diff'
+import { gitHead, changedPathsSince, diffSince } from './lens-diff'
 import { lensDimensionMeta, type LensDimension } from './lens-dimensions'
 import { runBuildOnce, type SharedBuild } from './lens-build'
 import { parallelLensLimited } from './lens-pool'
@@ -82,10 +82,18 @@ interface DomainClosure {
 // M2's 'shadow'). Fully best-effort: any failure → [] so the floor verdict always stands alone.
 interface LensVerdict {
   key: LensDimension
-  passed: boolean
+  why: string // why the trigger selected this dimension — recorded so the selected-lens set is reconstructable
+  produced: boolean // did the lens verifier yield a usable PASS/FAIL? false = dropped (infra fail / no VERDICT)
+  passed: boolean // meaningful only when produced; false placeholder when dropped
   feedback: string
   inputTokens: number
   outputTokens: number
+}
+
+// Lens-row evidence = the selection reason (why this dimension fired) + the verifier's verdict text, so a
+// gate_outcomes dump reconstructs the full selected-lens set: which dimensions fired, why, and each outcome.
+function lensEvidence(lv: LensVerdict): string {
+  return `[selected: ${lv.why || 'semantic trigger'}] ${lv.feedback}`
 }
 
 async function runLenses(roleId: string, opts: RunStepOptions, gate: { originalPrompt: string; approvedPlan?: string; acceptance?: string[] }, implementationText: string, stepId: string, baseRef: string, baseChanged: string[], signal?: AbortSignal): Promise<LensVerdict[]> {
@@ -100,7 +108,10 @@ async function runLenses(roleId: string, opts: RunStepOptions, gate: { originalP
     const before = new Set(baseChanged)
     const changed = after.filter((p) => !before.has(p)) // ONLY this step's delta — de-contaminate prior pipeline steps
     if (changed.length === 0) return []
-    const selected = await selectLensDimensions(changed, gate.originalPrompt, signal)
+    // Capture the diff TEXT (lightweight git diff, NOT a build) and let the semantic trigger pick dimensions
+    // from the CHANGE's content — language-agnostic, no file-name heuristic (gate-b-multilens §3.2 rewrite).
+    const diff = await diffSince(opts.cwd, baseRef)
+    const selected = await selectLensDimensions(changed, diff, gate.originalPrompt, signal)
     if (selected.length === 0) return []
 
     // All lenses borrow ONE independent verifier role (≠ implementer) for their model/endpoint — also used
@@ -115,33 +126,46 @@ async function runLenses(roleId: string, opts: RunStepOptions, gate: { originalP
     const sharedBuild = await runBuildOnce(opts.cwd)
 
     // Fan out under the two-layer limiter (global min(16,cores−2) + per-endpoint). Each lens emits a hard
-    // verdict; a non-contracted reply is retried ONCE (schema-equivalent, §4.F), then dropped to null
-    // (degrade, never block the others or the floor).
-    const tasks = selected.map((sel) => async (): Promise<LensVerdict | null> => {
+    // verdict; a non-contracted reply is retried ONCE (schema-equivalent, §4.F), then marked produced:false
+    // (dropped, degrade — never block the others or the floor). EVERY selected lens returns a record (carrying
+    // its `why`) so the selected-lens set is fully reconstructable from gate_outcomes — a dropped lens still
+    // gets a row (unverified) downstream, so a green step can never be confused with a never-triggered one.
+    const tasks = selected.map((sel) => async (): Promise<LensVerdict> => {
+      const base = { key: sel.key, why: sel.why }
       const meta = lensDimensionMeta(sel.key)
-      if (!meta) return null
+      if (!meta) return { ...base, produced: false, passed: false, feedback: 'unknown dimension (dropped)', inputTokens: 0, outputTokens: 0 }
       const lensCtx: LensContext = { key: sel.key, focus: meta.focus, sharedBuild, stepId }
-      // Up to 2 attempts: a non-contracted reply (no parseable VERDICT line) is retried ONCE, then the lens
-      // is dropped to null. The attempts run SEQUENTIALLY and reuse the same lens toolUseId by design — the
-      // retry's start/done overwrites the dropped first attempt's bubble, so the UI shows the final usable
-      // verdict. (Distinct ids matter only for CONCURRENT lenses, which always have distinct dimension keys.)
+      let inTok = 0
+      let outTok = 0
+      // Up to 2 attempts: a non-contracted reply (no parseable VERDICT line) is retried ONCE, then dropped.
+      // The attempts run SEQUENTIALLY and reuse the same lens toolUseId by design — the retry's start/done
+      // overwrites the dropped first attempt's bubble, so the UI shows the final usable verdict. (Distinct ids
+      // matter only for CONCURRENT lenses, which always have distinct dimension keys.) Tokens accumulate across
+      // attempts so a dropped lens's retry cost is still counted.
       for (let attempt = 0; attempt < 2; attempt++) {
         const v = await runVerifierStep(roleId, opts, gate, implementationText, signal, lensCtx)
-        if (v.infraFailure) return null
-        if (v.contracted) return { key: sel.key, passed: v.passed, feedback: v.feedback, inputTokens: v.inputTokens, outputTokens: v.outputTokens }
+        inTok += v.inputTokens
+        outTok += v.outputTokens
+        if (v.infraFailure) return { ...base, produced: false, passed: false, feedback: `lens verifier infra failure: ${v.feedback}`, inputTokens: inTok, outputTokens: outTok }
+        if (v.contracted) return { ...base, produced: true, passed: v.passed, feedback: v.feedback, inputTokens: inTok, outputTokens: outTok }
       }
-      return null
+      return { ...base, produced: false, passed: false, feedback: 'lens produced no parseable VERDICT after 2 attempts (dropped)', inputTokens: inTok, outputTokens: outTok }
     })
-    const verdicts = (await parallelLensLimited(verifierEndpointId, tasks)).filter((v): v is LensVerdict => v != null)
+    // parallelLensLimited preserves order (Promise.all) and yields null ONLY for a rare aborted task
+    // (concurrency backstop / unexpected throw). Map each null back to a dropped record via selected[i] so
+    // EVERY selected lens still produces exactly one record → exactly one gate_outcomes row → the selected
+    // set stays fully reconstructable even in that edge (no silently-vanished lens).
+    const results = await parallelLensLimited(verifierEndpointId, tasks)
+    const verdicts: LensVerdict[] = results.map((v, i) =>
+      v ?? { key: selected[i].key, why: selected[i].why, produced: false, passed: false, feedback: 'lens task aborted (concurrency backstop or unexpected error)', inputTokens: 0, outputTokens: 0 }
+    )
 
-    // NOTE: lens rows are NOT recorded here. M4 records each lens's FINAL outcome (pass, or its closure result
-    // fixed/false-positive/unresolved) AFTER the closure stage in runGatedRoleStep — recording the raw
-    // pass/fail now would double-count a lens that later gets fixed (one 'fail' row + one 'fixed' row).
-    if (verdicts.length) {
-      console.log(`[gate-b/multilens] step ${stepId}: ${verdicts.length}/${selected.length} lens verdict(s) — ${verdicts.map((v) => `${v.key}:${v.passed ? 'PASS' : 'FAIL'}`).join(', ')} over ${changed.length} changed path(s)`)
-    } else if (selected.length) {
-      console.log(`[gate-b/multilens] step ${stepId}: ${selected.length} lens(es) selected but none produced a usable verdict — floor stands`)
-    }
+    // NOTE: lens rows are NOT recorded here. M4 records each lens's FINAL outcome (pass / closure result /
+    // unverified-if-dropped) AFTER the closure stage in runGatedRoleStep — recording now would double-count a
+    // lens that later gets fixed. The console line logs the full selected set incl. drops for live monitoring.
+    const produced = verdicts.filter((v) => v.produced)
+    const dropped = verdicts.filter((v) => !v.produced)
+    console.log(`[gate-b/multilens] step ${stepId}: selected ${verdicts.length} lens(es) over ${changed.length} changed path(s) — ${verdicts.map((v) => `${v.key}${v.produced ? `:${v.passed ? 'PASS' : 'FAIL'}` : ':DROPPED'}`).join(', ')}${dropped.length ? ` (${produced.length} produced, ${dropped.length} dropped)` : ''}`)
     return verdicts
   } catch (e) {
     console.warn('[gate-b/multilens] lens fan-out failed (non-blocking, floor stands):', e instanceof Error ? e.message : e)
@@ -242,18 +266,25 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
     inputTokens += lv.inputTokens
     outputTokens += lv.outputTokens
   }
-  const failedLenses = lensVerdicts.filter((v) => !v.passed)
+  // produced lens that FAILed → drives closure; a DROPPED lens (no usable verdict) is NOT a fail (no defect
+  // evidence to act on) — recorded 'unverified' for reconstructability, never enters closure or the fold.
+  const failedLenses = lensVerdicts.filter((v) => v.produced && !v.passed)
+  const droppedLenses = lensVerdicts.filter((v) => !v.produced)
 
   // PRE-closure gate (gate-b-multilens §4.F step 3 / §5.1): floor-FAIL OR any-lens-FAIL → close the loop.
   // All-green (floor PASS + every lens PASS, or no lens) is a real pass; a SKIPPED floor keeps 'unverified'.
   if (verdict.passed && failedLenses.length === 0) {
     const outcome: GateOutcome = verdict.skipped ? 'unverified' : 'pass'
     recordOutcome(outcome, 1, verdict.feedback)
-    for (const lv of lensVerdicts) recordLensOutcome(lv.key, 'pass', lv.feedback) // passing lens rows
+    // produced lens → 'pass'; dropped lens → 'unverified' (kept so the selected set is reconstructable).
+    for (const lv of lensVerdicts) recordLensOutcome(lv.key, lv.produced ? 'pass' : 'unverified', lensEvidence(lv))
     // An ALL-GREEN multi-lens step still gets an aggregate row (=outcome) so the M5 A/B reader counts it as an
     // amplified step — the denominator. A pure floor-only step (NO lens ran) gets NO aggregate row: it stays a
     // lone floor row, byte-identical to the single-verifier era (the lensVsFloor join simply doesn't see it).
-    if (lensVerdicts.length > 0) recordAggregate(outcome, 1, verdict.feedback)
+    if (lensVerdicts.length > 0) {
+      const ev = droppedLenses.length ? `${verdict.feedback}\n[${droppedLenses.length} lens(es) dropped/unverified: ${droppedLenses.map((l) => l.key).join(', ')}]` : verdict.feedback
+      recordAggregate(outcome, 1, ev)
+    }
     return { ...result, inputTokens, outputTokens, gateOutcome: outcome, gateEvidence: verdict.skipped ? verdict.feedback : undefined }
   }
 
@@ -298,14 +329,21 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
 
   const lensOutcomes: GateOutcome[] = []
   for (const lv of lensVerdicts) {
+    if (!lv.produced) {
+      // dropped lens (no usable verdict): record 'unverified' for reconstructability, but DON'T fold it into
+      // the aggregate — it has no verdict to fold. Keeps the M4 worst-of semantics while making it visible
+      // that the dimension WAS selected (vs never triggered).
+      recordLensOutcome(lv.key, 'unverified', lensEvidence(lv))
+      continue
+    }
     if (lv.passed) {
-      recordLensOutcome(lv.key, 'pass', lv.feedback)
+      recordLensOutcome(lv.key, 'pass', lensEvidence(lv))
       lensOutcomes.push('pass')
       continue
     }
     const lc = closures.find((c) => c.kind === 'lens' && c.key === lv.key)
     const lensOutcome: GateOutcome = lc?.outcome ?? 'unresolved' // not closed (circuit-breaker) → unresolved
-    recordLensOutcome(lv.key, lensOutcome, lc?.evidence ?? lv.feedback)
+    recordLensOutcome(lv.key, lensOutcome, lc?.evidence ?? lensEvidence(lv))
     lensOutcomes.push(lensOutcome)
   }
 
@@ -315,6 +353,7 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
   // fold genuinely runs AFTER the closure loop (the §4.F ordering bug the doc audit caught).
   const aggregate = worstOf([floorDomainOutcome, ...lensOutcomes])
   let aggregateEvidence = closures.map((c) => `[${c.kind === 'lens' ? `${c.key} lens` : 'floor'} — ${c.outcome}] ${c.evidence}`).join('\n\n') || verdict.feedback
+  if (droppedLenses.length) aggregateEvidence += `\n[${droppedLenses.length} lens(es) dropped/unverified: ${droppedLenses.map((l) => l.key).join(', ')}]`
   if (aggregate === 'unresolved' && snap?.sha) aggregateEvidence += `\n[Pre-fix workspace snapshot available — ${describeSnapshot(snap)}]`
   // Aggregate row ONLY for steps that actually ran lenses: a floor-only FAIL→closure step (kill-switch off /
   // no changed paths / no independent verifier / degraded fan-out → lensVerdicts=[]) has no lens to compare

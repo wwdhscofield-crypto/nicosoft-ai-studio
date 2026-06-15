@@ -28,3 +28,15 @@ export async function changedPathsSince(cwd: string | undefined, base: string): 
   const untracked = (await git(cwd, ['ls-files', '--others', '--exclude-standard'])).split('\n').filter(Boolean)
   return [...new Set([...tracked, ...untracked])]
 }
+
+// The actual diff TEXT since `base`, truncated — fed to the SEMANTIC lens trigger so it judges the risk axis
+// from the CHANGE itself (an edit weakening a token check = security), not from file names. Lightweight:
+// `git diff` only, NOT a build (the full shared build runs later, only if a lens fires). Tracked changes
+// only — a brand-new untracked file's content is invisible to `git diff`, but its PATH still reaches the
+// trigger via changedPathsSince, so the trigger sees "new file X exists" even when it can't see the body.
+// '' on any error → the trigger falls back to judging from the path list alone (degrade, never throw).
+export async function diffSince(cwd: string | undefined, base: string, maxChars = 20_000): Promise<string> {
+  if (!cwd || !base) return ''
+  const diff = await git(cwd, ['diff', base])
+  return diff.length > maxChars ? `${diff.slice(0, maxChars)}\n…[diff truncated for lens trigger]` : diff
+}
