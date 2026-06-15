@@ -30,6 +30,49 @@ import { ulid } from '../db/id'
 export type GateOutcome = 'pass' | 'fixed' | 'false-positive' | 'unverified' | 'unresolved'
 export type GatedStepResult = Awaited<ReturnType<typeof runRoleStep>> & { gateOutcome?: GateOutcome; gateEvidence?: string }
 
+// --- Multi-lens closure model (gate-b-multilens §5, M4) -------------------------------------------------
+
+// Severity ladder for the post-closure worst-of fold (§5.4): the STEP outcome is the most-alarming of the
+// floor domain's outcome and every lens domain's outcome. "Can't call it done" (unresolved/unverified)
+// outranks a confirmed close (fixed/false-positive/pass). unverified sits just under unresolved (a verifier
+// that could not judge is worse than a confirmed fix) and above fixed.
+const OUTCOME_SEVERITY: Record<GateOutcome, number> = {
+  unresolved: 4,
+  unverified: 3,
+  fixed: 2,
+  'false-positive': 1,
+  pass: 0
+}
+function worstOf(outcomes: GateOutcome[]): GateOutcome {
+  return outcomes.reduce<GateOutcome>((worst, o) => (OUTCOME_SEVERITY[o] > OUTCOME_SEVERITY[worst] ? o : worst), 'pass')
+}
+
+// Cost circuit-breaker (§5.5): the max failed domains a single step will actually close (handler + re-verify
+// each). Floor(1) + lenses(≤|enum|) verdicts are already bounded; this caps the WRITE-heavy closure stage.
+// ≤ |enum| by construction; a runaway backstop, never hit by a normal 1-3 failed-domain step. Domains beyond
+// it are surfaced 'unresolved' (logged), never silently dropped.
+const CLOSURE_DOMAIN_CAP = 6
+
+// One failed domain needing closure: the floor (holistic) or a single failed lens dimension. Each carries
+// ONLY its own failure evidence so its handler fixes its own defect, not a merged blob (§5.2).
+interface FailedDomain {
+  kind: 'floor' | 'lens'
+  key?: LensDimension // lens domains only
+  focus?: string // lens domains only — the re-verify persona's focus
+  feedback: string // this domain's failure evidence
+}
+// The result of closing one domain (§5.4 input).
+interface DomainClosure {
+  kind: 'floor' | 'lens'
+  key?: LensDimension
+  handlerRoleId: string
+  outcome: Extract<GateOutcome, 'fixed' | 'false-positive' | 'unresolved'>
+  failureFeedback: string // the original domain failure (the learning loop's "verdict")
+  evidence: string // the closure result (handler text or re-verify feedback)
+  inputTokens: number
+  outputTokens: number
+}
+
 // Multi-lens fan-out (gate-b-multilens §3.4/§4, M3) — replaces M2's shadow recorder. Runs AFTER the floor
 // verifier: diffs the implementer's real delta, selects lens dimensions (path + semantic trigger), runs ONE
 // shared build, then fans out one read-only adversarial verifier per dimension under the concurrency limiter.
@@ -84,15 +127,9 @@ async function runLenses(roleId: string, opts: RunStepOptions, gate: { originalP
     })
     const verdicts = (await parallelLensLimited(verifierEndpointId, tasks)).filter((v): v is LensVerdict => v != null)
 
-    // Record each lens's real verdict as a row_kind='lens' row (outcome pass/fail) — kept OUT of the floor
-    // pass-rate by the reader's WHERE row_kind='floor' (gate-outcome.repo §6).
-    for (const v of verdicts) {
-      try {
-        gateOutcomeRepo.record({ convId: opts.convId, gate: 'B', roleId, outcome: v.passed ? 'pass' : 'fail', rounds: 1, evidence: v.feedback, rowKind: 'lens', stepId, lens: v.key })
-      } catch {
-        /* stats are best-effort */
-      }
-    }
+    // NOTE: lens rows are NOT recorded here. M4 records each lens's FINAL outcome (pass, or its closure result
+    // fixed/false-positive/unresolved) AFTER the closure stage in runGatedRoleStep — recording the raw
+    // pass/fail now would double-count a lens that later gets fixed (one 'fail' row + one 'fixed' row).
     if (verdicts.length) {
       console.log(`[gate-b/multilens] step ${stepId}: ${verdicts.length}/${selected.length} lens verdict(s) — ${verdicts.map((v) => `${v.key}:${v.passed ? 'PASS' : 'FAIL'}`).join(', ')} over ${changed.length} changed path(s)`)
     } else if (selected.length) {
@@ -130,6 +167,23 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
       gateOutcomeRepo.record({ convId: opts.convId, gate: 'B', roleId, outcome, rounds, evidence, rowKind: 'floor', stepId })
     } catch (e) {
       console.warn('[coordinator] gate outcome record failed:', e instanceof Error ? e.message : e)
+    }
+  }
+  // M4 (gate-b-multilens §6): a lens row carries that dimension's FINAL outcome (pass / fixed / false-positive
+  // / unresolved); the aggregate row carries the step's worst-of fold. Both are EXCLUDED from the floor
+  // pass-rate by the readers' WHERE row_kind='floor', so floor stats stay byte-identical.
+  const recordLensOutcome = (lens: LensDimension, outcome: string, evidence: string): void => {
+    try {
+      gateOutcomeRepo.record({ convId: opts.convId, gate: 'B', roleId, outcome, rounds: 1, evidence, rowKind: 'lens', stepId, lens })
+    } catch {
+      /* stats best-effort */
+    }
+  }
+  const recordAggregate = (outcome: string, rounds: number, evidence: string): void => {
+    try {
+      gateOutcomeRepo.record({ convId: opts.convId, gate: 'B', roleId, outcome, rounds, evidence, rowKind: 'aggregate', stepId })
+    } catch {
+      /* stats best-effort */
     }
   }
   const baseOpts: RunStepOptions = { ...opts, roleId, prompt: prompt + criteriaBlock, signal: signal ?? opts.signal }
@@ -183,136 +237,96 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
   }
   const failedLenses = lensVerdicts.filter((v) => !v.passed)
 
-  // PRE-closure gate (gate-b-multilens §4.F step 3 / §5.1): floor-FAIL OR any-lens-FAIL → close the loop. A
-  // clean floor with every lens passing (or no lens) is a real pass; a SKIPPED floor (no independent role
-  // bound) keeps its honest 'unverified' label (lenses don't run in that case either).
+  // PRE-closure gate (gate-b-multilens §4.F step 3 / §5.1): floor-FAIL OR any-lens-FAIL → close the loop.
+  // All-green (floor PASS + every lens PASS, or no lens) is a real pass; a SKIPPED floor keeps 'unverified'.
   if (verdict.passed && failedLenses.length === 0) {
     const outcome: GateOutcome = verdict.skipped ? 'unverified' : 'pass'
     recordOutcome(outcome, 1, verdict.feedback)
+    for (const lv of lensVerdicts) recordLensOutcome(lv.key, 'pass', lv.feedback) // passing lens rows
     return { ...result, inputTokens, outputTokens, gateOutcome: outcome, gateEvidence: verdict.skipped ? verdict.feedback : undefined }
   }
 
-  // Floor PASS but a lens FAILed: the floor already confirmed the tree is correct + green. Do NOT route a
-  // verified-clean tree into the edit-pressured fail handler (runGateBFailFollowUp dispatches with
-  // expectsFileChanges:true + "fix it directly") on the strength of an orthogonal lens finding — that can
-  // DEGRADE a passing implementation, and pre-M3 a floor-PASS step never entered the handler at all. SURFACE
-  // the lens concern as an explicit unresolved (the user decides); M4's per-dimension closure owns the SAFE
-  // lens-targeted fix path. floor-FAIL keeps the existing closure below, unchanged.
-  if (verdict.passed) {
-    // The floor domain genuinely PASSED — record the floor row as its real floor-domain outcome
-    // ('pass'/'unverified'), NEVER 'unresolved'. A lens FAIL must not pollute the floor pass-rate (§2
-    // invariant 3 / M1 red line): the floor verifier passed, full stop. The STEP is still unresolved (a lens
-    // flagged a pointable concern) — that lives in the RETURN value the caller surfaces (and the aggregate
-    // row in M4), not in the floor row. (skipped can't co-occur with a lens FAIL — a skipped floor means no
-    // independent role, so runLenses returns []; the ternary is just defensive.)
-    const floorOutcome: GateOutcome = verdict.skipped ? 'unverified' : 'pass'
-    recordOutcome(floorOutcome, 1, verdict.feedback)
-    const lensDigest = buildClosureFeedback(verdict, failedLenses) // floor passed → lens-only digest
-    console.log(`[gate-b/multilens] step ${stepId}: floor ${floorOutcome.toUpperCase()} but ${failedLenses.length} lens FAIL (${failedLenses.map((l) => l.key).join(', ')}) — step surfaced unresolved, no auto-edit (per-lens closure is M4)`)
-    return {
-      ...result,
-      inputTokens,
-      outputTokens,
-      gateOutcome: 'unresolved',
-      gateEvidence: lensDigest,
-      text: `${result.text}\n\n[Floor verification PASSED, but ${failedLenses.length} additional lens check(s) flagged a concern — surfaced for your review, not auto-fixed:]\n\n${lensDigest}`
+  // M4 per-domain closure (§5): the list of FAILED domains — the floor if it FAILed + each failed lens — each
+  // carrying ONLY its own evidence so its handler fixes its OWN defect (§5.2), not a merged blob. This unifies
+  // the M3 split (floor-PASS+lens-FAIL is no longer surfaced unresolved — it now gets a SAFE per-lens closure).
+  // Circuit-breaker (§5.5): cap the write-heavy closure stage; domains beyond the cap are surfaced unresolved.
+  const failedDomains: FailedDomain[] = []
+  if (!verdict.passed) failedDomains.push({ kind: 'floor', feedback: verdict.feedback })
+  for (const lv of failedLenses) failedDomains.push({ kind: 'lens', key: lv.key, focus: lensDimensionMeta(lv.key)?.focus ?? lv.key, feedback: lv.feedback })
+  const domainsToClose = failedDomains.slice(0, CLOSURE_DOMAIN_CAP)
+  if (failedDomains.length > domainsToClose.length) {
+    console.warn(`[gate-b/multilens] step ${stepId}: ${failedDomains.length} failed domains exceed cap ${CLOSURE_DOMAIN_CAP} — closing ${domainsToClose.length}, ${failedDomains.length - domainsToClose.length} surfaced unresolved (circuit-breaker §5.5)`)
+  }
+
+  // Snapshot ONCE before any handler edits the tree (rollback point; recovery stays manual). The handler
+  // edits the user's real working tree on top of the implementer's changes — without a rollback point a bad
+  // fix degrades a good implementation unrecoverably.
+  const snap = await snapshotWorkspace(opts.cwd)
+  if (snap) console.warn(`[coordinator] gate-b pre-fix workspace snapshot: ${describeSnapshot(snap)}`)
+
+  // Closure runs SERIALLY across domains: handlers EDIT the shared working tree, so parallel handlers would
+  // race/clobber each other (the lens fan-out could be parallel ONLY because lenses are read-only; closure
+  // cannot). Deliberate departure from §4.F step-4's "pipeline" sketch — write-conflict safety wins, and §3.5
+  // explicitly allows declaring the closure stage sequential. Each domain: its owning handler fixes its OWN
+  // feedback, then a re-verify with the RIGHT persona (floor persona / that lens's focus over a fresh build).
+  const closures: DomainClosure[] = []
+  for (const domain of domainsToClose) {
+    const dc = await closeDomain(roleId, opts, gate, result.text, domain, stepId, signal)
+    inputTokens += dc.inputTokens
+    outputTokens += dc.outputTokens
+    closures.push(dc)
+  }
+
+  // Per-domain outcomes → rows. floor row = the floor domain's outcome (pass if floor passed, else its
+  // closure); each lens row = that lens's FINAL outcome (pass if it passed, else its closure; a domain dropped
+  // by the circuit-breaker → unresolved). The floor row stays FREE of lens influence (§2 invariant 3) — only
+  // the aggregate folds them, so the floor pass-rate is byte-identical to the single-verifier era.
+  const floorClosure = closures.find((c) => c.kind === 'floor')
+  const floorDomainOutcome: GateOutcome = verdict.passed ? (verdict.skipped ? 'unverified' : 'pass') : (floorClosure?.outcome ?? 'unresolved')
+  recordOutcome(floorDomainOutcome, floorClosure ? 2 : 1, floorClosure?.evidence ?? verdict.feedback)
+
+  const lensOutcomes: GateOutcome[] = []
+  for (const lv of lensVerdicts) {
+    if (lv.passed) {
+      recordLensOutcome(lv.key, 'pass', lv.feedback)
+      lensOutcomes.push('pass')
+      continue
+    }
+    const lc = closures.find((c) => c.kind === 'lens' && c.key === lv.key)
+    const lensOutcome: GateOutcome = lc?.outcome ?? 'unresolved' // not closed (circuit-breaker) → unresolved
+    recordLensOutcome(lv.key, lensOutcome, lc?.evidence ?? lv.feedback)
+    lensOutcomes.push(lensOutcome)
+  }
+
+  // POST-closure worst-of fold (§5.4): the STEP outcome = the most-alarming of the floor domain + every lens
+  // domain. Recorded as the aggregate row (row_kind='aggregate') — the step's real result, EXCLUDED from the
+  // floor pass-rate by the readers' WHERE row_kind='floor'. fixed/unresolved only exist post-closure, so this
+  // fold genuinely runs AFTER the closure loop (the §4.F ordering bug the doc audit caught).
+  const aggregate = worstOf([floorDomainOutcome, ...lensOutcomes])
+  let aggregateEvidence = closures.map((c) => `[${c.kind === 'lens' ? `${c.key} lens` : 'floor'} — ${c.outcome}] ${c.evidence}`).join('\n\n') || verdict.feedback
+  if (aggregate === 'unresolved' && snap?.sha) aggregateEvidence += `\n[Pre-fix workspace snapshot available — ${describeSnapshot(snap)}]`
+  recordAggregate(aggregate, closures.length + 1, aggregateEvidence)
+  console.log(`[coordinator] gate-b closure floor=${floorDomainOutcome} lenses=[${lensOutcomes.join(',')}] aggregate=${aggregate}`)
+
+  // Learning loop: distill each domain's confirmed fix / proven false positive (fire-and-forget). 'unresolved'
+  // excluded — no confirmed root cause yet. Each closure learns from its OWN failure → fix pair, not a blob.
+  for (const c of closures) {
+    if (c.outcome === 'fixed' || c.outcome === 'false-positive') {
+      void memoryService.learnFromGateClosure({ convId: opts.convId, roleId, task: gate.originalPrompt, verdict: c.failureFeedback, closure: c.evidence, kind: c.outcome })
     }
   }
 
-  // Floor FAILED → the existing single-stream closure (the tree is NOT green, so a fix is genuinely needed).
-  // Fold any lens-FAIL evidence into the digest so the handler addresses them together. Per-dimension
-  // multi-handler closure + per-lens re-verify is M4.
-  const closureFeedback = buildClosureFeedback(verdict, failedLenses)
-
-  // Gate B FAILED → close the loop (don't leave the FAIL dangling): the verdict+evidence is routed to the
-  // expert who OWNS the failing domain; that expert fixes the real defect or proves a false positive.
-  // Snapshot the workspace FIRST (git-snapshot.ts): the handler edits the user's real working tree on
-  // top of the implementer's changes, and without a rollback point a bad fix degrades a good
-  // implementation unrecoverably. Recovery stays manual — the snapshot only guarantees the point exists.
-  const snap = await snapshotWorkspace(opts.cwd)
-  if (snap) console.warn(`[coordinator] gate-b pre-fix workspace snapshot: ${describeSnapshot(snap)}`)
-  const followUp = await runGateBFailFollowUp(roleId, opts, gate, result.text, closureFeedback, signal)
-  inputTokens += followUp.inputTokens
-  outputTokens += followUp.outputTokens
-
-  // Closure validation (dogfood 2026-06-11: the handler itself quiesced with zero work and the FAIL
-  // sailed through as a normal done). The handler prompt contracts ONE final `CLOSURE: …` line — parse
-  // that first (last match wins); free-text regexes remain as the non-compliant-reply fallback:
-  //   claimed false positive → carries its own evidence, accept as closure;
-  //   claimed fix → must survive ONE re-verification;
-  //   anything else → unresolved.
-  // floorClosureOutcome = the FLOOR domain's closure result — this is what lands in the floor row
-  // (row_kind='floor'). It must NOT be bent by lens state, or the floor pass-rate drifts (§2 invariant 3 /
-  // M1 red line). The STEP outcome (gateOutcome, folded with lens state) is derived AFTER, for the return.
-  let floorClosureOutcome: GateOutcome = 'unresolved'
-  let gateEvidence = closureFeedback
-  let verifierRounds = 1
-  const closure = [...followUp.text.matchAll(/^\s*[#*>•-]*\s*CLOSURE:\s*(FIXED|FALSE[- ]?POSITIVE)\b/gim)].pop()?.[1]?.toUpperCase()
-  if (closure ? closure.startsWith('FALSE') : /误报|false.?positive/i.test(followUp.text)) {
-    floorClosureOutcome = 'false-positive'
-    gateEvidence = followUp.text
-  } else if (closure === 'FIXED' || /已修复|fixed/i.test(followUp.text)) {
-    const reVerdict = await runVerifierStep(roleId, opts, gate, followUp.text, signal)
-    inputTokens += reVerdict.inputTokens
-    outputTokens += reVerdict.outputTokens
-    verifierRounds = 2
-    floorClosureOutcome = reVerdict.passed ? 'fixed' : 'unresolved'
-    gateEvidence = reVerdict.feedback
-  }
-
-  // STEP outcome = floor-domain result FOLDED with lens state (M3's stand-in for M4's worst-of fold). The
-  // re-verify above used the FLOOR persona, which can't re-check a lens dimension — so when the floor closed
-  // fixed/false-positive but a lens still FAILed, the STEP is unresolved (lens not independently re-verified;
-  // that's M4's per-lens re-verify). This fold affects ONLY the return value, never the floor row below.
-  let gateOutcome: GateOutcome = floorClosureOutcome
-  if ((floorClosureOutcome === 'fixed' || floorClosureOutcome === 'false-positive') && failedLenses.length > 0) {
-    gateOutcome = 'unresolved'
-    gateEvidence += `\n[Floor closed ${floorClosureOutcome}, but ${failedLenses.length} lens dimension(s) (${failedLenses.map((l) => l.key).join(', ')}) are not independently re-verified yet — step surfaced unresolved pending per-lens re-verification (M4).]`
-  }
-  // An unresolved STEP means the fix round may have left the tree WORSE than the implementer's
-  // state — surface the rollback point with the failure so the user can recover, not just read it.
-  if (gateOutcome === 'unresolved' && snap?.sha) {
-    gateEvidence += `\n[Pre-fix workspace snapshot available — ${describeSnapshot(snap)}]`
-  }
-  console.log(`[coordinator] gate-b closure floor=${floorClosureOutcome} step=${gateOutcome} handler=${followUp.handlerRoleId}`)
-  // floor ROW = floor-domain outcome ONLY → floor pass-rate byte-identical to the single-verifier era (lens
-  // never enters it, §2 inv 3). The STEP's lens-folded outcome is the RETURN value (+ the aggregate row in
-  // M4). evidence MAY carry the lens/snapshot notes — the evidence COLUMN doesn't feed the pass-rate, only
-  // the outcome value does.
-  recordOutcome(floorClosureOutcome, verifierRounds, gateEvidence)
-  // Close the LEARNING loop too: a confirmed fix or a proven false positive is grounded experience —
-  // distill it into collab-layer memory (fire-and-forget) so the same class of mistake, or the same
-  // false alarm, isn't repeated next time. 'unresolved' is deliberately excluded: it carries no
-  // confirmed root cause yet, and speculative lessons would pollute the pool.
-  if (gateOutcome === 'fixed' || gateOutcome === 'false-positive') {
-    void memoryService.learnFromGateClosure({
-      convId: opts.convId,
-      roleId,
-      task: gate.originalPrompt,
-      verdict: verdict.feedback,
-      closure: followUp.text,
-      kind: gateOutcome
-    })
-  }
+  // Closing voice (§19-26 invariant): the step ends on the coordinator's per-domain verdict + the rework, not
+  // the handler's own note. Each domain shows its outcome and the expert who handled it.
+  const domainNote = closures.map((c) => `${c.kind === 'lens' ? `${c.key} lens` : 'floor'}: ${c.outcome}`).join(', ')
   return {
     ...result,
     inputTokens,
     outputTokens,
-    gateOutcome,
-    gateEvidence,
-    text: `${result.text}\n\n[Independent verification did not pass — ${closureFeedback}]\n\n[Routed to ${displayName(followUp.handlerRoleId)} for rework]\n${followUp.text}`
+    gateOutcome: aggregate,
+    gateEvidence: aggregateEvidence,
+    text: `${result.text}\n\n[Independent verification — ${domainNote || aggregate}]\n\n${closures.map((c) => `[${c.kind === 'lens' ? `${c.key} lens` : 'floor'} → ${displayName(c.handlerRoleId)}]\n${c.evidence}`).join('\n\n')}`
   }
-}
-
-// Merge the floor verifier's FAIL evidence (when it failed) with each failed lens's pointable defect into
-// ONE structured digest for the closure handler (gate-b-multilens §5.1). Each part is labeled (floor vs which
-// lens dimension) so the handler knows what to close out. M3 feeds this single digest to the single-stream
-// closure; M4 splits it per-dimension across multiple handlers.
-function buildClosureFeedback(floor: { passed: boolean; feedback: string }, failedLenses: LensVerdict[]): string {
-  const parts: string[] = []
-  if (!floor.passed) parts.push(`[Floor verifier — FAIL]\n${floor.feedback}`)
-  for (const lv of failedLenses) parts.push(`[${lv.key} lens — FAIL]\n${lv.feedback}`)
-  return parts.join('\n\n')
 }
 
 // After Gate B FAILs, Danny picks the expert who owns the failing domain. Reuses the router so the choice isn't
@@ -345,10 +359,13 @@ async function runGateBFailFollowUp(
   gate: { originalPrompt: string; approvedPlan?: string; acceptance?: string[] },
   implementationText: string,
   feedback: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  idTag?: string
 ): Promise<{ handlerRoleId: string; text: string; inputTokens: number; outputTokens: number }> {
   const handlerRoleId = await chooseFailHandler(feedback, gate, implementerRoleId, signal)
-  const toolId = `gate-b-followup-${Date.now()}`
+  // Distinct per-domain stream identity when M4 closes multiple domains serially (idTag = domain+step); falls
+  // back to a timestamp for a single-domain caller.
+  const toolId = `gate-b-followup-${idTag ?? Date.now()}`
   opts.cb.onToolEvent?.(implementerRoleId, { type: 'sub_tool_start', toolUseId: toolId, parentToolId: 'coordinator-gate-b', name: 'GateBFailHandler', input: { handlerRoleId } })
   const handlerPrompt = [
     'Independent quality verification returned FAIL on the change below. As the responsible expert, CLOSE this out — never leave the FAIL dangling.',
@@ -375,6 +392,48 @@ async function runGateBFailFollowUp(
   })
   opts.cb.onToolEvent?.(implementerRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: 'coordinator-gate-b', name: 'GateBFailHandler', isError: false, result: handler.text || 'no output' })
   return { handlerRoleId, text: handler.text, inputTokens: handler.inputTokens, outputTokens: handler.outputTokens }
+}
+
+// Close ONE failed domain end-to-end (gate-b-multilens §5.2/§5.3, M4): dispatch the domain's owning handler
+// to fix ITS defect (its OWN feedback only, never a merged blob), then re-verify the CLAIMED fix with the
+// RIGHT persona — the floor persona for the floor domain (runs its own build), the failed lens's own focus for
+// a lens domain (over a FRESH shared build, because the handler just edited the tree and the pre-closure build
+// is now stale). Returns the domain's closure outcome (fixed / false-positive / unresolved).
+async function closeDomain(
+  implementerRoleId: string,
+  opts: RunStepOptions,
+  gate: { originalPrompt: string; approvedPlan?: string; acceptance?: string[] },
+  implementationText: string,
+  domain: FailedDomain,
+  stepId: string,
+  signal?: AbortSignal
+): Promise<DomainClosure> {
+  const idTag = domain.kind === 'lens' ? `lens-${domain.key}-${stepId}` : `floor-${stepId}`
+  const followUp = await runGateBFailFollowUp(implementerRoleId, opts, gate, implementationText, domain.feedback, signal, idTag)
+  let inputTokens = followUp.inputTokens
+  let outputTokens = followUp.outputTokens
+  const base = { kind: domain.kind, key: domain.key, handlerRoleId: followUp.handlerRoleId, failureFeedback: domain.feedback }
+  const closure = [...followUp.text.matchAll(/^\s*[#*>•-]*\s*CLOSURE:\s*(FIXED|FALSE[- ]?POSITIVE)\b/gim)].pop()?.[1]?.toUpperCase()
+  if (closure ? closure.startsWith('FALSE') : /误报|false.?positive/i.test(followUp.text)) {
+    return { ...base, outcome: 'false-positive', evidence: followUp.text, inputTokens, outputTokens }
+  }
+  if (closure === 'FIXED' || /已修复|fixed/i.test(followUp.text)) {
+    // Re-verify the claimed fix with the domain's OWN persona. floor → floor persona (runs its own build);
+    // lens → that lens's focus over a FRESH shared build (the handler just changed the tree, so the build
+    // captured before closure is stale). This is the §5.3 "re-verify with the failed lens's focus, not floor".
+    let reVerdict: Awaited<ReturnType<typeof runVerifierStep>>
+    if (domain.kind === 'lens' && domain.key && domain.focus) {
+      const freshBuild = await runBuildOnce(opts.cwd)
+      reVerdict = await runVerifierStep(implementerRoleId, opts, gate, followUp.text, signal, { key: domain.key, focus: domain.focus, sharedBuild: freshBuild, stepId })
+    } else {
+      reVerdict = await runVerifierStep(implementerRoleId, opts, gate, followUp.text, signal)
+    }
+    inputTokens += reVerdict.inputTokens
+    outputTokens += reVerdict.outputTokens
+    return { ...base, outcome: reVerdict.passed ? 'fixed' : 'unresolved', evidence: reVerdict.feedback, inputTokens, outputTokens }
+  }
+  // No closure claim at all → unresolved (dogfood 2026-06-11: a zero-work handler must not pass silently).
+  return { ...base, outcome: 'unresolved', evidence: followUp.text, inputTokens, outputTokens }
 }
 
 export function chooseVerifierRole(implementerRoleId: string): string {
