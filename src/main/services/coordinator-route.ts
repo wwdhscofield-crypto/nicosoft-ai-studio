@@ -18,6 +18,7 @@ import { resolveDepth } from '../llm/thinking'
 import type { ChatMessage } from '../llm/types'
 import { COORDINATOR_ROUTER_PROMPT, DISPATCHABLE_ROLE_IDS, displayName, roleIdFromName } from '../agent/roles/prompts'
 import { LENS_DIMENSIONS, LENS_DIMENSION_KEYS, type LensDimension } from './lens-dimensions'
+import { CODE_FILE_RE } from './lang-registry'
 import type { RouteDecision } from './coordinator-types'
 
 const ROUTER_HISTORY_LIMIT = 4 // last N messages handed to the router for context
@@ -274,7 +275,10 @@ export function isNonTrivialTask(prompt: string): boolean {
   const trivialSignals = ['one-line', 'one line', 'typo', 'copy change', 'single file', 'small text']
   const codingSignals = ['implement', 'build', 'refactor', 'migrate', 'backend', 'frontend', 'typecheck', 'test', 'architecture', 'dispatch flow', 'gate']
   const lineCount = text.split(/\r?\n/).filter((l) => l.trim()).length
-  const fileMentions = text.match(/\b[\w./-]+\.(?:ts|tsx|js|jsx|go|py|rs|md)\b/g) ?? []
+  // CODE_FILE_RE covers the lang-registry's full extension set (multi-language), not the old 8-ext list — so
+  // a mention of >=2 real code files signals non-trivial work across any stack. (Docs like .md are NOT code
+  // files here — a doc-only task doesn't need Gate B.)
+  const fileMentions = text.match(CODE_FILE_RE) ?? []
   // Role names / dispatch modes are deliberately NOT a signal — "let Flynn READ a file" is a read-only ask,
   // not coding work. Only genuine non-trivial signals below (multiple files, many lines, coding verbs).
   if (fileMentions.length >= 2 || lineCount > 3) return true

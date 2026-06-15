@@ -7,39 +7,19 @@
 //      steer it at THRASH_STEER_AT, wind the run down at THRASH_STOP_AT.
 // Pure helpers + a self-contained tracker; all loop wiring stays in loop.ts.
 
+import { VERIFY_COMMAND_RE } from '../services/lang-registry'
+
 export const VERIFY_NUDGE =
   'Reminder: you modified files this run but no verification command has run since the last edit. ' +
   "Before finishing, find and run the project's OWN checks (type checker / linter / tests / build — " +
   'discoverable from its manifest, Makefile, or task scripts) and report their REAL result. If nothing ' +
   'is runnable for this change (docs/config-only, no toolchain available), say so explicitly and finish.'
 
-// Best-effort recognizer for "this Bash command verifies the project" — a curated table of the common
-// toolchains, NOT an exhaustive parser. A miss (project verifies via an unlisted script) costs one
-// false nudge the model answers in a single confirmation turn — same accepted trade-off as the
-// action-displacement guard. Lookbehind/lookahead keep path/config mentions (`.eslintrc`, `bin/tsc`,
-// `jest.config.js`) from counting as invocations; quoted mentions (`echo "go test later"`) still
-// match — fail-open by design (worst case is one missed nudge, never a false block).
-const VERIFY_COMMAND_RE = new RegExp(
-  [
-    String.raw`\bgo\s+(?:test|vet|build)\b`,
-    String.raw`\bgolangci-lint\b`,
-    String.raw`\bcargo\s+(?:test|check|clippy|build)\b`,
-    String.raw`\bpytest\b`,
-    String.raw`\bpython3?\s+-m\s+(?:pytest|unittest|mypy)\b`,
-    String.raw`(?<![./\w-])mypy\b`,
-    String.raw`\bruff\s+check\b`,
-    String.raw`\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|typecheck|type-check|lint|check|build)\b`,
-    String.raw`\bnpx\s+(?:tsc|vitest|jest|eslint|playwright)\b`,
-    String.raw`(?<![./\w-])(?:tsc|vitest|jest|eslint)\b(?!\.\w)`,
-    String.raw`\bnode\s+--test\b`,
-    String.raw`\bmake\s+(?:test|check|lint|build)\b`,
-    String.raw`\bctest\b`,
-    String.raw`\bmvn\s+(?:test|verify|package)\b`,
-    String.raw`(?:\bgradle\b|gradlew)\s+(?:test|check|build)\b`,
-  ].join('|'),
-  'i'
-)
-
+// Best-effort recognizer for "this Bash command verifies the project" — the per-language verify patterns now
+// live in the shared lang-registry (single source: VERIFY_COMMAND_RE), so this guard covers every language the
+// registry does, and adding one is a one-place change. A miss (project verifies via an unlisted script) costs
+// one false nudge the model answers in a single confirmation turn — fail-open by design (worst case is one
+// missed nudge, never a false block).
 export function isVerifyCommand(command: unknown): boolean {
   return typeof command === 'string' && VERIFY_COMMAND_RE.test(command)
 }

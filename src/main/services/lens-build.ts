@@ -5,8 +5,7 @@
 // captured output read-only and never re-run it (their kit omits Bash to enforce this physically).
 
 import { execFile } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { detectBuildChecks } from './lang-registry'
 
 export interface SharedBuild {
   ran: boolean // a toolchain was detected AND its checks executed
@@ -32,50 +31,28 @@ function run(cwd: string, cmd: string, args: string[]): Promise<string> {
   })
 }
 
-// git diff HEAD that resolves '' on ANY error (not a repo / no HEAD) — UNLIKE run(), which captures a
-// non-zero exit as text. A non-repo must yield an EMPTY diff, not a junk "[exit: 128]" string that would be
-// injected into every lens as the supposed change under review.
-function gitDiffSafe(cwd: string): Promise<string> {
+// git diff (base..worktree) that resolves '' on ANY error (not a repo / no HEAD) — UNLIKE run(), which
+// captures a non-zero exit as text. A non-repo must yield an EMPTY diff, not a junk "[exit: 128]" string that
+// would be injected into every lens as the supposed change under review. `base` defaults to HEAD; `paths`
+// LIMITS the diff to this step's own changed files so a pipeline's prior-step edits don't bleed into the
+// lenses' ground truth (they share one cwd with no commit between steps).
+function gitDiffSafe(cwd: string, base = 'HEAD', paths: readonly string[] = []): Promise<string> {
   return new Promise((resolve) => {
-    execFile('git', ['diff', 'HEAD'], { cwd, timeout: 10_000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => resolve(err ? '' : String(stdout)))
+    const args = ['diff', base, ...(paths.length ? ['--', ...paths] : [])]
+    execFile('git', args, { cwd, timeout: 10_000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => resolve(err ? '' : String(stdout)))
   })
-}
-
-function readPackageScripts(cwd: string): Set<string> {
-  try {
-    const pkg = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf8')) as { scripts?: Record<string, string> }
-    return new Set(Object.keys(pkg.scripts ?? {}))
-  } catch {
-    return new Set()
-  }
-}
-
-// Detect the project's own toolchain + the build/typecheck commands to run once. Mirrors the cross-toolchain
-// detection the floor verifier does for itself (it runs `go build`/`npm run typecheck`/`cargo check` per the
-// repo it finds), but here in CODE so the shared prefix is deterministic. Only runs scripts that ACTUALLY
-// exist (reads package.json scripts) — a hard-coded `npm run typecheck` on a repo lacking it would poison the
-// output with a "missing script" error and mislead every lens.
-function detectChecks(cwd: string): Array<[string, string[]]> {
-  if (existsSync(join(cwd, 'go.mod'))) return [['go', ['build', './...']], ['go', ['vet', './...']]]
-  if (existsSync(join(cwd, 'package.json'))) {
-    const scripts = readPackageScripts(cwd)
-    const cmds: Array<[string, string[]]> = []
-    if (scripts.has('typecheck')) cmds.push(['npm', ['run', 'typecheck']])
-    else if (existsSync(join(cwd, 'tsconfig.json'))) cmds.push(['npx', ['--no-install', 'tsc', '--noEmit']])
-    if (scripts.has('build')) cmds.push(['npm', ['run', 'build']])
-    return cmds
-  }
-  if (existsSync(join(cwd, 'Cargo.toml'))) return [['cargo', ['check']]]
-  return []
 }
 
 // Capture the diff + run the toolchain checks ONCE for the whole fan-out. Best-effort: any failure degrades
 // to ran:false (lenses then judge from the diff + their own read-only inspection). diff is captured even when
 // no toolchain is detected — it's the primary ground truth the lenses reason over.
-export async function runBuildOnce(cwd: string | undefined): Promise<SharedBuild> {
+// `base`/`paths` LIMIT the captured diff to this step's own delta (a pipeline shares one cwd with no commit
+// between steps; without limiting, the diff would carry prior steps' edits into the lenses — P1a). The BUILD
+// itself is always whole-project (a build can't be scoped to a path subset); only the diff TEXT is limited.
+export async function runBuildOnce(cwd: string | undefined, base?: string, paths: readonly string[] = []): Promise<SharedBuild> {
   if (!cwd) return { ran: false, diff: '', output: '' }
-  const diff = (await gitDiffSafe(cwd)).slice(0, MAX_DIFF) // '' when not a git repo → lenses inspect files directly
-  const checks = detectChecks(cwd)
+  const diff = (await gitDiffSafe(cwd, base, paths)).slice(0, MAX_DIFF) // '' when not a git repo → lenses inspect files directly
+  const checks = detectBuildChecks(cwd) // multi-language toolchain detection — single source in lang-registry
   if (checks.length === 0) return { ran: false, diff, output: '' }
   let output = ''
   for (const [cmd, args] of checks) {

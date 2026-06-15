@@ -114,7 +114,9 @@ async function runLenses(roleId: string, opts: RunStepOptions, gate: { originalP
     if (changed.length === 0) return []
     // Capture the diff TEXT (lightweight git diff, NOT a build) and let the semantic trigger pick dimensions
     // from the CHANGE's content — language-agnostic, no file-name heuristic (gate-b-multilens §3.2 rewrite).
-    const diff = await diffSince(opts.cwd, baseRef)
+    // LIMIT the diff to `changed` (this step's own delta paths) so a pipeline's prior-step edits don't bleed in
+    // and mis-attribute their risk to this step (P1a).
+    const diff = await diffSince(opts.cwd, baseRef, changed)
     const selected = await selectLensDimensions(changed, diff, gate.originalPrompt, signal)
     if (selected.length === 0) return []
 
@@ -126,8 +128,9 @@ async function runLenses(roleId: string, opts: RunStepOptions, gate: { originalP
     const verifierEndpointId = rolesService.getBinding(verifierRoleId)?.endpointId ?? ''
 
     // Shared build prefix — run ONCE for all lenses (§3.4); injected as ground truth so no lens re-builds
-    // (their kit also omits Bash, enforcing read-only physically).
-    const sharedBuild = await runBuildOnce(opts.cwd)
+    // (their kit also omits Bash, enforcing read-only physically). Diff limited to `changed` (this step's
+    // delta) for the same prior-step-bleed reason as above (P1a); the build itself stays whole-project.
+    const sharedBuild = await runBuildOnce(opts.cwd, baseRef, changed)
 
     // Fan out under the two-layer limiter (global min(16,cores−2) + per-endpoint). Each lens emits a hard
     // verdict; a non-contracted reply is retried ONCE (schema-equivalent, §4.F), then marked produced:false
@@ -437,7 +440,7 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
   // feedback, then a re-verify with the RIGHT persona (floor persona / that lens's focus over a fresh build).
   const closures: DomainClosure[] = []
   for (const domain of domainsToClose) {
-    const dc = await closeDomain(roleId, opts, gate, result.text, domain, stepId, signal)
+    const dc = await closeDomain(roleId, opts, gate, result.text, domain, stepId, baseRef, baseChanged, signal)
     inputTokens += dc.inputTokens
     outputTokens += dc.outputTokens
     closures.push(dc)
@@ -594,6 +597,8 @@ async function closeDomain(
   implementationText: string,
   domain: FailedDomain,
   stepId: string,
+  baseRef: string,
+  baseChanged: string[],
   signal?: AbortSignal
 ): Promise<DomainClosure> {
   const idTag = domain.kind === 'lens' ? `lens-${domain.key}-${stepId}` : `floor-${stepId}`
@@ -601,17 +606,28 @@ async function closeDomain(
   let inputTokens = followUp.inputTokens
   let outputTokens = followUp.outputTokens
   const base = { kind: domain.kind, key: domain.key, handlerRoleId: followUp.handlerRoleId, failureFeedback: domain.feedback }
+  // Contract-ONLY classification (memory: a verdict/closure must NEVER free-text scan — "not a false positive"
+  // and "not fixed" both contain the trigger word and would mis-classify, polluting the false-positive stat).
+  // The handler prompt mandates a final `CLOSURE: FIXED|FALSE-POSITIVE` line; if it's ABSENT the handler did not
+  // close out per protocol → fall through to unresolved (fail-safe; dogfood 2026-06-11: a zero-work handler
+  // must not pass silently).
   const closure = [...followUp.text.matchAll(/^\s*[#*>•-]*\s*CLOSURE:\s*(FIXED|FALSE[- ]?POSITIVE)\b/gim)].pop()?.[1]?.toUpperCase()
-  if (closure ? closure.startsWith('FALSE') : /误报|false.?positive/i.test(followUp.text)) {
+  if (closure?.startsWith('FALSE')) {
     return { ...base, outcome: 'false-positive', evidence: followUp.text, inputTokens, outputTokens }
   }
-  if (closure === 'FIXED' || /已修复|fixed/i.test(followUp.text)) {
+  if (closure === 'FIXED') {
     // Re-verify the claimed fix with the domain's OWN persona. floor → floor persona (runs its own build);
     // lens → that lens's focus over a FRESH shared build (the handler just changed the tree, so the build
     // captured before closure is stale). This is the §5.3 "re-verify with the failed lens's focus, not floor".
     let reVerdict: Awaited<ReturnType<typeof runVerifierStep>>
     if (domain.kind === 'lens' && domain.key && domain.focus) {
-      const freshBuild = await runBuildOnce(opts.cwd)
+      // P1a end-to-end: scope the FRESH re-verify build's diff to THIS step's delta (implementer + the handler's
+      // just-applied fix), so a prior pipeline step's edits don't bleed into the re-verify lens's ground truth —
+      // the same de-contamination runLenses does for the initial fan-out. Recompute the delta now (the handler
+      // just edited the tree); baseChanged = paths already changed before this step ran.
+      const before = new Set(baseChanged)
+      const reChanged = (await changedPathsSince(opts.cwd, baseRef)).filter((p) => !before.has(p))
+      const freshBuild = await runBuildOnce(opts.cwd, baseRef, reChanged)
       reVerdict = await runVerifierStep(implementerRoleId, opts, gate, followUp.text, signal, { key: domain.key, focus: domain.focus, sharedBuild: freshBuild, stepId })
     } else {
       reVerdict = await runVerifierStep(implementerRoleId, opts, gate, followUp.text, signal)
@@ -668,7 +684,7 @@ async function runVerifierStep(implementerRoleId: string, opts: RunStepOptions, 
         `Run your "${lens.key}" lens on the change below. The diff and the project's build output are PROVIDED — do NOT re-run the build; reason over them and use Read / Grep / Glob to inspect the touched code for your dimension. End your message with exactly one final line \`VERDICT: PASS\` or \`VERDICT: FAIL\`.`,
         `Original task:\n${gate.originalPrompt}`,
         gate.acceptance?.length ? `Acceptance criteria the change must satisfy:\n${gate.acceptance.map((c) => `- ${c}`).join('\n')}` : '',
-        lens.sharedBuild.diff ? `Diff under review (git diff HEAD):\n\`\`\`diff\n${lens.sharedBuild.diff}\n\`\`\`` : '',
+        lens.sharedBuild.diff ? `Diff under review (this step's changes):\n\`\`\`diff\n${lens.sharedBuild.diff}\n\`\`\`` : '',
         lens.sharedBuild.ran ? `Build / typecheck output (already run for all lenses — do NOT re-run it):\n\`\`\`\n${lens.sharedBuild.output}\n\`\`\`` : 'No build output is available — judge from the diff plus your own read-only code inspection.',
         `Implementer role (do NOT defer to them): ${implementerRoleId}`,
         `Implementer's own summary (a claim to verify, not ground truth):\n${implementationText}`

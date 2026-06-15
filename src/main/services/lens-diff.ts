@@ -35,8 +35,12 @@ export async function changedPathsSince(cwd: string | undefined, base: string): 
 // only — a brand-new untracked file's content is invisible to `git diff`, but its PATH still reaches the
 // trigger via changedPathsSince, so the trigger sees "new file X exists" even when it can't see the body.
 // '' on any error → the trigger falls back to judging from the path list alone (degrade, never throw).
-export async function diffSince(cwd: string | undefined, base: string, maxChars = 20_000): Promise<string> {
+export async function diffSince(cwd: string | undefined, base: string, paths: readonly string[] = [], maxChars = 20_000): Promise<string> {
   if (!cwd || !base) return ''
-  const diff = await git(cwd, ['diff', base])
+  // `paths` LIMITS the diff to this step's own changed files — a pipeline shares one cwd with no commit between
+  // steps, so an unlimited `git diff base` would carry prior steps' edits into the trigger and mis-attribute
+  // their risk to this step (P1a). Empty paths → whole-tree diff (the single-step / first-step case).
+  const args = ['diff', base, ...(paths.length ? ['--', ...paths] : [])]
+  const diff = await git(cwd, args)
   return diff.length > maxChars ? `${diff.slice(0, maxChars)}\n…[diff truncated for lens trigger]` : diff
 }
