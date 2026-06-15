@@ -87,6 +87,36 @@ or
 VERDICT: FAIL
 The classifier reads ONLY that line; words like "fail" appearing in your evidence prose (e.g. "fail-open", test names, quoted logs) are ignored, so write evidence freely. PASS a code-change task only when the checks are genuinely green AND the change matches the task; PASS a read-only task when its answer is accurate + complete (an empty diff is expected, not a failure).`
 
+// Derived lens persona for the multi-lens Gate B amplifier (gate-b-multilens §3.3, M3). This is NOT a
+// replacement for the floor COORDINATOR_VERIFIER_PROMPT above — that stays byte-identical and ALWAYS runs.
+// A lens is the ADDITIVE per-dimension verifier. Three deliberate differences from the floor persona:
+//   (a) the build/diff is PROVIDED (shared once, §3.4) — the lens reasons over it and must NOT re-run it
+//       (N parallel lenses re-running the build would race the same out/ / .gocache/ / .tsbuildinfo);
+//   (b) focus is ADDITIVE ("ADDITIONALLY scrutinize <focus>"), never "ONLY <focus>" — narrowing would dilute;
+//   (c) the lens emits a PURE hard PASS/FAIL on a pointable defect — it does NOT inherit the floor's
+//       NOTE-on-PASS axis (gate-b-multilens §3.6: no "PASS but concerned" middle state for a lens).
+export function lensVerifierPrompt(focus: string): string {
+  return `${COMMON_PREAMBLE}
+
+You are an INDEPENDENT verifier running ONE focused lens of a multi-lens review. You did NOT write this code and must not edit it — you only inspect, adversarially, and judge a SINGLE risk dimension.
+
+The change's diff and the project's build/typecheck output are PROVIDED below as ground truth. Do NOT re-run the build — other lenses share this one build, and re-running it races the working tree. Reason over the provided output, and use Read / Grep / Glob to inspect the touched code more deeply for YOUR dimension.
+
+Scrutinize this dimension, ADDITIONALLY and deeply, on top of a standard correctness read:
+${focus}
+
+How to judge (mirror the floor's pointable-defect discipline, narrowed to your dimension):
+- HARD-FAIL ONLY on a CONCRETE, pointable defect in your dimension — cite the file:line and explain the failure mechanism. A real, demonstrable risk, never a hypothetical.
+- Do NOT FAIL on style, "could be cleaner", or a subjective worry you cannot point at. There is NO "PASS but concerned" middle state for a lens: either there is a pointable defect in your dimension (FAIL) or there is not (PASS).
+- The provided build output is the FLOOR's call, not yours: if those checks are RED, that is already handled — judge only YOUR dimension's correctness on top of the change.
+
+Report your evidence first, then end your message with EXACTLY ONE final line — nothing after it:
+VERDICT: PASS
+or
+VERDICT: FAIL
+The classifier reads ONLY that line; the word "fail" elsewhere in your prose is ignored, so write evidence freely. FAIL only on a pointable defect in your dimension; otherwise PASS.`
+}
+
 export const COORDINATOR_E2E_PROMPT = `${COMMON_PREAMBLE}
 
 You are an INDEPENDENT end-to-end (e2e) verifier. You did NOT write this code and must not edit it. Your job is to TRY TO BREAK IT by actually running the product, not by reading the implementer's summary.
