@@ -117,6 +117,30 @@ VERDICT: FAIL
 The classifier reads ONLY that line; the word "fail" elsewhere in your prose is ignored, so write evidence freely. FAIL only on a pointable defect in your dimension; otherwise PASS.`
 }
 
+// Adversarial refute persona for the multi-lens Gate B amplifier (the Workflow "adversarial verify" pattern).
+// After a lens FAILs, N independent skeptics each try to REFUTE the finding before it enters closure — a
+// majority "proven false alarm" downgrades the FAIL to a false positive (lowers false-red rate / B-cost). The
+// BURDEN is on the skeptic: default to NOT refuting when uncertain, so a real defect is never lightly dropped
+// (preserves A-signal). Read-only, shares the same provided build (never re-runs it).
+export function lensRefutePrompt(focus: string): string {
+  return `${COMMON_PREAMBLE}
+
+You are an independent SKEPTIC re-checking ONE finding from a focused code-review lens. Another reviewer, scrutinizing the "${focus}" dimension, claimed a pointable defect in the change below. Your job is to TRY TO REFUTE that claim — is it a REAL, pointable defect, or a FALSE ALARM (a same-named-but-different symbol, expected/by-design behavior, a check that does not actually apply here, or a misread of the diff)?
+
+The diff and the build/typecheck output are PROVIDED below as ground truth. Do NOT re-run the build. Use Read / Grep / Glob to inspect the cited code for yourself.
+
+Rules — the burden of proof is on YOU:
+- REFUTE only when you can CONCRETELY show the claimed defect is not real — cite the code proving it is fine, intended, a different symbol, or that the check does not apply. A demonstration, not a hunch.
+- If the defect IS real, OR you cannot concretely disprove it, do NOT refute. When uncertain, do NOT refute — a real defect must never be dropped on a maybe.
+- You are NOT re-reviewing the whole change; you only judge whether THIS specific claim holds up.
+
+Report your reasoning first, then end your message with EXACTLY ONE final line — nothing after it:
+REFUTE: YES
+or
+REFUTE: NO
+\`REFUTE: YES\` = you proved it is a false alarm. \`REFUTE: NO\` = the defect stands, or you could not disprove it. The classifier reads ONLY that line.`
+}
+
 export const COORDINATOR_E2E_PROMPT = `${COMMON_PREAMBLE}
 
 You are an INDEPENDENT end-to-end (e2e) verifier. You did NOT write this code and must not edit it. Your job is to TRY TO BREAK IT by actually running the product, not by reading the implementer's summary.

@@ -8,7 +8,7 @@ import * as agentService from './agent-dispatch'
 import * as memoryService from './memory.service'
 import * as settingsService from './settings.service'
 import * as gateOutcomeRepo from '../repos/gate-outcome.repo'
-import { COORDINATOR_VERIFIER_PROMPT, lensVerifierPrompt, displayName } from '../agent/roles/prompts'
+import { COORDINATOR_VERIFIER_PROMPT, lensVerifierPrompt, lensRefutePrompt, displayName } from '../agent/roles/prompts'
 import { deriveAcceptanceCriteria, route, selectLensDimensions } from './coordinator-route'
 import { gitHead, changedPathsSince, diffSince } from './lens-diff'
 import { lensDimensionMeta, type LensDimension } from './lens-dimensions'
@@ -88,12 +88,16 @@ interface LensVerdict {
   feedback: string
   inputTokens: number
   outputTokens: number
+  refuted?: boolean // adversarial refute: a FAILED lens that a majority of skeptics PROVED was a false alarm
+  refuteEvidence?: string // the refute tally (N/M skeptics) — kept in the lens row for reconstructability
 }
 
-// Lens-row evidence = the selection reason (why this dimension fired) + the verifier's verdict text, so a
-// gate_outcomes dump reconstructs the full selected-lens set: which dimensions fired, why, and each outcome.
+// Lens-row evidence = the selection reason (why this dimension fired) + the verifier's verdict text (+ the
+// adversarial-refute tally when present), so a gate_outcomes dump reconstructs the full selected-lens set:
+// which dimensions fired, why, each outcome, and whether a FAIL was overturned by the skeptics.
 function lensEvidence(lv: LensVerdict): string {
-  return `[selected: ${lv.why || 'semantic trigger'}] ${lv.feedback}`
+  const base = `[selected: ${lv.why || 'semantic trigger'}] ${lv.feedback}`
+  return lv.refuteEvidence ? `${base}\n[${lv.refuteEvidence}]` : base
 }
 
 async function runLenses(roleId: string, opts: RunStepOptions, gate: { originalPrompt: string; approvedPlan?: string; acceptance?: string[] }, implementationText: string, stepId: string, baseRef: string, baseChanged: string[], signal?: AbortSignal): Promise<LensVerdict[]> {
@@ -160,17 +164,134 @@ async function runLenses(roleId: string, opts: RunStepOptions, gate: { originalP
       v ?? { key: selected[i].key, why: selected[i].why, produced: false, passed: false, feedback: 'lens task aborted (concurrency backstop or unexpected error)', inputTokens: 0, outputTokens: 0 }
     )
 
+    // Adversarial refute (Workflow's adversarial-verify pattern): each FAILED lens faces N independent skeptics
+    // (read-only, sharing this same build) that try to disprove the finding. A majority "proven false alarm"
+    // marks the lens refuted → it never enters closure and is recorded false-positive (lowers B-cost / false
+    // reds). Burden is on the skeptics: uncertain → NOT refuted, so a real defect is never lightly dropped.
+    const failed = verdicts.filter((v) => v.produced && !v.passed)
+    if (failed.length > 0) {
+      const refutes = await refuteLensFailures(roleId, opts, gate, implementationText, failed, sharedBuild, verifierRoleId, verifierEndpointId, stepId, signal)
+      for (const v of failed) {
+        const r = refutes.get(v.key)
+        if (!r) continue
+        v.refuted = r.refuted
+        v.refuteEvidence = r.evidence
+        v.inputTokens += r.inputTokens
+        v.outputTokens += r.outputTokens
+      }
+    }
+
     // NOTE: lens rows are NOT recorded here. M4 records each lens's FINAL outcome (pass / closure result /
-    // unverified-if-dropped) AFTER the closure stage in runGatedRoleStep — recording now would double-count a
-    // lens that later gets fixed. The console line logs the full selected set incl. drops for live monitoring.
+    // unverified-if-dropped / false-positive-if-refuted) AFTER the closure stage in runGatedRoleStep —
+    // recording now would double-count a lens that later gets fixed. The console line logs the full set.
     const produced = verdicts.filter((v) => v.produced)
     const dropped = verdicts.filter((v) => !v.produced)
-    console.log(`[gate-b/multilens] step ${stepId}: selected ${verdicts.length} lens(es) over ${changed.length} changed path(s) — ${verdicts.map((v) => `${v.key}${v.produced ? `:${v.passed ? 'PASS' : 'FAIL'}` : ':DROPPED'}`).join(', ')}${dropped.length ? ` (${produced.length} produced, ${dropped.length} dropped)` : ''}`)
+    const refutedN = verdicts.filter((v) => v.refuted).length
+    console.log(`[gate-b/multilens] step ${stepId}: selected ${verdicts.length} lens(es) over ${changed.length} changed path(s) — ${verdicts.map((v) => `${v.key}${v.produced ? (v.refuted ? ':REFUTED' : `:${v.passed ? 'PASS' : 'FAIL'}`) : ':DROPPED'}`).join(', ')}${dropped.length ? ` (${produced.length} produced, ${dropped.length} dropped)` : ''}${refutedN ? ` (${refutedN} refuted→false-positive)` : ''}`)
     return verdicts
   } catch (e) {
     console.warn('[gate-b/multilens] lens fan-out failed (non-blocking, floor stands):', e instanceof Error ? e.message : e)
     return []
   }
+}
+
+// Adversarial refute — the Workflow "adversarial verify" pattern adapted to lens findings. Each FAILED lens
+// gets REFUTE_VOTERS independent skeptics that try to PROVE its finding is a false alarm; ≥ REFUTE_MAJORITY
+// "proven false alarm" votes refute it (recorded false-positive, kept out of closure → lower B-cost). The
+// burden is on the skeptics (a non-contracted / uncertain / infra-failed vote does NOT refute), so a real
+// defect is never dropped on a maybe — A-signal is preserved. All skeptics are read-only and share the one
+// build, so they run together under the same concurrency limiter as the lens fan-out (no new resource class).
+const REFUTE_VOTERS = 3
+const REFUTE_MAJORITY = 2 // ≥ 2 of 3 must concretely disprove the finding to overturn it
+
+async function refuteLensFailures(
+  roleId: string,
+  opts: RunStepOptions,
+  gate: { originalPrompt: string; approvedPlan?: string; acceptance?: string[] },
+  implementationText: string,
+  failed: LensVerdict[],
+  sharedBuild: SharedBuild,
+  verifierRoleId: string,
+  verifierEndpointId: string,
+  stepId: string,
+  signal?: AbortSignal
+): Promise<Map<LensDimension, { refuted: boolean; evidence: string; inputTokens: number; outputTokens: number }>> {
+  // One read-only skeptic job per (failed lens × voter); all run together under the limiter (read-only, no
+  // working-tree write, so parallel is safe — unlike closure). Each job is tagged with its lens key to tally.
+  const jobs: Array<() => Promise<{ key: LensDimension; refuted: boolean; inputTokens: number; outputTokens: number }>> = []
+  for (const lv of failed) {
+    const focus = lensDimensionMeta(lv.key)?.focus ?? lv.key
+    for (let i = 0; i < REFUTE_VOTERS; i++) {
+      jobs.push(() => runRefuteVote(roleId, opts, gate, implementationText, lv, focus, sharedBuild, verifierRoleId, i, stepId, signal).then((r) => ({ key: lv.key, ...r })))
+    }
+  }
+  const votes = (await parallelLensLimited(verifierEndpointId, jobs)).filter((v): v is { key: LensDimension; refuted: boolean; inputTokens: number; outputTokens: number } => v != null)
+  const out = new Map<LensDimension, { refuted: boolean; evidence: string; inputTokens: number; outputTokens: number }>()
+  for (const lv of failed) {
+    const lvVotes = votes.filter((v) => v.key === lv.key)
+    const yes = lvVotes.filter((v) => v.refuted).length
+    const refuted = yes >= REFUTE_MAJORITY // burden on skeptics: need a clear majority of PROVEN false-alarm votes
+    const evidence = `adversarial refute: ${yes}/${lvVotes.length} skeptic(s) disproved the finding → ${refuted ? 'REFUTED (false positive)' : 'defect stands'}`
+    out.set(lv.key, {
+      refuted,
+      evidence,
+      inputTokens: lvVotes.reduce((s, v) => s + v.inputTokens, 0),
+      outputTokens: lvVotes.reduce((s, v) => s + v.outputTokens, 0)
+    })
+    console.log(`[gate-b/multilens refute] step ${stepId} lens ${lv.key}: ${yes}/${lvVotes.length} refute → ${refuted ? 'FALSE-POSITIVE' : 'CONFIRMED'}`)
+  }
+  return out
+}
+
+// One skeptic vote on one lens finding. Read-only kit (no Bash — the build is provided), the refute persona,
+// a distinct per-(lens,voter,step) toolUseId so concurrent skeptics don't collide in the event stream. A
+// non-contracted reply (no REFUTE: line) or an infra failure → refuted:false (the finding stands; the burden
+// is on the skeptic to disprove it).
+async function runRefuteVote(
+  roleId: string,
+  opts: RunStepOptions,
+  gate: { originalPrompt: string; approvedPlan?: string; acceptance?: string[] },
+  implementationText: string,
+  lv: LensVerdict,
+  focus: string,
+  sharedBuild: SharedBuild,
+  verifierRoleId: string,
+  voterIdx: number,
+  stepId: string,
+  signal?: AbortSignal
+): Promise<{ refuted: boolean; inputTokens: number; outputTokens: number }> {
+  const toolId = `gate-b-refute-${lv.key}-${voterIdx}-${stepId}`
+  opts.cb.onToolEvent?.(roleId, { type: 'sub_tool_start', toolUseId: toolId, parentToolId: 'coordinator-gate-b', name: 'LensRefute', input: { lens: lv.key, voter: voterIdx } })
+  const refutePrompt = [
+    `An independent "${lv.key}" lens flagged a defect in the change below. As a SKEPTIC, try to REFUTE it — prove it is a false alarm, or concede the defect stands.`,
+    `The lens's claim (the finding to refute):\n${lv.feedback}`,
+    `Original task:\n${gate.originalPrompt}`,
+    sharedBuild.diff ? `Diff under review:\n\`\`\`diff\n${sharedBuild.diff}\n\`\`\`` : '',
+    sharedBuild.ran ? `Build / typecheck output (already run — do NOT re-run it):\n\`\`\`\n${sharedBuild.output}\n\`\`\`` : '',
+    `Implementer's own summary:\n${implementationText}`
+  ].filter(Boolean).join('\n\n')
+  let res: Awaited<ReturnType<typeof runRoleStep>>
+  try {
+    res = await runRoleStep({
+      ...opts,
+      roleId: verifierRoleId,
+      prompt: refutePrompt,
+      dispatch: [...(opts.dispatch ?? []), verifierRoleId],
+      includeHistory: false,
+      toolNames: ['Read', 'Grep', 'Glob'], // read-only — the build is provided, never re-run
+      systemPromptOverride: lensRefutePrompt(focus),
+      signal: signal ?? opts.signal
+    })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    opts.cb.onToolEvent?.(roleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: 'coordinator-gate-b', name: 'LensRefute', isError: true, result: `refute vote failed: ${msg}` })
+    return { refuted: false, inputTokens: 0, outputTokens: 0 } // infra failure → cannot disprove → defect stands
+  }
+  const text = res.text.trim()
+  const contracted = [...text.matchAll(/^\s*[#*>•-]*\s*REFUTE:\s*(YES|NO)\b/gim)].pop()?.[1]
+  const refuted = contracted ? contracted.toUpperCase() === 'YES' : false // no contract → don't refute (burden on skeptic)
+  opts.cb.onToolEvent?.(roleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: 'coordinator-gate-b', name: 'LensRefute', isError: false, result: text || 'no vote' })
+  return { refuted, inputTokens: res.inputTokens, outputTokens: res.outputTokens }
 }
 
 export async function runGatedRoleStep(roleId: string, prompt: string, opts: RunStepOptions, gate: { enabled: boolean; originalPrompt: string; approvedPlan?: string; acceptance?: string[] }, signal?: AbortSignal): Promise<GatedStepResult> {
@@ -266,17 +387,20 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
     inputTokens += lv.inputTokens
     outputTokens += lv.outputTokens
   }
-  // produced lens that FAILed → drives closure; a DROPPED lens (no usable verdict) is NOT a fail (no defect
-  // evidence to act on) — recorded 'unverified' for reconstructability, never enters closure or the fold.
-  const failedLenses = lensVerdicts.filter((v) => v.produced && !v.passed)
+  // confirmed FAIL = produced, failed, AND not refuted by the skeptics → drives closure. A REFUTED lens is a
+  // proven false alarm (recorded false-positive, folds as such); a DROPPED lens has no usable verdict (recorded
+  // unverified, not folded). Neither enters closure.
+  const failedLenses = lensVerdicts.filter((v) => v.produced && !v.passed && !v.refuted)
+  const refutedLenses = lensVerdicts.filter((v) => v.produced && !v.passed && v.refuted)
   const droppedLenses = lensVerdicts.filter((v) => !v.produced)
 
   // PRE-closure gate (gate-b-multilens §4.F step 3 / §5.1): floor-FAIL OR any-lens-FAIL → close the loop.
   // All-green (floor PASS + every lens PASS, or no lens) is a real pass; a SKIPPED floor keeps 'unverified'.
-  if (verdict.passed && failedLenses.length === 0) {
+  if (verdict.passed && failedLenses.length === 0 && refutedLenses.length === 0) {
     const outcome: GateOutcome = verdict.skipped ? 'unverified' : 'pass'
     recordOutcome(outcome, 1, verdict.feedback)
-    // produced lens → 'pass'; dropped lens → 'unverified' (kept so the selected set is reconstructable).
+    // Pure-green branch (no confirmed fail, no refuted fail): produced lens → 'pass'; dropped → 'unverified'
+    // (kept so the selected set is reconstructable). Steps WITH a refuted lens take the unified path below.
     for (const lv of lensVerdicts) recordLensOutcome(lv.key, lv.produced ? 'pass' : 'unverified', lensEvidence(lv))
     // An ALL-GREEN multi-lens step still gets an aggregate row (=outcome) so the M5 A/B reader counts it as an
     // amplified step — the denominator. A pure floor-only step (NO lens ran) gets NO aggregate row: it stays a
@@ -300,10 +424,10 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
     console.warn(`[gate-b/multilens] step ${stepId}: ${failedDomains.length} failed domains exceed cap ${CLOSURE_DOMAIN_CAP} — closing ${domainsToClose.length}, ${failedDomains.length - domainsToClose.length} surfaced unresolved (circuit-breaker §5.5)`)
   }
 
-  // Snapshot ONCE before any handler edits the tree (rollback point; recovery stays manual). The handler
-  // edits the user's real working tree on top of the implementer's changes — without a rollback point a bad
-  // fix degrades a good implementation unrecoverably.
-  const snap = await snapshotWorkspace(opts.cwd)
+  // Snapshot ONLY when a handler will actually edit the tree (closure has domains). A floor-pass step whose
+  // only lens FAILs were all refuted has no closure → no edits → no snapshot needed. Rollback point for the
+  // handler's edits on top of the implementer's changes; recovery stays manual.
+  const snap = domainsToClose.length > 0 ? await snapshotWorkspace(opts.cwd) : null
   if (snap) console.warn(`[coordinator] gate-b pre-fix workspace snapshot: ${describeSnapshot(snap)}`)
 
   // Closure runs SERIALLY across domains: handlers EDIT the shared working tree, so parallel handlers would
@@ -341,9 +465,18 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
       lensOutcomes.push('pass')
       continue
     }
+    if (lv.refuted) {
+      // adversarial refute proved a false alarm → 'false-positive' (not a fail, never closed); folds as such.
+      recordLensOutcome(lv.key, 'false-positive', lensEvidence(lv))
+      lensOutcomes.push('false-positive')
+      continue
+    }
     const lc = closures.find((c) => c.kind === 'lens' && c.key === lv.key)
     const lensOutcome: GateOutcome = lc?.outcome ?? 'unresolved' // not closed (circuit-breaker) → unresolved
-    recordLensOutcome(lv.key, lensOutcome, lc?.evidence ?? lensEvidence(lv))
+    // Keep the refute tally ("0-1/3 disproved → defect stands") on a confirmed-FAIL lens's row too, so the
+    // gate_outcomes dump shows this FAIL survived the skeptics — not just that it was closed.
+    const ev = lc?.evidence ?? lensEvidence(lv)
+    recordLensOutcome(lv.key, lensOutcome, lv.refuteEvidence ? `${ev}\n[${lv.refuteEvidence}]` : ev)
     lensOutcomes.push(lensOutcome)
   }
 
@@ -353,6 +486,7 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
   // fold genuinely runs AFTER the closure loop (the §4.F ordering bug the doc audit caught).
   const aggregate = worstOf([floorDomainOutcome, ...lensOutcomes])
   let aggregateEvidence = closures.map((c) => `[${c.kind === 'lens' ? `${c.key} lens` : 'floor'} — ${c.outcome}] ${c.evidence}`).join('\n\n') || verdict.feedback
+  if (refutedLenses.length) aggregateEvidence += `\n[${refutedLenses.length} lens FAIL(s) refuted as false-positive: ${refutedLenses.map((l) => l.key).join(', ')}]`
   if (droppedLenses.length) aggregateEvidence += `\n[${droppedLenses.length} lens(es) dropped/unverified: ${droppedLenses.map((l) => l.key).join(', ')}]`
   if (aggregate === 'unresolved' && snap?.sha) aggregateEvidence += `\n[Pre-fix workspace snapshot available — ${describeSnapshot(snap)}]`
   // Aggregate row ONLY for steps that actually ran lenses: a floor-only FAIL→closure step (kill-switch off /
