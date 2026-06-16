@@ -10,6 +10,7 @@ import * as rolesService from '../roles.service'
 import * as settingsService from '../settings.service'
 import { chooseVerifierRole } from './verifier'
 import { runPanelExamine } from './panel'
+import { runUnderstand } from './understand'
 import type { RunStepOptions } from '../coordinator-step'
 import type { CoordinatorCallbacks } from '../coordinator-types'
 import type { AgentEvent } from '../../agent/loop'
@@ -42,24 +43,17 @@ export function createPanelHandle(deps: PanelHandleDeps): PanelHandle {
       if (settingsService.get<boolean>('gateB.panelExamine.enabled') === false) {
         return { ok: false, message: 'panel_examine is disabled by configuration (gateB.panelExamine.enabled = false).' }
       }
-      // Phase 4 scopes the agent entry to file-path targets (the long-doc / multi-module review case). Inline
-      // text + understand mode are Phase 5 (a separate pipeline + a no-file-tools reviewer kit).
+      // Both modes take file-path targets (inline text is not supported at the agent entry).
       const paths = (input.paths ?? []).filter((p) => typeof p === 'string' && p.trim())
       if (paths.length === 0) {
-        return { ok: false, message: 'panel_examine needs target file path(s) — pass `paths`. (Inline-text review is not available yet.)' }
+        return { ok: false, message: 'panel_examine needs target file path(s) — pass `paths`. (Inline-text targets are not supported.)' }
       }
-      // §4.2 reviewer selection: an independent BOUND agent role, NEVER the caller. chooseVerifierRole returns the
-      // first bound agent role ≠ caller, else falls back to 'generalist' — so we must confirm the pick is actually
-      // bound AND ≠ caller; otherwise there is no panel to form → an EXPLICIT tool-result (never a silent empty).
-      const reviewer = chooseVerifierRole(deps.callerRoleId)
-      if (reviewer === deps.callerRoleId || !rolesService.getBinding(reviewer)?.endpointId) {
-        return { ok: false, message: 'panel_examine needs at least one other configured expert besides you to act as an independent reviewer, but none is bound. Configure another expert (e.g. Analyst/Shuri/Flynn) and retry.' }
-      }
+      const mode = input.mode === 'understand' ? 'understand' : 'review'
 
-      // Adapt the agent run's AgentCallbacks → the CoordinatorCallbacks the reviewer runRoleStep fan-out expects.
-      // The panel card + reviewer bubbles ride the sub_tool stream (AgentLlmEvent) → onStream; the reviewers' own
-      // completed turns (AgentEvent assistant/tool_results) are NOT surfaced as separate chat turns — their
-      // findings ARE the result. Tool images + permission prompts carry over; the rest are no-ops.
+      // Shared bridge plumbing for BOTH modes: adapt the agent run's AgentCallbacks → the CoordinatorCallbacks the
+      // fan-out's runRoleStep calls expect. The panel card + reader/reviewer bubbles ride the sub_tool stream
+      // (AgentLlmEvent) → onStream; the readers'/reviewers' own completed turns (AgentEvent) are NOT surfaced as
+      // separate chat turns (the map / findings ARE the result). Images + permission prompts carry over.
       const shim: CoordinatorCallbacks = {
         onDispatch: () => {},
         onStepStart: () => {},
@@ -71,9 +65,6 @@ export function createPanelHandle(deps: PanelHandleDeps): PanelHandle {
         onToolImage: (att) => deps.onToolImage?.(att),
         requestPermission: (_roleId, req, sig) => deps.requestPermission(req, sig)
       }
-
-      const scope = `Independent multi-perspective review requested. Review the following ${paths.length} file(s) for defects, each reviewer from its OWN assigned perspective only: ${paths.join(', ')}.`
-      const gate = { originalPrompt: scope, acceptance: [] as string[] }
       const opts: RunStepOptions = {
         convId: deps.convId,
         roleId: deps.callerRoleId,
@@ -84,6 +75,29 @@ export function createPanelHandle(deps: PanelHandleDeps): PanelHandle {
         cwd: deps.cwd,
         permissionMode: deps.permissionMode
       }
+
+      // UNDERSTAND (§7 Phase 5): a separate readers→map pipeline. No independent-reviewer requirement (it only
+      // reads), so the caller's OWN role reads each file in parallel; the map is the result.
+      if (mode === 'understand') {
+        const { map, parts } = await runUnderstand(deps.callerRoleId, opts, paths, deps.callerRoleId, ulid(), deps.signal)
+        if (parts.length === 0) {
+          return { ok: false, message: 'panel_examine (understand) could not read any of the target file(s) — check the paths, or read them directly.' }
+        }
+        return {
+          ok: true,
+          message: `panel_examine (understand) read ${parts.length} file(s) and assembled a map:\n\n${map}`,
+          findings: parts.map((p) => ({ subject: p.path, passed: true, feedback: p.summary.slice(0, 1200) }))
+        }
+      }
+
+      // REVIEW — §4.2 reviewer selection: an independent BOUND agent role, NEVER the caller. chooseVerifierRole
+      // returns the first bound agent role ≠ caller, else falls back to 'generalist' — so confirm the pick is
+      // actually bound AND ≠ caller; otherwise there is no panel to form → an EXPLICIT ok:false (never silent empty).
+      const reviewer = chooseVerifierRole(deps.callerRoleId)
+      if (reviewer === deps.callerRoleId || !rolesService.getBinding(reviewer)?.endpointId) {
+        return { ok: false, message: 'panel_examine (review) needs at least one other configured expert besides you to act as an independent reviewer, but none is bound. Configure another expert (e.g. Analyst/Shuri/Flynn) and retry.' }
+      }
+      const gate = { originalPrompt: `Independent multi-perspective review requested. Review the following ${paths.length} file(s) for defects, each reviewer from its OWN assigned perspective only: ${paths.join(', ')}.`, acceptance: [] as string[] }
       // Explicit target: the reviewers read the files themselves (read-only kit), so the diff is left empty and
       // the file list rides in the task prompt above. selectSubjects picks the risk dimensions from that.
       const findings = await runPanelExamine(

@@ -70,7 +70,8 @@ const SORT_RANK: Record<SubjectState, number> = {
 const firstLine = (s?: string): string => (s ?? '').split('\n').map((x) => x.trim()).find(Boolean) ?? ''
 
 // One subject row + (done only) its nested refute tally / fixed-by, + an optional View-full payload.
-function PanelRow({ subjectKey, tool, refutes }: { subjectKey: string; tool?: ToolCall; refutes: ToolCall[] }): ReactElement {
+// `understand` mode → a reader row: a summary, no verdict chip / no flagged styling / no refute-fix nesting.
+function PanelRow({ subjectKey, tool, refutes, understand }: { subjectKey: string; tool?: ToolCall; refutes: ToolCall[]; understand?: boolean }): ReactElement {
   const [open, setOpen] = useState(false)
   const state = subjectState(tool)
   const inp = subjInput(tool)
@@ -79,20 +80,21 @@ function PanelRow({ subjectKey, tool, refutes }: { subjectKey: string; tool?: To
   const done = !examining && !queued
   // `flagged` drives the red subject-name styling → ONLY genuinely-open defects (fail/unresolved). A FIXED row
   // is resolved (accent chip + "→ fixed by X"), so it must NOT read red — but it still floats up via SORT_RANK.
-  const flagged = state === 'fail' || state === 'unresolved'
+  // Understand rows are never flagged (no verdicts at all).
+  const flagged = !understand && (state === 'fail' || state === 'unresolved')
   // Skeptic count: the nested refute votes if they surfaced as subTools, else the tally's denominator (gate-b's
-  // re-emit carries "k/N" even when individual vote rows weren't kept).
-  const skepticN = refutes.length || Number(inp.refuteTally?.split('/')[1] ?? 0)
+  // re-emit carries "k/N" even when individual vote rows weren't kept). Understand has no refute.
+  const skepticN = understand ? 0 : refutes.length || Number(inp.refuteTally?.split('/')[1] ?? 0)
   // The refute / fixed-by block exists only after the reviewers + closure finish (§4.4: refute/fix nest only
   // when done). Shown for any subject that went through the skeptic pass or got a closure handler.
-  const hasNested = done && (skepticN > 0 || Boolean(inp.handlerName))
+  const hasNested = done && !understand && (skepticN > 0 || Boolean(inp.handlerName))
   return (
     <div className="pe-row-wrap">
       <div className={'pe-row' + (flagged ? ' flagged' : '') + (queued ? ' queued' : '')}>
         {examining ? <span className="tr-dot pe-row-dot" /> : null}
         <span className="pe-subject">{subjectKey}</span>
-        <span className="pe-summary">{examining ? 'examining…' : queued ? 'queued' : firstLine(tool?.result)}</span>
-        {done ? <span className={'pe-verdict ' + verdictClass(state)}>{VERDICT_LABEL[state]}</span> : null}
+        <span className="pe-summary">{examining ? (understand ? 'reading…' : 'examining…') : queued ? 'queued' : firstLine(tool?.result)}</span>
+        {done && !understand ? <span className={'pe-verdict ' + verdictClass(state)}>{VERDICT_LABEL[state]}</span> : null}
         {done && tool?.result ? (
           <button className="pe-viewfull" onClick={() => setOpen((o) => !o)}>{open ? 'Hide' : 'View full'}</button>
         ) : null}
@@ -144,15 +146,17 @@ export function PanelCard({ tool }: { tool: ToolCall }): ReactElement {
   const passed = states.filter((s) => s === 'pass').length
   const failed = states.filter((s) => s === 'fail' || s === 'unresolved').length
   const fixed = states.filter((s) => s === 'fixed').length
+  const isUnderstand = mode === 'understand'
 
-  // Done view floats real defects to the top; the running view keeps roster order so rows don't jump around as
-  // each reviewer lands.
-  const orderedKeys = running
-    ? roster
-    : [...roster].sort((a, b) => SORT_RANK[subjectState(subjectsByKey.get(a))] - SORT_RANK[subjectState(subjectsByKey.get(b))])
+  // Done view floats real defects to the top; the running view — and understand mode (no verdicts to rank) —
+  // keep roster order so rows don't jump around.
+  const orderedKeys =
+    running || isUnderstand
+      ? roster
+      : [...roster].sort((a, b) => SORT_RANK[subjectState(subjectsByKey.get(a))] - SORT_RANK[subjectState(subjectsByKey.get(b))])
 
   return (
-    <div className={'pe-card' + (failed > 0 ? ' has-flag' : '')}>
+    <div className={'pe-card' + (failed > 0 && !isUnderstand ? ' has-flag' : '')}>
       <button className="pe-head" onClick={() => setOpen((o) => !o)}>
         {running ? <span className="tr-dot" /> : null}
         <span className="pe-name">panel_examine</span>
@@ -162,15 +166,21 @@ export function PanelCard({ tool }: { tool: ToolCall }): ReactElement {
         <span className="pe-meta">{N} {N === 1 ? 'agent' : 'agents'}</span>
         <span className="pe-sep">·</span>
         <span className="pe-meta">{X}/{N}</span>
-        {passed > 0 ? (<><span className="pe-sep">·</span><span className="pe-pass">{passed} passed</span></>) : null}
-        {failed > 0 ? (<><span className="pe-sep">·</span><span className="pe-fail">{failed} failed</span></>) : null}
-        {fixed > 0 ? (<><span className="pe-sep">·</span><span className="pe-fixed">→ {fixed} fixed</span></>) : null}
+        {isUnderstand ? (
+          !running && X >= N && N > 0 ? (<><span className="pe-sep">·</span><span className="pe-meta">map ready</span></>) : null
+        ) : (
+          <>
+            {passed > 0 ? (<><span className="pe-sep">·</span><span className="pe-pass">{passed} passed</span></>) : null}
+            {failed > 0 ? (<><span className="pe-sep">·</span><span className="pe-fail">{failed} failed</span></>) : null}
+            {fixed > 0 ? (<><span className="pe-sep">·</span><span className="pe-fixed">→ {fixed} fixed</span></>) : null}
+          </>
+        )}
         <span className={'tr-chev pe-chev' + (open ? ' open' : '')}><Icons.chevronRight size={12} /></span>
       </button>
       {open ? (
         <div className="pe-body">
           {orderedKeys.map((key) => (
-            <PanelRow key={key} subjectKey={key} tool={subjectsByKey.get(key)} refutes={refutesByKey.get(key) ?? []} />
+            <PanelRow key={key} subjectKey={key} tool={subjectsByKey.get(key)} refutes={refutesByKey.get(key) ?? []} understand={isUnderstand} />
           ))}
         </div>
       ) : null}

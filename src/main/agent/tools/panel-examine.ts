@@ -10,8 +10,11 @@ import type { ToolResultBlock } from '../types'
 import type { PanelExamineResult } from '../context'
 
 const inputSchema = z.object({
-  paths: z.array(z.string()).min(1).describe('Project-relative file path(s) to review — the body of work to examine.'),
-  mode: z.literal('review').optional().describe("Review mode (the only mode available).")
+  paths: z.array(z.string()).min(1).describe('Project-relative file path(s) — the body of work to examine.'),
+  mode: z
+    .enum(['review', 'understand'])
+    .optional()
+    .describe("'review' (default): fan out reviewers that find defects. 'understand': fan out readers that summarize each file into a shared map.")
 })
 
 export const panelExamineTool = buildTool<typeof inputSchema, PanelExamineResult>({
@@ -27,7 +30,10 @@ export const panelExamineTool = buildTool<typeof inputSchema, PanelExamineResult
     'set, auditing a feature/module you just built, an end-of-project review of a from-scratch build, or a sizable ' +
     'cross-cutting change. For a small, single-concern edit a normal read is enough — do NOT reach for this.\n' +
     'Pass the file path(s); the panel itself picks which risk dimensions the content warrants. Returns each ' +
-    "perspective's PASS/FAIL with evidence (false alarms already filtered by the skeptics). Read-only — never edits.",
+    "perspective's PASS/FAIL with evidence (false alarms already filtered by the skeptics). Read-only — never edits.\n" +
+    "Set mode:'understand' instead to fan out parallel READERS that each summarize one file into a structured map " +
+    '— for getting up to speed on a long document or a multi-file/multi-doc set you have not internalized yet ' +
+    '(no pass/fail; the map is the result).',
   isReadOnly: () => true,
   async call(input, ctx) {
     // ctx.panel is set only on a top-level dev run; absent inside a sub-agent / a panel reviewer (the depth
@@ -35,7 +41,7 @@ export const panelExamineTool = buildTool<typeof inputSchema, PanelExamineResult
     if (!ctx.panel) {
       return { data: { ok: false, message: 'panel_examine is not available here — it cannot be run from inside a sub-agent or a panel reviewer.' } }
     }
-    return { data: await ctx.panel.examine({ paths: input.paths, mode: 'review' }) }
+    return { data: await ctx.panel.examine({ paths: input.paths, mode: input.mode === 'understand' ? 'understand' : 'review' }) }
   },
   mapResult(out, toolUseId): ToolResultBlock {
     // is_error only when the panel could not RUN (disabled / no reviewer / bad target) — a successful review that
