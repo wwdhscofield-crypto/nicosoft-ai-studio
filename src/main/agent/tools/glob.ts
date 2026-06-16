@@ -41,7 +41,7 @@ export const globTool = buildTool<typeof inputSchema, string[]>({
       found.push({ rel, mtime: st?.mtimeMs ?? 0 })
       if (found.length >= MAX_RESULTS) break
     }
-    // Newest first (mtime desc) — matches Claude Code's Glob, so recently-changed files surface at the top.
+    // Newest first (mtime desc) — so recently-changed files surface at the top.
     found.sort((a, b) => b.mtime - a.mtime)
     return { data: found.map((f) => f.rel) }
   },

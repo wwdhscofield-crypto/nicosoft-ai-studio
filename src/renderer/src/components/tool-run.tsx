@@ -1,4 +1,4 @@
-// ToolRun — Claude-Code-Desktop-style rendering for the tools an agent ran between two pieces of model
+// ToolRun — compact, foldable rendering for the tools an agent ran between two pieces of model
 // text. Replaces the old ToolBubble/ExploreGroup chat shapes wholesale:
 //
 //   live      →  the finished part as a dim count summary (if any) + ONE gerund line for the tool that is
@@ -147,7 +147,7 @@ function verbLive(t: ToolCall): string {
 
 const plural = (n: number, one: string, many: string): string => (n === 1 ? one : many.replace('{n}', String(n)))
 
-// Count-summary for a finished run, CCD style: categories in first-appearance order, file categories
+// Count-summary for a finished run: categories in first-appearance order, file categories
 // deduped by path, action categories counted by call.
 export function summarizeRun(tools: ToolCall[]): string {
   type Cat = { phrase: (n: number) => string; files?: Set<string>; count: number }

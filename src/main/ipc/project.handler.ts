@@ -4,7 +4,7 @@ import * as projectService from '../services/project.service'
 import * as gitService from '../services/git.service'
 import type { ProjectCreateInput, ProjectPhase, ProjectTaskInput, ProjectTaskStatus, ProjectTestStatus } from './contracts'
 
-// Project picker + git branch list / switch for Engineer's path selector (Claude-style chip row), plus
+// Project picker + git branch list / switch for Engineer's path selector (a chip row), plus
 // the Project CRUD boundary (Coordinator 2.0 — doc 19 §1). Every handler is thin: parse args, call the
 // service, return — no SQL, no git/exec, no business logic here.
 export function registerProjectHandlers(): void {

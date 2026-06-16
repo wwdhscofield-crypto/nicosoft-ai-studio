@@ -32,7 +32,7 @@ export const exitPlanModeTool = buildTool<typeof inputSchema, { approved: boolea
   isConcurrencySafe: () => true,
   async call(input, ctx) {
     // Not in plan mode → nothing to exit. Don't pop the plan-approval UI; tell the agent it is already
-    // executing so it just proceeds (Claude Code rejects this outright; a guiding no-op is gentler).
+    // executing so it just proceeds (a guiding no-op is gentler than rejecting outright).
     if (ctx.permissionMode !== 'plan') {
       return { data: { approved: true } }
     }

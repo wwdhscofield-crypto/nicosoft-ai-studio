@@ -1,8 +1,8 @@
 // Panel Gate B — the cross-loop concurrency limiter (panel-examine §3.5 / §4-C, M3). The repo has
 // NO p-limit / semaphore / os.cpus today: existing parallelism (parallel/council) is a bare Promise.all with
 // no cap (coordinator.service.ts). A panel fan-out spawns N independent verifier loops, so it needs a
-// real limiter. This is NEW code — it BORROWS Claude Code's Workflow concurrency model (min(16, cores−2) +
-// queue, thunk-throw→null, an absolute runaway backstop), it does not reuse repo infrastructure.
+// real limiter. This is NEW code with its own concurrency model (min(16, cores−2) + queue, thunk-throw→null,
+// an absolute runaway backstop); it does not reuse repo infrastructure.
 //
 // Two layers, both necessary:
 //   - GLOBAL semaphore min(16, cores−2): caps instantaneous CPU/process pressure across ALL subject + closure
@@ -26,7 +26,7 @@ function globalConcurrency(): number {
 const GLOBAL_MAX = globalConcurrency()
 // Per-upstream-account cap: the global gate bounds total CPU; this bounds how hard one shared endpoint is hit.
 const PER_ENDPOINT_MAX = Math.max(1, Math.min(4, GLOBAL_MAX))
-// Absolute runaway backstop (Workflow's total-agent 1000 cap): a trigger-logic bug can never spawn unbounded
+// Absolute runaway backstop (a total-agent 1000 cap): a trigger-logic bug can never spawn unbounded
 // subject loops. Real fan-outs are ≤ |enum| (8) per step × concurrent steps — this is a safety net, never hit
 // in practice.
 const ABSOLUTE_BACKSTOP = 1000
@@ -76,7 +76,7 @@ function endpointSem(endpointId: string): Semaphore {
 let liveCount = 0 // process-wide concurrent-subject count, for the runaway backstop
 
 // Run ONE subject task under the two-layer cap: global slot first, then the per-endpoint slot. A task that
-// throws resolves to null (degrade to floor-only, never reject the whole fan-out — Workflow's thunk-throw→null
+// throws resolves to null (degrade to floor-only, never reject the whole fan-out — the thunk-throw→null
 // pattern), so one broken subject can't void the others or the floor verdict.
 export async function runExamineLimited<T>(endpointId: string, fn: () => Promise<T>): Promise<T | null> {
   if (liveCount >= ABSOLUTE_BACKSTOP) {
@@ -95,7 +95,7 @@ export async function runExamineLimited<T>(endpointId: string, fn: () => Promise
 }
 
 // Fan a batch of subject tasks out under the limiter — concurrency-capped, queue the excess, each failure → null.
-// Mirrors Workflow's parallel(): a barrier (awaits all) returning a null-padded array the caller filters.
+// A barrier (awaits all) returning a null-padded array the caller filters.
 export function parallelExamineLimited<T>(endpointId: string, tasks: Array<() => Promise<T>>): Promise<(T | null)[]> {
   return Promise.all(tasks.map((t) => runExamineLimited(endpointId, t)))
 }

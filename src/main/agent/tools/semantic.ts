@@ -1,5 +1,4 @@
-// Model-tolerant scalar schemas — ported from Claude Code 1.11.0 (src/utils/semanticNumber.ts +
-// semanticBoolean.ts). Tool inputs arrive as model-generated JSON and the model occasionally QUOTES
+// Model-tolerant scalar schemas. Tool inputs arrive as model-generated JSON and the model occasionally QUOTES
 // scalars — {"offset":"30"} / {"replace_all":"false"} — which a bare z.number()/z.boolean() rejects
 // with a hard type error, failing the whole tool call. These preprocess ONLY valid numeric / boolean
 // string literals (NOT z.coerce, which would convert "" / null / JS-truthiness and mask real bugs);

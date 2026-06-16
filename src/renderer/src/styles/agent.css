@@ -8,7 +8,7 @@
 .tb-chevron { color: var(--text-4); flex: none; display: inline-flex; transition: transform 0.15s ease; }
 .tb-chevron.open { transform: rotate(180deg); }
 
-/* — Tool run (CCD-style): a streak of tool calls between two pieces of model text. Default = ONE dim
+/* — Tool run: a streak of tool calls between two pieces of model text. Default = ONE dim
    count-summary line ("Read 13 files, ran 18 commands, edited a file ›"); a lone tool = a single direct
    line ("Edited types.ts +3 −10 ›"). Level 1 opens a soft card listing each call; level 2 opens the
    call's payload (diff / source / output) under its line. While live, only the in-flight gerund line
@@ -402,7 +402,7 @@
 }
 .ap-plan-steps li::marker { color: var(--text-4); }
 
-/* — Project-path selector: Claude-style chip row above the composer.
+/* — Project-path selector: a chip row above the composer.
    Local (plain label) · 📁 project (click → pick folder) · ⎇ branch (click → switch). — */
 .path-bar {
   display: flex;

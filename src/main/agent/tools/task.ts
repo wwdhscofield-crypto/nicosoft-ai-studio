@@ -9,7 +9,7 @@ import type { ToolResultBlock } from '../types'
 const inputSchema = z.strictObject({
   description: z.string().describe('A short (3-5 word) description of the subtask'),
   prompt: z.string().describe('The full, self-contained task for the sub-agent to perform'),
-  // Accepted + ignored: models trained on Claude Code send subagent_type ('general-purpose', etc.), but
+  // Accepted + ignored: models commonly send subagent_type ('general-purpose', etc.), but
   // Studio's sub-agent runs the parent kit with no agent-type registry — a strictObject rejection here
   // would fail an otherwise-valid delegation. Strip it (optional) rather than hard-reject.
   subagent_type: z.string().optional().describe('Ignored — Studio sub-agents share the parent kit'),

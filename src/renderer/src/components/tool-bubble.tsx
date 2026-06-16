@@ -1,5 +1,5 @@
 // Tool payload renderers + server-activity rows. The chat's tool SURFACE is components/tool-run.tsx
-// (CCD-style count summaries + expandable lines); this module keeps the level-2 payload rendering
+// (count summaries + expandable lines); this module keeps the level-2 payload rendering
 // (ToolDetail: DiffView / highlighted Read source / command output / e2e screenshot) and the
 // server-side activity shapes (ServerBubble, Sources). The old ToolBubble/ExploreGroup chat shapes
 // were retired with the tool-run redesign.

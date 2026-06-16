@@ -18,7 +18,7 @@ const inputSchema = z.object({
 
 const MAX_BYTES = 256 * 1024
 const PDF_MAX_BYTES = 20 * 1024 * 1024 // PDFs are binary + larger than text; cap higher than the utf-8 cap
-const DEFAULT_LINE_LIMIT = 2000 // default slice when no limit given (Claude Code parity) — a large file isn't dumped whole
+const DEFAULT_LINE_LIMIT = 2000 // default slice when no limit given — a large file isn't dumped whole
 const MAX_LINE_CHARS = 2000 // truncate a single very long line (minified bundles) so one line can't flood the context
 const PDF_TEXT_MAX_CHARS = 100_000 // ~25K tokens — cap extracted PDF text instead of injecting a whole book
 

@@ -161,7 +161,7 @@ export async function runPanelExamine(roleId: string, opts: RunStepOptions, gate
       v ?? { key: selected[i].key, why: selected[i].why, produced: false, passed: false, feedback: 'subject task aborted (concurrency backstop or unexpected error)', inputTokens: 0, outputTokens: 0 }
     )
 
-    // Adversarial refute (Workflow's adversarial-verify pattern): each FAILED subject faces N independent skeptics
+    // Adversarial refute (the adversarial-verify pattern): each FAILED subject faces N independent skeptics
     // (read-only, sharing this same build) that try to disprove the finding. A majority "proven false alarm"
     // marks the subject refuted → it never enters closure and is recorded false-positive (lowers B-cost / false
     // reds). Burden is on the skeptics: uncertain → NOT refuted, so a real defect is never lightly dropped.
@@ -202,7 +202,7 @@ export async function runPanelExamine(roleId: string, opts: RunStepOptions, gate
   }
 }
 
-// Adversarial refute — the Workflow "adversarial verify" pattern adapted to subject findings. Each FAILED subject
+// Adversarial refute — the adversarial-verify pattern adapted to subject findings. Each FAILED subject
 // gets REFUTE_VOTERS independent skeptics that try to PROVE its finding is a false alarm; ≥ REFUTE_MAJORITY
 // "proven false alarm" votes refute it (recorded false-positive, kept out of closure → lower B-cost). The
 // burden is on the skeptics (a non-contracted / uncertain / infra-failed vote does NOT refute), so a real

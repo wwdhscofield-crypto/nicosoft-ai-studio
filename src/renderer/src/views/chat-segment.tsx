@@ -53,7 +53,7 @@ function ThinkingReadout({ chars, inputTokens, outputTokens, cachedTokens = 0, a
   const out = outputTokens && outputTokens > 0 ? outputTokens : Math.round(chars / 4)
   const parts: ReactElement[] = []
   if (elapsed >= 1000) parts.push(<span>{fmtElapsed(elapsed)}</span>)
-  // Codex-style ↑ split (doc 49): the main number is the NEW input this request pays for (fresh =
+  // The cache-aware ↑ split (doc 49): the main number is the NEW input this request pays for (fresh =
   // full prompt − cache reads); the cache-served bulk rides as a dim "(+N cached)" note. Without the
   // split a cache-heavy agent run reads as a scary 47K↑ every turn when the actually-new part is ~67.
   const cached = Math.min(Math.max(cachedTokens, 0), inputTokens)
@@ -124,11 +124,11 @@ function isSynthesis(msg: ChatMessage): boolean {
 }
 
 /* — The body of an assistant RUN, walked at BLOCK level across all its turns in emission order. Model text
- *   NEVER folds (claude-code breaks its collapse groups on assistant text): narration and answers render in
+ *   NEVER folds (assistant text breaks collapse groups): narration and answers render in
  *   place, permanently visible, and they BREAK the tool run — so runs are small count-summary lines sitting
  *   exactly where their tool streak happened, never one big cell pinned to the segment top hiding what the
- *   model said. ALL consecutive tools between two pieces of text aggregate into ONE ToolRun (CCD style:
- *   "Read 13 files, ran 18 commands, edited a file ›"); a lone tool renders as a single direct line. — */
+ *   model said. ALL consecutive tools between two pieces of text aggregate into ONE ToolRun
+ *   ("Read 13 files, ran 18 commands, edited a file ›"); a lone tool renders as a single direct line. — */
 function RunBody({ msgs, onOpenImage, live }: { msgs: ChatMessage[]; onOpenImage: (items: ViewerImage[], index: number) => void; live: boolean }): ReactElement {
   const out: ReactElement[] = []
   let fold: ToolCall[] = []
@@ -199,7 +199,7 @@ function RunBody({ msgs, onOpenImage, live }: { msgs: ChatMessage[]; onOpenImage
 }
 
 /* — One transcript segment: a RUN of consecutive merge-compatible assistant messages (same expert, same
- *   dispatch chain, same synthesis-ness; user messages always stand alone). Mirrors codex/claude-code: the
+ *   dispatch chain, same synthesis-ness; user messages always stand alone). Follows the one-turn-one-speaker model: the
  *   speaker appears ONCE, and everything the agent did across its turns — explore folds, tool cards,
  *   narration, the final answer — flows inside one body with a single live readout at the bottom. Without
  *   this, every one-tool turn became its own avatar+name+readout block, and a tools-then-answer run read as
@@ -309,12 +309,12 @@ export function ChatSegment({
 }
 
 // — Run grouping ———————————————————————————————————————————————————————————————————————————————————
-// Claude runs ONE tool per turn, so an agent's work arrives as a RUN of separate assistant messages. Like
-// codex and claude-code, the whole consecutive same-expert run renders as ONE segment (speaker once);
+// Claude runs ONE tool per turn, so an agent's work arrives as a RUN of separate assistant messages. The
+// whole consecutive same-expert run renders as ONE segment (speaker once);
 // RunBody walks its blocks in emission order and folds only the silent explore streaks.
 
 // Consecutive assistant messages merge into one segment when they share the expert, the dispatch chain, and
-// the synthesis-ness — the codex/claude-code "one turn, one speaker" model. User messages never merge.
+// the synthesis-ness — the "one turn, one speaker" model. User messages never merge.
 function canMerge(a: ChatMessage, b: ChatMessage): boolean {
   const chainsEqual = Array.isArray(a.dispatch) || Array.isArray(b.dispatch) ? sameChain(a.dispatch, b.dispatch) : true
   return (

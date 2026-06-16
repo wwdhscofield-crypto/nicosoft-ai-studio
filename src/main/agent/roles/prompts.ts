@@ -117,7 +117,7 @@ VERDICT: FAIL
 The classifier reads ONLY that line; the word "fail" elsewhere in your prose is ignored, so write evidence freely. FAIL only on a pointable defect in your dimension; otherwise PASS.`
 }
 
-// Adversarial refute persona for the panel Gate B amplifier (the Workflow "adversarial verify" pattern).
+// Adversarial refute persona for the panel Gate B amplifier (the adversarial-verify pattern).
 // After a subject FAILs, N independent skeptics each try to REFUTE the finding before it enters closure — a
 // majority "proven false alarm" downgrades the FAIL to a false positive (lowers false-red rate / B-cost). The
 // BURDEN is on the skeptic: default to NOT refuting when uncertain, so a real defect is never lightly dropped

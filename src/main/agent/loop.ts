@@ -141,10 +141,10 @@ export async function* runAgent(
   params: RunAgentParams,
 ): AsyncGenerator<AgentEvent, AgentResult, void> {
   const { baseUrl, apiKey, model, system, tools } = params
-  // Claude Code's three-tier strategy (query.ts, tengu_otk_slot): a SMALL default — Anthropic rate
+  // A three-tier strategy: a SMALL default — Anthropic rate
   // limiting pre-reserves OTPM by max_tokens, so a big standing value wastes quota under concurrency —
   // escalated to 64K on the FIRST max_tokens cut (same request, no extra turn), then multi-turn
-  // recovery prompts. 16K (not CC's 8K) because effort-tier thinking shares this budget with tool json
+  // recovery prompts. 16K because effort-tier thinking shares this budget with tool json
   // (a ~17KB file Write is ~5K tokens of input json alone; 8K squeezed both — the F15 cascade).
   let maxTokens = params.maxTokens ?? 16384
   const ESCALATED_MAX_TOKENS = 65536
@@ -571,7 +571,7 @@ export async function* runAgent(
     const toolUses = assistant.content.filter((b): b is ToolUseBlock => b.type === 'tool_use')
     // max_tokens truncation (F15): incomplete tool_use blocks were already dropped by the llm layer, so a
     // cut-off turn that intended tools lands here tool-less. Tier 1 — re-send the SAME request at the
-    // escalated ceiling (Claude Code style). WITHHELD from history + the UI (audit F21): a fresh retry
+    // escalated ceiling. WITHHELD from history + the UI (audit F21): a fresh retry
     // replaces it wholesale, so pushing/yielding the partial would stream text the retry then overwrites
     // — a double-show, and the same input counted twice. The continue-in-pieces retry below is different
     // (it KEEPS the partial for the model to continue from), so only this escalate branch is withheld.

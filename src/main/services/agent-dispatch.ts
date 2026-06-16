@@ -185,7 +185,7 @@ export async function runAgentLoop(
 
   let result!: AgentResult
   let inTokens = 0 // TOTAL prompt tokens incl. cache, accumulated across turns → billing (usage_events)
-  let lastContext = 0 // current context size = LAST turn's prompt (display ↑). OVERWRITE, never accumulate — accumulating ANY per-turn input (fresh/non-cached/total) re-counts history N× and balloons on long runs (engineer hit 5.3M). = codex last_token_usage.
+  let lastContext = 0 // current context size = LAST turn's prompt (display ↑). OVERWRITE, never accumulate — accumulating ANY per-turn input (fresh/non-cached/total) re-counts history N× and balloons on long runs (engineer hit 5.3M).
   let lastCacheRead = 0 // cache-read share of the LAST turn's prompt (display "(+N cached)"). OVERWRITE alongside lastContext so fresh = lastContext − lastCacheRead pairs with the same turn.
   let outTokens = 0
   const toolImages: MessageAttachmentDto[] = [] // images any tool produced this run → assistant-message attachments
