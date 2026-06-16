@@ -1,5 +1,5 @@
 // Panel examine — the multi-subject adversarial fan-out primitive (panel-examine §7 Phase 1). Extracted
-// from coordinator-gate-b::runLenses so the fan-out + refute + summary live in one reusable module; Gate B
+// from coordinator-gate-b's panel fan-out so the fan-out + refute + summary live in one reusable module; Gate B
 // now CALLS it (one of its callers, §0/§D3). It shares the SINGLE verifier body (examine/verifier.ts) with
 // the floor — never copies it. Phase 1 keeps the CURRENT integration logic (D2 integrator is Phase 2); only
 // the location moved. No behavior change vs the in-gate-b version.
