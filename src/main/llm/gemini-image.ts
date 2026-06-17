@@ -13,6 +13,10 @@ import { geminiBase, geminiHeaders, throwHttpError, toLlmError } from './_shared
 
 const PROVIDER = 'gemini'
 
+// Image generation is synchronous (no SSE idle guard) and can take tens of seconds, but a hung upstream must
+// not wedge the tool forever — bound it with a hard timeout, combined with the caller's abort signal.
+const IMAGE_TIMEOUT_MS = 180_000
+
 export type GeminiImageKind = 'nano-banana' | 'imagen'
 
 export interface GeminiImageParams {
@@ -39,7 +43,7 @@ async function postJson(url: string, apiKey: string, body: unknown, signal?: Abo
       method: 'POST',
       headers: geminiHeaders(apiKey),
       body: JSON.stringify(body),
-      signal,
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(IMAGE_TIMEOUT_MS)]) : AbortSignal.timeout(IMAGE_TIMEOUT_MS),
     })
   } catch (err) {
     throw toLlmError(PROVIDER, err)

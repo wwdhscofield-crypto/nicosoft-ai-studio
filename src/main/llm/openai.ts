@@ -4,6 +4,7 @@
 
 import type { ChatAttachment, ChatFn, ChatMessage, ChatRequest, ChatResult, OnDelta } from './types'
 import { DEFAULT_INSTRUCTIONS, iterSSE, openStream, openaiHeaders, parseJSON, stablePromptCacheKey, toLlmError, trimBase } from './_shared'
+import { streamIdleGuard, LLM_STREAM_IDLE_MS, LLM_STREAM_IDLE_MS_OPENAI_REASONING, streamEnvelopeGuard, LLM_EMPTY_ENVELOPE_MS } from '../agent/stream-timeout'
 
 const PROVIDER = 'openai'
 
@@ -92,24 +93,39 @@ function buildBody(req: ChatRequest): ResponsesBody {
 
 export const chatOpenAI: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Promise<ChatResult> => {
   const url = `${trimBase(req.baseUrl)}/v1/responses`
-  const reader = await openStream(PROVIDER, url, {
-    method: 'POST',
-    headers: openaiHeaders(req.apiKey),
-    body: JSON.stringify(buildBody(req)),
-    signal: req.signal,
-  })
+  // Hung-upstream guards (parity with agent/llm-openai.ts): idle kills a dead connection; envelope (one-shot)
+  // kills an enveloped-but-empty stream where only status events (response.created / in_progress) arrive and
+  // no real output ever does. Without them a hung/empty upstream would wedge this single-turn call forever.
+  // OpenAI reasoning models stream the reasoning item as one silent atomic block (no keepalive/delta); a
+  // high-effort gap can exceed 120s on a LIVE stream, so widen the idle bound only when reasoning was requested.
+  const idleMs = req.thinking?.effort ? LLM_STREAM_IDLE_MS_OPENAI_REASONING : LLM_STREAM_IDLE_MS
+  const guard = streamIdleGuard(req.signal, idleMs)
+  const envelope = streamEnvelopeGuard(LLM_EMPTY_ENVELOPE_MS)
 
   let text = ''
   let inTokens = 0
   let outTokens = 0
   let cacheReadTokens = 0
 
+  // guard.reset() + openStream go INSIDE the try so a non-2xx upstream (throwHttpError) or network error still
+  // reaches finally and disposes both timers + the run-abort listener — else they'd leak on the common error path.
   try {
+    guard.reset()
+    const reader = await openStream(PROVIDER, url, {
+      method: 'POST',
+      headers: openaiHeaders(req.apiKey),
+      body: JSON.stringify(buildBody(req)),
+      signal: AbortSignal.any([guard.signal, envelope.signal]),
+    })
     for await (const payload of iterSSE(reader)) {
       const ev = parseJSON(payload) as
         | { type?: string; delta?: string; response?: { usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number } } } }
         | null
       if (!ev || typeof ev.type !== 'string') continue
+      guard.reset() // any valid event = connection alive
+      // Any non-status event is real activity (reasoning / output items / text) → disarm the envelope guard.
+      // response.created / response.in_progress are the only "enveloped but no content yet" signals.
+      if (ev.type !== 'response.created' && ev.type !== 'response.in_progress') envelope.markProductive()
       if (ev.type === 'response.output_text.delta') {
         if (typeof ev.delta === 'string' && ev.delta.length > 0) {
           text += ev.delta
@@ -127,6 +143,9 @@ export const chatOpenAI: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Pr
     }
   } catch (err) {
     throw toLlmError(PROVIDER, err)
+  } finally {
+    guard.dispose()
+    envelope.dispose()
   }
 
   onDelta({ turnFinalUsage: { inTokens, outTokens, cacheReadTokens, cacheCreationTokens: 0 } })

@@ -17,6 +17,7 @@ import { isContentBlock } from '../agent/types'
 import { LlmError } from '../llm/types'
 import { coordinatorApproval } from './coordinator-approvals'
 import type { CoordinatorCallbacks, CoordinatorRunInput } from './coordinator-types'
+import type { AgentResult } from '../agent/loop'
 
 export async function runCollaboration(
   input: CoordinatorRunInput,
@@ -25,7 +26,7 @@ export async function runCollaboration(
   cb: CoordinatorCallbacks,
   signal: AbortSignal,
   project?: collabProject.CollabProject,
-): Promise<{ role: string; text: string }[]> {
+): Promise<{ outputs: { role: string; text: string; reason: AgentResult['reason'] }[]; reasons: AgentResult['reason'][] }> {
   const experts: agentService.CollabExpertInput[] = []
   const models = new Map<string, string>()
   for (const roleId of roleIds) {
@@ -92,8 +93,10 @@ export async function runCollaboration(
   }
   const results = await agentService.runCollabSession(input.convId, experts, hooks, signal, () => Date.now())
 
-  const outputs: { role: string; text: string }[] = []
-  for (const [roleId, { text, inTokens, contextTokens, cacheReadTokens, outTokens }] of results) {
+  const outputs: { role: string; text: string; reason: AgentResult['reason'] }[] = []
+  const reasons: AgentResult['reason'][] = [] // every expert's terminal reason, independent of the text gate
+  for (const [roleId, { text, reason, inTokens, contextTokens, cacheReadTokens, outTokens }] of results) {
+    reasons.push(reason) // capture even an empty-text silent failure (incomplete / thrash_stop) so it bubbles up
     if (text) {
       convService.append(input.convId, {
         author: 'expert',
@@ -106,9 +109,9 @@ export async function runCollaboration(
         sentTokens: inTokens, // SETTLE ↑: cumulative billing input across this expert's collab turns (total sent)
         dispatch: fullChain
       })
-      outputs.push({ role: roleId, text })
+      outputs.push({ role: roleId, text, reason })
     }
     cb.onStepDone(roleId, text, contextTokens, outTokens, inTokens)
   }
-  return outputs
+  return { outputs, reasons }
 }

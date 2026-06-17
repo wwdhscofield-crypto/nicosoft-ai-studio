@@ -103,7 +103,7 @@ export async function runAgentLoop(
   loop: AgentLoopInput,
   cb: AgentCallbacks,
   signal: AbortSignal,
-): Promise<{ text: string; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number; reason: string; turns: number; attachments: MessageAttachmentDto[]; writtenFiles: WrittenFile[] }> {
+): Promise<{ text: string; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number; reason: AgentResult['reason']; turns: number; attachments: MessageAttachmentDto[]; writtenFiles: WrittenFile[] }> {
   const sessionDir = join(dataDir(), 'sessions', loop.convId)
   await mkdir(join(sessionDir, 'tool-results'), { recursive: true })
   // No project folder selected (Flynn/Shuri can chat folder-free) → fall back to a per-conversation scratch
@@ -349,7 +349,7 @@ export async function runDispatchedAgent(
   d: DispatchedAgentInput,
   cb: AgentCallbacks,
   signal: AbortSignal,
-): Promise<{ text: string; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number; reason: string; attachments: MessageAttachmentDto[]; writtenFiles: WrittenFile[] }> {
+): Promise<{ text: string; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number; reason: AgentResult['reason']; attachments: MessageAttachmentDto[]; writtenFiles: WrittenFile[] }> {
   let tools: Tool[]
   if (d.toolNames) {
     // Fixed-kit dispatch (Gate B verifier): an explicit whitelist instead of the role's default kit — a

@@ -11,6 +11,11 @@ import { CHARS_PER_TOKEN } from '../llm/estimate'
 import { trimBase } from '../llm/_shared'
 import { ANTHROPIC_VERSION } from '../llm/anthropic-wire'
 
+// Non-streaming count_tokens / probe requests have no SSE idle guard — bound them with a hard request timeout
+// so a hung upstream can't wedge the synchronous countContext (it runs before every dispatched step). On
+// timeout the fetch rejects, the try/catch returns null, and the caller falls through L1→L2→rough.
+const COUNT_TIMEOUT_MS = 30_000
+
 export interface AnthropicCountInput {
   baseUrl: string
   apiKey: string
@@ -52,7 +57,8 @@ async function viaCountTokensApi(input: AnthropicCountInput): Promise<number | n
     const res = await fetch(`${trimBase(input.baseUrl)}/v1/messages/count_tokens`, {
       method: 'POST',
       headers: anthropicHeaders(input.apiKey),
-      body: JSON.stringify(bodyFor(input.model, input))
+      body: JSON.stringify(bodyFor(input.model, input)),
+      signal: AbortSignal.timeout(COUNT_TIMEOUT_MS),
     })
     if (!res.ok) return null
     const json = (await res.json()) as { input_tokens?: unknown }
@@ -70,7 +76,8 @@ async function viaSmallModelProbe(input: AnthropicCountInput): Promise<number | 
     const res = await fetch(`${trimBase(input.baseUrl)}/v1/messages`, {
       method: 'POST',
       headers: anthropicHeaders(input.apiKey),
-      body: JSON.stringify({ ...bodyFor(smallModel, input), max_tokens: 1 })
+      body: JSON.stringify({ ...bodyFor(smallModel, input), max_tokens: 1 }),
+      signal: AbortSignal.timeout(COUNT_TIMEOUT_MS),
     })
     if (!res.ok) return null
     const json = (await res.json()) as {

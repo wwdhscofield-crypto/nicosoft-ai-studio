@@ -4,8 +4,9 @@
 // tools (function defs) + streamed function_call arguments + reasoning encrypted_content passthrough.
 // See docs/nicosoft-studio/16-openai-agent-loop.md.
 
+import { appendFileSync } from 'node:fs'
 import { DEFAULT_INSTRUCTIONS, iterSSE, openStream, openaiHeaders, parseJSON, stablePromptCacheKey, toLlmError, trimBase } from '../llm/_shared'
-import { streamIdleGuard, LLM_STREAM_IDLE_MS } from './stream-timeout'
+import { streamIdleGuard, LLM_STREAM_IDLE_MS, LLM_STREAM_IDLE_MS_OPENAI_REASONING, streamEnvelopeGuard, LLM_EMPTY_ENVELOPE_MS } from './stream-timeout'
 import type { AgentLlmEvent, AgentLlmRequest } from './llm'
 import type {
   AgentMessage,
@@ -157,18 +158,36 @@ export async function* callWithToolsOpenAI(
   let cacheReadTokens = 0
   let truncated = false // response hit the output-token cap (response.incomplete / status 'incomplete')
 
+  // Wire tap (best-effort, env-gated): dump the HTTP wire to LLM_WIRE_LOG so a dogfood run on this protocol
+  // can audit the raw stream after the fact (parity with the Anthropic path in llm.ts). Never breaks the run.
+  const WIRE = process.env.LLM_WIRE_LOG
+  const wireDump = (rec: Record<string, unknown>): void => {
+    if (!WIRE) return
+    try { appendFileSync(WIRE, JSON.stringify({ ts: Date.now(), conv: req.conversationId, role: req.roleId, ...rec }) + '\n') } catch { /* ignore */ }
+  }
+  wireDump({ dir: 'req', url, body })
+
   // Idle-timeout: the fetch has no per-request timeout, so a hung upstream would wedge the loop forever.
-  // Arm before opening (covers a hang before the first byte) + reset on every payload; dispose in finally.
-  const guard = streamIdleGuard(req.signal, LLM_STREAM_IDLE_MS)
+  // Arm before opening + reset on every VALID payload; dispose in finally. Envelope guard (one-shot, NOT
+  // reset by any frame) separately catches an enveloped-but-empty stream — status/keepalive events like
+  // response.created / response.in_progress are valid `ev.type`s that would otherwise reset the idle guard
+  // forever while zero real content arrives (the OpenAI mirror of the Anthropic empty-envelope case, and of
+  // nsai's usage-only silent failure). markProductive() on the first real output disarms it. Mirrors llm.ts.
+  // OpenAI reasoning models stream the reasoning item as one silent atomic block (no keepalive/delta); a
+  // high-effort gap can exceed 120s on a LIVE stream, so widen the idle bound only when reasoning was requested.
+  const idleMs = req.thinking?.effort ? LLM_STREAM_IDLE_MS_OPENAI_REASONING : LLM_STREAM_IDLE_MS
+  const guard = streamIdleGuard(req.signal, idleMs)
+  const envelope = streamEnvelopeGuard(LLM_EMPTY_ENVELOPE_MS)
   try {
     guard.reset()
     const reader = await openStream(PROVIDER, url, {
       method: 'POST',
       headers: openaiHeaders(req.apiKey),
       body: JSON.stringify(body),
-      signal: guard.signal,
+      signal: AbortSignal.any([guard.signal, envelope.signal]),
     })
     for await (const payload of iterSSE(reader)) {
+      wireDump({ dir: 'resp', payload })
       const ev = parseJSON(payload) as RespEvent | null
       if (!ev || typeof ev.type !== 'string') continue
       // Reset only on a VALID protocol event — malformed/keepalive data frames are not signs of life
@@ -176,6 +195,7 @@ export async function* callWithToolsOpenAI(
       guard.reset()
       switch (ev.type) {
         case 'response.output_item.added': {
+          envelope.markProductive() // a real output item began (text / tool / reasoning) → not an empty envelope
           const it = ev.item
           if (it?.type === 'function_call' && it.id) {
             const callId = it.call_id || it.id
@@ -196,6 +216,7 @@ export async function* callWithToolsOpenAI(
         }
         case 'response.output_text.delta': {
           if (ev.item_id && typeof ev.delta === 'string' && ev.delta.length > 0) {
+            envelope.markProductive() // real text output → not an empty envelope
             texts.set(ev.item_id, (texts.get(ev.item_id) ?? '') + ev.delta)
             onEvent?.({ type: 'text', delta: ev.delta })
           }
@@ -271,6 +292,7 @@ export async function* callWithToolsOpenAI(
     throw toLlmError(PROVIDER, err)
   } finally {
     guard.dispose()
+    envelope.dispose()
   }
 
   // The loop decides continuation by "did the assistant request a tool", not stop_reason — a best-effort

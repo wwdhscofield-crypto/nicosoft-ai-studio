@@ -378,6 +378,11 @@ export interface CoordinatorDoneDto {
   streamId: string
   inputTokens?: number // tokens of the LAST step in the turn — drives the composer readout
   outputTokens?: number // real output tokens of the last step
+  // Aggregated terminal reason of the turn: any step that did NOT cleanly complete (incomplete = upstream-
+  // truncated empty turn / thrash_stop / max_turns / aborted) bubbles here, so the UI + the dogfood verdict
+  // tell a non-clean finish from a phantom DONE. Mirrors AgentResult.reason — kept a literal union so the IPC
+  // contract layer does not import main/agent.
+  reason?: 'completed' | 'max_turns' | 'aborted' | 'thrash_stop' | 'incomplete'
 }
 export interface CoordinatorErrorDto {
   streamId: string

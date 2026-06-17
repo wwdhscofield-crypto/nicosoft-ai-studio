@@ -191,7 +191,7 @@ export function registerCoordinatorHandlers(): void {
         controller.signal
       )
       .then((r) => {
-        const ev: CoordinatorDoneDto = { streamId, inputTokens: r.inputTokens, outputTokens: r.outputTokens }
+        const ev: CoordinatorDoneDto = { streamId, inputTokens: r.inputTokens, outputTokens: r.outputTokens, reason: r.reason }
         send('coordinator:done', ev)
       })
       .catch((err: unknown) => {

@@ -93,7 +93,7 @@ export async function runCollabSession(
   hooks: CollabHooks,
   signal: AbortSignal,
   nowMs: () => number,
-): Promise<Map<string, { text: string; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number }>> {
+): Promise<Map<string, { text: string; reason: AgentResult['reason']; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number }>> {
   // One service registry per collaboration, shared by all its experts (Flynn starts a backend, Shuri
   // lists + connects). Tree-killed in the finally below when the session ends — no zombie ports survive.
   const registry = new ServiceRegistry()
@@ -101,6 +101,7 @@ export async function runCollabSession(
   const contextByRole = new Map<string, number>() // per expert: LAST turn's context size → per-message ↑ display (overwrite, NOT accumulated)
   const outTokensByRole = new Map<string, number>() // accumulated output tokens per expert → its per-message ↓ readout
   const cacheReadByRole = new Map<string, number>() // per expert: LAST turn's cache-read share → per-message "(+N cached)" note (overwrite, NOT accumulated)
+  const reasonByRole = new Map<string, AgentResult['reason']>() // per expert: its loop's terminal reason → bubbles incomplete/thrash_stop up to coordinator:done (not just text)
   const roster = experts.map((x) => ({ id: x.roleId, name: displayName(x.roleId) ?? x.roleId }))
   const lspByExpert: LSPManager[] = [] // one per dev expert; tree-killed in the finally
   const specs: ExpertSpec[] = experts.map((x) => {
@@ -216,6 +217,7 @@ export async function runCollabSession(
         contextByRole.set(x.roleId, turnContext) // overwrite with this run's last context size (not accumulated)
         cacheReadByRole.set(x.roleId, turnCacheRead) // overwrite with this run's last cache-read share
         outTokensByRole.set(x.roleId, (outTokensByRole.get(x.roleId) ?? 0) + turnOut)
+        reasonByRole.set(x.roleId, result.reason)
         return result.messages
       },
     }
@@ -229,7 +231,7 @@ export async function runCollabSession(
   try {
     const texts = await new CollabSession(specs, onEvent, nowMs).run(signal)
     return new Map(
-      [...texts].map(([roleId, text]): [string, { text: string; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number }] => [roleId, { text, inTokens: inTokensByRole.get(roleId) ?? 0, contextTokens: contextByRole.get(roleId) ?? 0, cacheReadTokens: cacheReadByRole.get(roleId) ?? 0, outTokens: outTokensByRole.get(roleId) ?? 0 }])
+      [...texts].map(([roleId, text]): [string, { text: string; reason: AgentResult['reason']; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number }] => [roleId, { text, reason: reasonByRole.get(roleId) ?? 'completed', inTokens: inTokensByRole.get(roleId) ?? 0, contextTokens: contextByRole.get(roleId) ?? 0, cacheReadTokens: cacheReadByRole.get(roleId) ?? 0, outTokens: outTokensByRole.get(roleId) ?? 0 }])
     )
   } finally {
     hooks.onServices?.([])

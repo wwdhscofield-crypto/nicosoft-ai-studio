@@ -6,6 +6,7 @@
 //   2. functionCall parts arrive WHOLE (args is a complete object, not streamed fragments) — yield on sight.
 // Combining google_search grounding with custom function calling in one call needs Gemini 3 (see doc 29).
 
+import { appendFileSync } from 'node:fs'
 import {
   asGeminiFunctionResponse,
   geminiBase,
@@ -18,7 +19,7 @@ import {
   sanitizeGeminiSchema,
   toLlmError,
 } from '../llm/_shared'
-import { streamIdleGuard, LLM_STREAM_IDLE_MS } from './stream-timeout'
+import { streamIdleGuard, LLM_STREAM_IDLE_MS, streamEnvelopeGuard, LLM_EMPTY_ENVELOPE_MS } from './stream-timeout'
 import { ulid } from '../db/id'
 import type { AgentLlmEvent, AgentLlmRequest } from './llm'
 import type {
@@ -149,16 +150,32 @@ export async function* callWithToolsGemini(
   let cacheReadTokens = 0
   let truncated = false // a candidate finished with MAX_TOKENS (output-token cap)
 
+  // Wire tap (best-effort, env-gated): dump the HTTP wire to LLM_WIRE_LOG so a dogfood run on this protocol
+  // can audit the raw stream after the fact (parity with the Anthropic path in llm.ts). Never breaks the run.
+  const WIRE = process.env.LLM_WIRE_LOG
+  const wireDump = (rec: Record<string, unknown>): void => {
+    if (!WIRE) return
+    try { appendFileSync(WIRE, JSON.stringify({ ts: Date.now(), conv: req.conversationId, role: req.roleId, ...rec }) + '\n') } catch { /* ignore */ }
+  }
+  wireDump({ dir: 'req', url, body })
+
+  // Idle-timeout: the fetch has no per-request timeout, so a hung upstream would wedge the loop forever.
+  // Arm before opening + reset on every VALID parsed chunk; dispose in finally. Envelope guard (one-shot, NOT
+  // reset by any frame) separately catches an enveloped-but-empty stream — a usage-only chunk (just
+  // usageMetadata, zero parts) parses fine and would otherwise reset the idle guard forever (the Gemini
+  // mirror of nsai's usage-only silent failure, 54c44961). markProductive() on the first real part disarms it.
   const guard = streamIdleGuard(req.signal, LLM_STREAM_IDLE_MS)
+  const envelope = streamEnvelopeGuard(LLM_EMPTY_ENVELOPE_MS)
   try {
     guard.reset()
     const reader = await openStream(PROVIDER, url, {
       method: 'POST',
       headers: geminiHeaders(req.apiKey),
       body: JSON.stringify(body),
-      signal: guard.signal,
+      signal: AbortSignal.any([guard.signal, envelope.signal]),
     })
     for await (const payload of iterSSE(reader)) {
+      wireDump({ dir: 'resp', payload })
       const chunk = parseJSON(payload) as GeminiChunk | null
       if (!chunk) continue
       // Reset only on a VALID parsed chunk — malformed/keepalive frames are not signs of life
@@ -168,10 +185,12 @@ export async function* callWithToolsGemini(
         if (c.finishReason === 'MAX_TOKENS') truncated = true
         for (const p of c.content?.parts ?? []) {
           if (typeof p.text === 'string' && p.text.length > 0) {
+            envelope.markProductive() // real text part → not an empty envelope
             textAcc += p.text
             onEvent?.({ type: 'text', delta: p.text })
           }
           if (p.functionCall?.name) {
+            envelope.markProductive() // real functionCall part → not an empty envelope
             const id = ulid()
             const block: ToolUseBlock = { type: 'tool_use', id, name: p.functionCall.name, input: p.functionCall.args ?? {} }
             if (p.thoughtSignature) block.thoughtSignature = p.thoughtSignature // Gemini 3: echo back next turn or 400
@@ -195,6 +214,7 @@ export async function* callWithToolsGemini(
     throw toLlmError(PROVIDER, err)
   } finally {
     guard.dispose()
+    envelope.dispose()
   }
 
   // Emit the accumulated text as one block, ahead of the tool_use blocks (Gemini puts prose before its

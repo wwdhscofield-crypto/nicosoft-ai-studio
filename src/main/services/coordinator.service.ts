@@ -40,6 +40,7 @@ import {
   buildSynthesisInput
 } from './coordinator-prompts'
 import type { CoordinatorCallbacks, CoordinatorRunInput } from './coordinator-types'
+import type { AgentResult } from '../agent/loop'
 
 // Re-exported for the IPC boundary + any future consumer — the contracts live in coordinator-types.
 export type { CoordinatorCallbacks, CoordinatorRunInput, RouteDecision } from './coordinator-types'
@@ -48,7 +49,7 @@ export { route, parseRouteDecision } from './coordinator-route'
 // Top-level entrypoint. Always called from coordinator.handler; the user turn is already persisted by the
 // renderer (chat-path style — see chat store `send`). Throws on configuration errors so the handler
 // turns them into a single `coordinator:error` event.
-export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, signal: AbortSignal): Promise<{ inputTokens: number; outputTokens: number }> {
+export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, signal: AbortSignal): Promise<{ inputTokens: number; outputTokens: number; reason: AgentResult['reason'] }> {
   resetPipelineTodos(input.convId) // a new coordinator turn = a new pipeline → start its shared todo list fresh
   const history = convRepo.listByConversation(input.convId)
   const decision = await route(input.prompt, history, signal)
@@ -63,7 +64,12 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
 
   // The dispatch/synthesis pipeline runs to completion here and yields the turn's token totals. We capture
   // it so the (non-blocking) Gate C hook below can fire AFTER synthesis is emitted, on every return path.
-  const result = await (async (): Promise<{ inputTokens: number; outputTokens: number }> => {
+  const result = await (async (): Promise<{ inputTokens: number; outputTokens: number; reason: AgentResult['reason'] }> => {
+  // Aggregate the turn's terminal reason: any step that did not cleanly complete (incomplete = upstream-truncated
+  // empty turn / thrash_stop / max_turns / aborted) bubbles to the top-level coordinator:done, so the UI + the
+  // dogfood verdict see a non-clean finish instead of a phantom DONE. First non-completed wins.
+  let runReason: AgentResult['reason'] = 'completed'
+  const noteReason = (r: AgentResult['reason']): void => { if (runReason === 'completed' && r !== 'completed') runReason = r }
   if (decision.mode === 'direct') {
     // B0: Coordinator takes the turn himself — simple/general enough that a specialist would be overkill. His
     // own binding + the direct persona, full history for multi-turn continuity. No intro: the reply IS
@@ -80,8 +86,9 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
       cb,
       signal
     })
+    noteReason(out.reason)
     fireSideEffects(input.convId, 'coordinator', out.endpointId, out.model, out.inputTokens)
-    return { inputTokens: out.inputTokens, outputTokens: out.outputTokens }
+    return { inputTokens: out.inputTokens, outputTokens: out.outputTokens, reason: runReason }
   }
 
   if (decision.mode === 'single') {
@@ -163,8 +170,9 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
         cb
       )
     }
+    noteReason(out.reason)
     fireSideEffects(input.convId, decision.role, out.endpointId, out.model, out.inputTokens)
-    return { inputTokens: out.inputTokens, outputTokens: out.outputTokens }
+    return { inputTokens: out.inputTokens, outputTokens: out.outputTokens, reason: runReason }
   }
 
   if (decision.mode === 'parallel') {
@@ -178,7 +186,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
     const settled = await Promise.all(
       decision.roles.map((roleId) =>
         runRoleStep({ convId: input.convId, roleId, prompt: buildPanelPrompt(input.prompt, roleId), dispatch: fullChain, includeHistory: false, cwd: input.cwdByRole?.[roleId], permissionMode: input.modeByRole?.[roleId], cb, signal })
-          .then((out) => ({ role: roleId, ...out }))
+          .then((out) => { noteReason(out.reason); return { role: roleId, ...out } })
           .catch(() => null)
       )
     )
@@ -197,8 +205,9 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
       signal
     })
     const last = outputs[outputs.length - 1]
+    noteReason(synth.reason) // panelist reasons already noted in .then (before the empty-text filter), like council
     fireSideEffects(input.convId, last.role, last.endpointId, last.model, last.inputTokens)
-    return { inputTokens: synth.inputTokens, outputTokens: synth.outputTokens }
+    return { inputTokens: synth.inputTokens, outputTokens: synth.outputTokens, reason: runReason }
   }
 
   if (decision.mode === 'council') {
@@ -221,7 +230,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
           const prompt = seen.has(roleId) ? buildCritiquePrompt(input.prompt, prev, roleId) : buildPanelPrompt(input.prompt, roleId)
           seen.add(roleId)
           return runRoleStep({ convId: input.convId, roleId, prompt, dispatch: fullChain, includeHistory: false, cwd: input.cwdByRole?.[roleId], permissionMode: input.modeByRole?.[roleId], cb, signal })
-            .then((out) => ({ role: roleId, text: out.text }))
+            .then((out) => { noteReason(out.reason); return { role: roleId, text: out.text } })
             .catch(() => null)
         })
       )
@@ -250,8 +259,9 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
       cb,
       signal
     })
+    noteReason(synth.reason)
     fireSideEffects(input.convId, 'coordinator', synth.endpointId, synth.model, synth.inputTokens)
-    return { inputTokens: synth.inputTokens, outputTokens: synth.outputTokens }
+    return { inputTokens: synth.inputTokens, outputTokens: synth.outputTokens, reason: runReason }
   }
 
   if (decision.mode === 'collaborate') {
@@ -266,7 +276,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
     // reused when the chat was opened inside one), with a task per collaborating expert + the conversation
     // linked. Each expert that produces output marks its task done; the phase advances to done when all are.
     const project = await collabProject.ensureProjectForCollab(input.convId, input.prompt, decision.roles, input.cwdByRole)
-    const outputs = await runCollaboration(input, decision.roles, fullChain, cb, signal, project)
+    const { outputs, reasons } = await runCollaboration(input, decision.roles, fullChain, cb, signal, project)
     if (signal.aborted) throw new LlmError('network', 'aborted mid-collaboration')
     if (outputs.length === 0) throw new LlmError('upstream', 'collaboration produced no output')
     collabProject.completeCollabTasks(project, outputs.map((o) => o.role))
@@ -281,8 +291,10 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
       cb,
       signal
     })
+    reasons.forEach(noteReason) // ALL experts' terminal reasons, incl. empty-text silent failures (not just outputs)
+    noteReason(synth.reason)
     fireSideEffects(input.convId, 'coordinator', synth.endpointId, synth.model, synth.inputTokens)
-    return { inputTokens: synth.inputTokens, outputTokens: synth.outputTokens }
+    return { inputTokens: synth.inputTokens, outputTokens: synth.outputTokens, reason: runReason }
   }
 
   // Pipeline: chain stored on each step = [...experts, 'coordinator']. The renderer's DispatchBadge prefixes
@@ -344,6 +356,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
         (out.gateEvidence ?? '').slice(0, 800)
       ].join('\n'), cb)
     }
+    noteReason(out.reason)
     stepOutputs.push({ role: roleId, text: out.text })
     lastTokens = out.inputTokens
     lastRoleId = roleId
@@ -365,8 +378,9 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
     cb,
     signal
   })
+  noteReason(synth.reason)
   fireSideEffects(input.convId, lastRoleId, lastEndpointId || synth.endpointId, lastModel || synth.model, lastTokens || synth.inputTokens)
-  return { inputTokens: synth.inputTokens, outputTokens: synth.outputTokens }
+  return { inputTokens: synth.inputTokens, outputTokens: synth.outputTokens, reason: runReason }
   })()
 
   // Gate C: non-blocking e2e verification (Block 2). Synthesis is already emitted and `result` holds this

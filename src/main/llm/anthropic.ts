@@ -5,6 +5,7 @@
 import type { ChatAttachment, ChatFn, ChatMessage, ChatRequest, ChatResult, OnDelta } from './types'
 import { iterSSE, openStream, parseJSON, toLlmError, trimBase } from './_shared'
 import { anthropicHeaders, anthropicThinkingDirective, applyAnthropicCacheControls } from './anthropic-wire'
+import { streamIdleGuard, LLM_STREAM_IDLE_MS, streamEnvelopeGuard, LLM_EMPTY_ENVELOPE_MS } from '../agent/stream-timeout'
 
 const PROVIDER = 'anthropic'
 const MAX_TOKENS = 4096
@@ -119,12 +120,12 @@ interface AnthropicEvent {
 
 export const chatAnthropic: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Promise<ChatResult> => {
   const url = `${trimBase(req.baseUrl)}/v1/messages`
-  const reader = await openStream(PROVIDER, url, {
-    method: 'POST',
-    headers: anthropicHeaders(req.apiKey),
-    body: JSON.stringify(buildBody(req)),
-    signal: req.signal,
-  })
+  // Hung-upstream guards (parity with agent/llm.ts): idle guard kills a dead connection; envelope guard
+  // (one-shot, not reset by pings) kills an enveloped-but-empty stream. Without them a hung/empty upstream
+  // would wedge this single-turn call (route / title / compression / synthesis / memory) forever — req.signal
+  // only fires on caller abort, never on an upstream that opens then stops sending.
+  const guard = streamIdleGuard(req.signal, LLM_STREAM_IDLE_MS)
+  const envelope = streamEnvelopeGuard(LLM_EMPTY_ENVELOPE_MS)
 
   let text = ''
   let inTokens = 0
@@ -132,13 +133,24 @@ export const chatAnthropic: ChatFn = async (req: ChatRequest, onDelta: OnDelta):
   let cacheReadTokens = 0
   let cacheCreationTokens = 0
 
+  // guard.reset() + openStream go INSIDE the try so a non-2xx upstream (throwHttpError) or network error still
+  // reaches finally and disposes both timers + the run-abort listener — else they'd leak on the common error path.
   try {
+    guard.reset()
+    const reader = await openStream(PROVIDER, url, {
+      method: 'POST',
+      headers: anthropicHeaders(req.apiKey),
+      body: JSON.stringify(buildBody(req)),
+      signal: AbortSignal.any([guard.signal, envelope.signal]),
+    })
     for await (const payload of iterSSE(reader)) {
       const ev = parseJSON(payload) as AnthropicEvent | null
       if (!ev || typeof ev.type !== 'string') continue
+      guard.reset() // any valid event = connection alive
       if (ev.type === 'content_block_delta') {
         const d = ev.delta?.text
         if (typeof d === 'string' && d.length > 0) {
+          envelope.markProductive() // real content delta → not an empty envelope
           text += d
           onDelta({ text: d })
         }
@@ -163,6 +175,9 @@ export const chatAnthropic: ChatFn = async (req: ChatRequest, onDelta: OnDelta):
     }
   } catch (err) {
     throw toLlmError(PROVIDER, err)
+  } finally {
+    guard.dispose()
+    envelope.dispose()
   }
 
   onDelta({ turnFinalUsage: { inTokens, outTokens, cacheReadTokens, cacheCreationTokens } })

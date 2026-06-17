@@ -14,6 +14,13 @@
 // mid-thinking), so 120s of total silence reliably means a dead upstream — a long-but-live response is safe.
 export const LLM_STREAM_IDLE_MS = 120_000
 
+// OpenAI Responses reasoning models (gpt-5.x) deliver a reasoning item as ONE atomic block — output_item.added
+// → output_item.done with NO intra-reasoning deltas and NO keepalive frames between (verified against live probe
+// frames; see docs/llm-streaming-guard-audit.md §2). The 120s assumption above ("deltas every few seconds even
+// mid-thinking") holds for Anthropic (pings) but NOT here. Used ONLY when the request asked for reasoning effort
+// (req.thinking.effort) — non-reasoning OpenAI calls keep the 120s bound so dead-connection detection stays fast.
+export const LLM_STREAM_IDLE_MS_OPENAI_REASONING = 300_000
+
 export interface StreamIdleGuard {
   signal: AbortSignal
   reset: () => void

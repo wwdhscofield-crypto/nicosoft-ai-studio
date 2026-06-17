@@ -18,6 +18,7 @@ import {
   toLlmError,
 } from './_shared'
 import { ulid } from '../db/id'
+import { streamIdleGuard, LLM_STREAM_IDLE_MS, streamEnvelopeGuard, LLM_EMPTY_ENVELOPE_MS } from '../agent/stream-timeout'
 
 const PROVIDER = 'gemini'
 
@@ -143,12 +144,12 @@ export const chatGemini: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Pr
   // with prose like "I'm generating…" instead of calling the tool). Google supports alt=sse natively;
   // nsai's Gemini adapter forwards it upstream when the client asks.
   const url = `${geminiBase(req.baseUrl)}/v1beta/models/${geminiModelPath(req.model)}:streamGenerateContent?alt=sse`
-  const reader = await openStream(PROVIDER, url, {
-    method: 'POST',
-    headers: geminiHeaders(req.apiKey),
-    body: JSON.stringify(buildBody(req)),
-    signal: req.signal,
-  })
+  // Hung-upstream guards (parity with agent/llm-gemini.ts): idle kills a dead connection; envelope (one-shot)
+  // kills an enveloped-but-empty stream — a usage-only chunk (just usageMetadata, zero parts) parses fine and
+  // resets the idle guard forever (the Gemini mirror of nsai's usage-only silent failure, 54c44961). Without
+  // them a hung/empty upstream would wedge this single-turn call forever.
+  const guard = streamIdleGuard(req.signal, LLM_STREAM_IDLE_MS)
+  const envelope = streamEnvelopeGuard(LLM_EMPTY_ENVELOPE_MS)
 
   let text = ''
   let inTokens = 0
@@ -156,25 +157,38 @@ export const chatGemini: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Pr
   let cacheReadTokens = 0
   const toolCalls: ToolCall[] = []
 
+  // guard.reset() + openStream go INSIDE the try so a non-2xx upstream (throwHttpError) or network error still
+  // reaches finally and disposes both timers + the run-abort listener — else they'd leak on the common error path.
   try {
+    guard.reset()
+    const reader = await openStream(PROVIDER, url, {
+      method: 'POST',
+      headers: geminiHeaders(req.apiKey),
+      body: JSON.stringify(buildBody(req)),
+      signal: AbortSignal.any([guard.signal, envelope.signal]),
+    })
     for await (const payload of iterSSE(reader)) {
       const chunk = parseJSON(payload) as GeminiChunk | null
       if (!chunk) continue
+      guard.reset() // any valid chunk = connection alive
       const delta = chunkText(chunk)
       if (delta.length > 0) {
+        envelope.markProductive() // real text part → not an empty envelope
         text += delta
         onDelta({ text: delta })
       }
       // Collect any functionCall parts the model emitted (function calling — drives the tool loop).
       for (const c of chunk.candidates ?? []) {
         for (const p of c.content?.parts ?? []) {
-          if (p.functionCall?.name)
+          if (p.functionCall?.name) {
+            envelope.markProductive() // real functionCall part → not an empty envelope
             toolCalls.push({
               id: ulid(),
               name: p.functionCall.name,
               args: p.functionCall.args ?? {},
               ...(p.thoughtSignature ? { thoughtSignature: p.thoughtSignature } : {})
             })
+          }
         }
       }
       const u = chunk.usageMetadata
@@ -189,6 +203,9 @@ export const chatGemini: ChatFn = async (req: ChatRequest, onDelta: OnDelta): Pr
     }
   } catch (err) {
     throw toLlmError(PROVIDER, err)
+  } finally {
+    guard.dispose()
+    envelope.dispose()
   }
 
   onDelta({ turnFinalUsage: { inTokens, outTokens, cacheReadTokens, cacheCreationTokens: 0 } })
