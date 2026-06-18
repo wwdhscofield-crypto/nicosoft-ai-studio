@@ -1,204 +1,118 @@
 /* ============================================================
-   NicoSoft AI Studio — right workspace drawer (real, per active conversation)
-   Files (what the agent produced) · Recent images (generated) · Tasks (the
-   agent's TodoWrite list). All derived from the active conversation's
-   transcript + messages — no mock. Re-derives as the conversation grows.
+   NicoSoft AI Studio — right workspace drawer
+   List → single-panel navigation (not tabs): a launcher lists Tasks / Files /
+   Terminal; picking one swaps the drawer body to that panel. Width is
+   user-draggable + persisted; the active panel is persisted too (App.tsx
+   PersistedState), so reopening the drawer returns to where you were.
    ============================================================ */
-import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { useState, type ReactElement } from 'react'
 import { Icons } from '@/components/icons'
-import { ImageViewer, type ViewerImage } from '@/components/image-viewer'
 import { useChat } from '@/stores/chat'
-import { useWorkspace } from '@/stores/workspace'
-import { toast } from '@/stores/toast'
 import { useT } from '@/stores/locale'
-import { basename } from '@/lib/path'
-// Tools that CREATE/CHANGE a file on disk — only these count as "produced" (Read is excluded by design).
-const PRODUCE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'WritePdf'])
-// Agent TodoWrite statuses → the existing .task-status pill class + a readable label.
-const TASK: Record<string, { cls: string; label: string }> = {
-  pending: { cls: 'todo', label: 'To do' },
-  in_progress: { cls: 'doing', label: 'In progress' },
-  completed: { cls: 'done', label: 'Done' }
-}
+import { WorkspaceTasks } from '@/views/workspace-tasks'
+import { WorkspaceFiles } from '@/views/workspace-files'
+import { WorkspaceTerminal } from '@/views/workspace-terminal'
 
-interface WsFile {
-  path: string
-  name: string
-  op: string
-}
-interface WsTask {
-  content: string
-  status: string
-}
+export type WorkspacePanel = 'menu' | 'tasks' | 'files' | 'terminal'
 
-export function WorkspaceDrawer({ onClose, activeConv }: { onClose: () => void; activeConv: string | null }): ReactElement {
+const MIN_W = 290
+// max 60vw so the drawer can never crush the main chat area on a small window.
+const maxW = (): number => Math.round(window.innerWidth * 0.6)
+
+export function WorkspaceDrawer({
+  onClose,
+  activeConv,
+  panel,
+  onPanel,
+  width,
+  onWidth
+}: {
+  onClose: () => void
+  activeConv: string | null
+  panel: WorkspacePanel
+  onPanel: (p: WorkspacePanel) => void
+  width: number
+  onWidth: (w: number) => void
+}): ReactElement {
   const t = useT()
-  const [files, setFiles] = useState<WsFile[]>([])
-  const [images, setImages] = useState<ViewerImage[]>([])
-  const [tasks, setTasks] = useState<WsTask[]>([])
-  const [viewer, setViewer] = useState<number | null>(null)
-  const [tick, setTick] = useState(0) // streaming-time re-derive trigger (TodoWrite tool calls don't bump msgCount)
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({}) // per-section fold state
-  // Re-derive when the conversation grows or a run ends (new files/images/tasks land).
-  const msgCount = useChat((s) => (activeConv ? (s.byConversation[activeConv]?.length ?? 0) : 0))
-  const streaming = useChat((s) => (activeConv ? !!s.streaming[activeConv] : false))
-  const conv = useChat((s) => s.conversations.find((c) => c.id === activeConv))
-  const cwd = useWorkspace((s) => (conv?.primaryRoleId ? s.cwdByExpert[conv.primaryRoleId] : undefined))
+  const conv = useChat((s) => s.conversations.find((c) => c.id === activeConv)) ?? null
+  // Live drag width: track locally during the drag for smooth feedback, commit to the persisted
+  // store (App) on mouseup only — avoids a saveState write per mousemove frame.
+  const [dragW, setDragW] = useState<number | null>(null)
+  const w = dragW ?? width
 
-  // media.save opens a native save dialog: a truthy path = saved, a falsy value = the user cancelled
-  // (stay silent), a thrown error = a real failure.
-  const saveImage = (img: ViewerImage): void => {
-    void window.api.media
-      .save(img.url, img.name)
-      .then((path) => { if (path) toast.success(t('conv.imageSaved')) })
-      .catch(() => toast.error(t('conv.imageSaveFailed')))
+  const startDrag = (e: React.MouseEvent): void => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = width
+    document.body.style.userSelect = 'none'
+    const onMove = (ev: MouseEvent): void => {
+      // Handle sits on the LEFT edge: dragging left (smaller clientX) widens the drawer.
+      setDragW(Math.max(MIN_W, Math.min(maxW(), startW - (ev.clientX - startX))))
+    }
+    const onUp = (): void => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      document.body.style.userSelect = ''
+      setDragW((cur) => {
+        if (cur != null) onWidth(cur)
+        return null
+      })
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
   }
 
-  // TodoWrite updates are tool calls (no new message), so msgCount stays put while a run streams. Poll a
-  // re-derive tick during streaming so Tasks track live progress instead of freezing at the last snapshot.
-  useEffect(() => {
-    if (!streaming) return
-    const id = setInterval(() => setTick((t) => t + 1), 1200)
-    return () => clearInterval(id)
-  }, [streaming])
-
-  // Real-time Tasks: main pushes the todo list the MOMENT TodoWrite executes (conv:todos), mid-turn. The
-  // transcript-derived path below only sees todos after the whole turn settles — minutes behind on a long
-  // (e.g. 64K-escalated) turn. Once a live push lands for this conversation, it owns the Tasks section and
-  // the derive keeps its hands off (liveTasksRef); switching conversations re-arms the derived fallback so
-  // reopening an old chat still restores its list from the transcript.
-  const liveTasksRef = useRef(false)
-  useEffect(() => {
-    liveTasksRef.current = false
-    if (!activeConv) return
-    return window.api.onConvTodos((d) => {
-      if (d.convId !== activeConv) return
-      liveTasksRef.current = true
-      setTasks(d.todos)
-    })
-  }, [activeConv])
-
-  useEffect(() => {
-    if (!activeConv) {
-      setFiles([])
-      setImages([])
-      setTasks([])
-      return
-    }
-    let cancelled = false
-    void (async () => {
-      const [transcript, msgs] = await Promise.all([
-        window.api.agent.transcript(activeConv),
-        window.api.conversations.messages(activeConv)
-      ])
-      if (cancelled) return
-      const fileMap = new Map<string, WsFile>()
-      let latestTodos: WsTask[] | null = null
-      for (const run of Object.values(transcript)) {
-        for (const t of run.tools) {
-          if (PRODUCE_TOOLS.has(t.name)) {
-            const p = (t.input as { file_path?: string } | null)?.file_path
-            if (typeof p === 'string' && p) fileMap.set(p, { path: p, name: basename(p), op: t.name })
-          } else if (t.name === 'TodoWrite') {
-            const todos = (t.input as { todos?: WsTask[] } | null)?.todos
-            if (Array.isArray(todos)) latestTodos = todos
-          }
-        }
-      }
-      setFiles([...fileMap.values()])
-      if (!liveTasksRef.current) setTasks(latestTodos ?? []) // live push owns Tasks once it has fired (it is fresher than the settled transcript)
-      setImages(
-        msgs
-          .filter((m) => m.author !== 'user')
-          .flatMap((m) => m.attachments ?? [])
-          .filter((a) => (a.kind ?? 'image') === 'image' && typeof a.url === 'string')
-          .map((a) => ({ url: a.url, name: a.name ?? 'image' }))
-      )
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [activeConv, msgCount, streaming, tick])
+  const titleKey: Record<WorkspacePanel, string> = {
+    menu: 'topbar.workspace',
+    tasks: 'workspace.tasks',
+    files: 'workspace.files',
+    terminal: 'workspace.terminal'
+  }
 
   return (
-    <div className="workspace-drawer">
+    <div className="workspace-drawer" style={{ flex: `0 0 ${w}px`, width: w }}>
+      <div className="ws-resize" onMouseDown={startDrag} title={t('workspace.resize')} />
       <div className="ws-header">
-        <span className="ws-title">Workspace</span>
-        <button className="icon-btn" title="Collapse" onClick={onClose} style={{ marginLeft: 'auto' }}>
+        {panel !== 'menu' && (
+          <button className="icon-btn" title={t('workspace.back')} onClick={() => onPanel('menu')}>
+            <Icons.chevronLeft size={17} />
+          </button>
+        )}
+        <span className="ws-title">{t(titleKey[panel])}</span>
+        <button className="icon-btn" title={t('topbar.workspace')} onClick={onClose} style={{ marginLeft: 'auto' }}>
           <Icons.panelRight size={16} />
         </button>
       </div>
-      <div className="ws-scroll">
-        <div className="ws-section">
-          <button className="ws-section-head" onClick={() => setCollapsed((c) => ({ ...c, files: !c.files }))}>
-            <span className={'ws-chev' + (collapsed.files ? ' collapsed' : '')}><Icons.chevronDown size={11} /></span>
-            Files{files.length > 0 ? ` · ${files.length}` : ''}
-          </button>
-          {collapsed.files ? null : files.length === 0 ? (
-            <div className="ws-empty">No files created in this chat yet.</div>
-          ) : (
-            <div className="ws-files">
-              {files.map((f) => (
-                <div className="ws-file" key={f.path} title={`${f.path} — click to reveal`} role="button" onClick={() => void window.api.revealFile(f.path, cwd)}>
-                  <span className="wf-ic">
-                    <Icons.file size={15} />
-                  </span>
-                  <span className="wf-name">{f.name}</span>
-                  <span className="wf-size">{f.op.toLowerCase()}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="ws-section">
-          <button className="ws-section-head" onClick={() => setCollapsed((c) => ({ ...c, images: !c.images }))}>
-            <span className={'ws-chev' + (collapsed.images ? ' collapsed' : '')}><Icons.chevronDown size={11} /></span>
-            Recent images{images.length > 0 ? ` · ${images.length}` : ''}
-          </button>
-          {collapsed.images ? null : images.length === 0 ? (
-            <div className="ws-empty">No images generated yet.</div>
-          ) : (
-            <div className="ws-images">
-              {images.map((img, i) => (
-                <img key={img.url + i} className="ws-thumb" style={{ objectFit: 'cover' }} src={img.url} alt={img.name} onClick={() => setViewer(i)} />
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="ws-section">
-          <button className="ws-section-head" onClick={() => setCollapsed((c) => ({ ...c, tasks: !c.tasks }))}>
-            <span className={'ws-chev' + (collapsed.tasks ? ' collapsed' : '')}><Icons.chevronDown size={11} /></span>
-            Tasks{tasks.length > 0 ? ` · ${tasks.length}` : ''}
-          </button>
-          {collapsed.tasks ? null : tasks.length === 0 ? (
-            <div className="ws-empty">No task list for this chat.</div>
-          ) : (
-            <div className="ws-tasks">
-              {tasks.map((t, i) => {
-                const meta = TASK[t.status] ?? TASK.pending
-                return (
-                  <div className="ws-task" key={i}>
-                    <span className={'ws-task-label' + (meta.cls === 'done' ? ' done' : '')}>{t.content}</span>
-                    <span className={'task-status ' + meta.cls}>{meta.label}</span>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {viewer !== null && images[viewer] && (
-        <ImageViewer
-          items={images}
-          index={viewer}
-          onClose={() => setViewer(null)}
-          onStep={(d) => setViewer((v) => (v === null ? null : Math.max(0, Math.min(images.length - 1, v + d))))}
-          onDownload={saveImage}
-        />
+      {panel === 'menu' ? (
+        <Launcher onPick={onPanel} />
+      ) : panel === 'tasks' ? (
+        <WorkspaceTasks activeConv={activeConv} />
+      ) : panel === 'files' ? (
+        <WorkspaceFiles conv={conv} />
+      ) : (
+        <WorkspaceTerminal conv={conv} />
       )}
+    </div>
+  )
+}
+
+function Launcher({ onPick }: { onPick: (p: WorkspacePanel) => void }): ReactElement {
+  const t = useT()
+  const entries: { panel: WorkspacePanel; icon: (typeof Icons)[string]; label: string; kbd: string }[] = [
+    { panel: 'tasks', icon: Icons.listChecks, label: t('workspace.tasks'), kbd: '⌘J' },
+    { panel: 'files', icon: Icons.folder, label: t('workspace.files'), kbd: '⌘P' },
+    { panel: 'terminal', icon: Icons.terminal, label: t('workspace.terminal'), kbd: '⌃`' }
+  ]
+  return (
+    <div className="ws-launcher">
+      {entries.map((e) => (
+        <button key={e.panel} className="ws-launch-row" onClick={() => onPick(e.panel)}>
+          <span className="ws-launch-ic">{e.icon({ size: 17 })}</span>
+          <span className="ws-launch-name">{e.label}</span>
+          <kbd className="ws-launch-kbd">{e.kbd}</kbd>
+        </button>
+      ))}
     </div>
   )
 }

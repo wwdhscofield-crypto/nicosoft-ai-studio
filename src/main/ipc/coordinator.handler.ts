@@ -15,6 +15,7 @@ import * as coordinatorService from '../services/coordinator.service'
 import { LlmError } from '../llm/types'
 import { broadcastConvImage, broadcastConvTodos, broadcastUsage } from './usage-broadcast'
 import { StreamRegistry } from './stream-lifecycle'
+import * as workspaceTasks from '../services/workspace-tasks.service'
 import type {
   CoordinatorRunInputDto,
   CoordinatorDispatchEvent,
@@ -97,7 +98,10 @@ export function registerCoordinatorHandlers(): void {
               usage.cacheCreationInputTokens,
             ),
           onToolImage: (attachment) => broadcastConvImage(sender, input.convId, attachment),
-          onTodos: (todos) => broadcastConvTodos(sender, input.convId, todos),
+          onTodos: (todos) => {
+            broadcastConvTodos(sender, input.convId, todos)
+            workspaceTasks.recordTodos(input.convId, todos) // Tasks-history phase capture — collab seam (design §5 P30); convId is the top-level conv
+          },
           // Agent-dispatched experts run a tool-using loop — forward their tool activity + approvals,
           // tagged with roleId, to the coordinator UI (doc 19 §11 phase 2). Mirrors agent.handler's bridge.
           onToolStart: (roleId, id, name) => {
@@ -201,6 +205,7 @@ export function registerCoordinatorHandlers(): void {
         send('coordinator:error', ev)
       })
       .finally(() => {
+        workspaceTasks.finalizeConv(input.convId) // turn silent → finalize an all-complete phase (design §5 P19)
         sweepStream(streamId) // deny any approval the renderer never answered before the turn ended
         finish()
       })

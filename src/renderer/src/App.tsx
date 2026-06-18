@@ -17,7 +17,7 @@ import { ProjectsView } from '@/views/projects'
 import { ScheduledView } from '@/views/scheduled'
 import { ExpertDetail } from '@/views/expert'
 import { ChatView } from '@/views/conversation'
-import { WorkspaceDrawer } from '@/views/workspace'
+import { WorkspaceDrawer, type WorkspacePanel } from '@/views/workspace'
 import { useChat } from '@/stores/chat'
 import { useRoles } from '@/stores/roles'
 import { useCustomRoles } from '@/stores/custom-roles'
@@ -33,6 +33,8 @@ interface PersistedState {
   drawerOpen?: boolean
   sidebarCollapsed?: boolean
   activeProject?: string | null
+  workspacePanel?: WorkspacePanel
+  drawerWidth?: number
 }
 
 function loadState(): PersistedState {
@@ -68,11 +70,15 @@ export default function App(): ReactElement {
   const [drawerOpen, setDrawerOpen] = useState<boolean>(persisted.drawerOpen || false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(persisted.sidebarCollapsed || false)
   const [activeProject, setActiveProject] = useState<string | null>(persisted.activeProject || null)
+  // Workspace drawer: which panel is showing (menu launcher / tasks / files / terminal) + the
+  // user-dragged width. Both persisted alongside drawerOpen so the drawer reopens where it was.
+  const [workspacePanel, setWorkspacePanel] = useState<WorkspacePanel>(persisted.workspacePanel || 'menu')
+  const [drawerWidth, setDrawerWidth] = useState<number>(persisted.drawerWidth || 360)
   const [fromProject, setFromProject] = useState<string | null>(null) // project an expert chat was opened FROM (back-breadcrumb)
 
   useEffect(() => {
-    saveState({ view, activeExpert, settingsTab, drawerOpen, sidebarCollapsed, activeProject })
-  }, [view, activeExpert, settingsTab, drawerOpen, sidebarCollapsed, activeProject])
+    saveState({ view, activeExpert, settingsTab, drawerOpen, sidebarCollapsed, activeProject, workspacePanel, drawerWidth })
+  }, [view, activeExpert, settingsTab, drawerOpen, sidebarCollapsed, activeProject, workspacePanel, drawerWidth])
 
   // Load the persisted conversation history + role enable/disable states + user-defined custom roles
   // once on mount. Until each store's load() completes, the sidebar shows built-ins only; customs
@@ -120,6 +126,46 @@ export default function App(): ReactElement {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  // Workspace panel shortcuts (Files ⌘P / Tasks ⌘J / Terminal ⌃`). Only in the conversation view (the
+  // drawer lives there). Two guards (design §1):
+  //  - Focus guard (P23): never hijack a key while focus is in an editable field (composer textarea,
+  //    xterm's hidden textarea, any contentEditable) — `editable` short-circuits before we preventDefault.
+  //  - ⌃` focus-aware (P29): when focus is inside the terminal, the editable guard already returns, so
+  //    xterm receives Ctrl+` itself; the panel toggle only fires when the terminal is NOT focused.
+  // Pressing the shortcut for the panel already showing toggles the drawer closed (VS Code-style).
+  // Chosen keys don't collide with the default app menu or ⌘K cmdk (verified — see main/index.ts note).
+  useEffect(() => {
+    if (view !== 'app') return
+    const togglePanel = (p: WorkspacePanel): void => {
+      if (drawerOpen && workspacePanel === p) setDrawerOpen(false)
+      else {
+        setWorkspacePanel(p)
+        setDrawerOpen(true)
+      }
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      const el = document.activeElement as HTMLElement | null
+      const editable = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
+      // Terminal toggle: Ctrl+` (layout-independent via code). Yield to a focused terminal.
+      if (e.ctrlKey && !e.metaKey && e.code === 'Backquote') {
+        if (editable) return
+        e.preventDefault()
+        togglePanel('terminal')
+        return
+      }
+      if (editable) return
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'p') {
+        e.preventDefault()
+        togglePanel('files')
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
+        e.preventDefault()
+        togglePanel('tasks')
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [view, drawerOpen, workspacePanel])
 
   const selectExpert = (id: string, from: string | null = null): void => {
     setFromProject(from) // set only when coming from a project lane; cleared otherwise
@@ -280,7 +326,16 @@ export default function App(): ReactElement {
           ) : (
             <ChatView expert={expert} onOpenSettings={openEndpointsSettings} onBackToProject={fromProject ? () => openProject(fromProject) : undefined} />
           )}
-            {view === 'app' && drawerOpen && <WorkspaceDrawer onClose={() => setDrawerOpen(false)} activeConv={chat.activeConv} />}
+            {view === 'app' && drawerOpen && (
+              <WorkspaceDrawer
+                onClose={() => setDrawerOpen(false)}
+                activeConv={chat.activeConv}
+                panel={workspacePanel}
+                onPanel={setWorkspacePanel}
+                width={drawerWidth}
+                onWidth={setDrawerWidth}
+              />
+            )}
           </div>
           </div>
         </div>

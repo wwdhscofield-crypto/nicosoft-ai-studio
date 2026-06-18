@@ -14,6 +14,7 @@ export function registerConversationHandlers(): void {
   ipcMain.handle('conversations:rename', (_e, convId: string, title: string) => convService.rename(convId, title))
   ipcMain.handle('conversations:pin', (_e, convId: string, pinned: boolean) => convService.setPinned(convId, pinned))
   ipcMain.handle('conversations:archive', (_e, convId: string, archived: boolean) => convService.setArchived(convId, archived))
+  ipcMain.handle('conversations:setCwd', (_e, convId: string, cwd: string) => convService.setCwd(convId, cwd))
   ipcMain.handle('conversations:title', (_e, input: ConversationTitleInput) => convService.generateTitle(input))
   ipcMain.handle('conversations:remove', (_e, convId: string) => convService.remove(convId))
   ipcMain.handle('conversations:export', (_e, convId: string, format: 'md' | 'json'): Promise<string | null> => {

@@ -74,6 +74,19 @@ export const Icons: Record<string, IconFn> = {
       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
     </Icon>
   ),
+  externalLink: (p) => (
+    <Icon {...p}>
+      <path d="M15 3h6v6" />
+      <path d="M10 14 21 3" />
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+    </Icon>
+  ),
+  cornerDownLeft: (p) => (
+    <Icon {...p}>
+      <path d="m9 10-5 5 5 5" />
+      <path d="M20 4v7a4 4 0 0 1-4 4H4" />
+    </Icon>
+  ),
   refresh: (p) => (
     <Icon {...p}>
       <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />

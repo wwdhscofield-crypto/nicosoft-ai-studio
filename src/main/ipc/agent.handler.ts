@@ -7,6 +7,7 @@ import { broadcastConvImage, broadcastConvTodos, broadcastUsage } from './usage-
 import { StreamRegistry } from './stream-lifecycle'
 import * as agentService from '../services/agent.service'
 import * as compressionService from '../services/compression.service'
+import * as workspaceTasks from '../services/workspace-tasks.service'
 import type { AgentBlockDto, AgentPermissionResponse, AgentQuestionResponse, AgentResultDto, AgentRunInput } from './contracts'
 
 // Streaming agent over IPC: `agent:run` starts a run, returns its streamId, and pushes events on
@@ -107,7 +108,10 @@ export function registerAgentHandlers(): void {
           // The up-front per-turn count is the CURRENT context (count_tokens of what's being sent) → drives
           // the composer's "/ window" indicator.
           onUsage: (inputTokens) => broadcastUsage(sender, input.convId, 'context', inputTokens),
-          onTodos: (todos) => broadcastConvTodos(sender, input.convId, todos),
+          onTodos: (todos) => {
+            broadcastConvTodos(sender, input.convId, todos)
+            workspaceTasks.recordTodos(input.convId, todos) // Tasks-history phase capture (design §5 P30) — same seam as the live push
+          },
           onToolImage: (attachment) => broadcastConvImage(sender, input.convId, attachment),
           requestPermission: (req, signal) =>
             new Promise<PermissionDecision>((resolve) => {
@@ -158,6 +162,7 @@ export function registerAgentHandlers(): void {
         send('agent:error', { streamId, code, message })
       })
       .finally(() => {
+        workspaceTasks.finalizeConv(input.convId) // run silent → finalize an all-complete phase (design §5 P19)
         sweepStream(streamId) // deny any prompt the renderer never answered before the run ended
         finish()
       })

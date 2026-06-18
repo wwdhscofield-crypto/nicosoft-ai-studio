@@ -172,7 +172,7 @@ function RoleRow({
             <div className="rm-item" onClick={() => { setMenu(false); onProfile(); }}><Icons.user size={14} /> {t('sidebar.openProfile')}</div>
             <div className="rm-item" onClick={() => { setMenu(false); onChat(); }}><Icons.message size={14} /> {t('sidebar.startConversation')}</div>
             {canToggle
-              ? <div className="rm-item" onClick={() => { setMenu(false); roles.disable(expert.id); }}><Icons.eyeOff size={14} /> {t('sidebar.disableRole')}</div>
+              ? <div className="rm-item warn" onClick={() => { setMenu(false); roles.disable(expert.id); }}><Icons.eyeOff size={14} /> {t('sidebar.disableRole')}</div>
               : <div className="rm-note">{t('sidebar.primaryAlwaysOn')}</div>}
             {expert.custom && <div className="rm-item danger" onClick={() => { setMenu(false); setConfirm(true); }}><Icons.trash size={14} /> {t('sidebar.deleteRole')}</div>}
           </div>

@@ -15,6 +15,14 @@ import type {
   ConvTodos,
   AnalyticsSummary,
   AppInfo,
+  FsListDirResult,
+  FsReadForViewResult,
+  WorkspaceTaskHistoryDto,
+  TasksHistoryChanged,
+  TerminalCreateInput,
+  TerminalData,
+  TerminalExit,
+  TerminalTitle,
   AgentToolStart,
   AgentAssistant,
   AgentToolResults,
@@ -116,13 +124,42 @@ const api = {
   // Tasks panel tracks real progress instead of waiting for the turn to settle into the transcript.
   onConvTodos: (cb: (d: ConvTodos) => void): (() => void) => agentListen('conv:todos', cb),
 
+  // Workspace Tasks panel: refetch history when a phase/examine is archived.
+  onTasksHistoryChanged: (cb: (d: TasksHistoryChanged) => void): (() => void) => agentListen('tasks:historyChanged', cb),
+
   // Live memory recall — pushed the moment recall() injects memories into a turn, so the Memory Live
   // visualization can flash the recalled nodes in real time.
   onMemoryRecalled: (cb: (d: MemoryRecalledEvent) => void): (() => void) => agentListen('memory:recalled', cb),
 
-  // Reveal a file the agent produced in the OS file manager (Finder / Explorer). cwd resolves relative
-  // transcript paths. Returns true if it revealed the file (or its parent dir as a fallback).
-  revealFile: (path: string, cwd?: string): Promise<boolean> => ipcRenderer.invoke('shell:reveal', path, cwd),
+  // Workspace Files panel — confined, conversation-scoped file access (design §3). The renderer passes
+  // (convId, relPath) only; the main process resolves convId → cwd and confines under it.
+  fs: {
+    listDir: (convId: string, relPath: string): Promise<FsListDirResult> =>
+      ipcRenderer.invoke('fs:listDir', convId, relPath),
+    readForView: (convId: string, relPath: string): Promise<FsReadForViewResult> =>
+      ipcRenderer.invoke('fs:readForView', convId, relPath),
+    openDefault: (convId: string, relPath: string): Promise<void> =>
+      ipcRenderer.invoke('fs:openDefault', convId, relPath),
+    reveal: (convId: string, relPath: string): Promise<void> => ipcRenderer.invoke('shell:reveal', convId, relPath)
+  },
+
+  // Workspace Tasks panel history (completed-phase snapshots + panel_examine verdicts), per conversation.
+  tasks: {
+    history: (convId: string): Promise<WorkspaceTaskHistoryDto> => ipcRenderer.invoke('tasks:history', convId),
+    clearHistory: (convId: string): Promise<void> => ipcRenderer.invoke('tasks:clearHistory', convId)
+  },
+
+  // Workspace Terminal panel — pty control (node-pty lives in main; this only forwards over IPC, never
+  // imports the native module — sandboxed preload can't dlopen it, design §4 P21).
+  terminal: {
+    create: (opts: TerminalCreateInput): Promise<{ id: string }> => ipcRenderer.invoke('terminal:create', opts),
+    write: (id: string, data: string): Promise<void> => ipcRenderer.invoke('terminal:write', id, data),
+    resize: (id: string, cols: number, rows: number): Promise<void> => ipcRenderer.invoke('terminal:resize', id, cols, rows),
+    kill: (id: string): Promise<void> => ipcRenderer.invoke('terminal:kill', id)
+  },
+  onTerminalData: (cb: (d: TerminalData) => void): (() => void) => agentListen('terminal:data', cb),
+  onTerminalExit: (cb: (d: TerminalExit) => void): (() => void) => agentListen('terminal:exit', cb),
+  onTerminalTitle: (cb: (d: TerminalTitle) => void): (() => void) => agentListen('terminal:title', cb),
 
   endpoints: {
     list: (): Promise<EndpointDto[]> => ipcRenderer.invoke('endpoints:list'),
@@ -303,6 +340,8 @@ const api = {
       ipcRenderer.invoke('conversations:pin', convId, pinned),
     archive: (convId: string, archived: boolean): Promise<void> =>
       ipcRenderer.invoke('conversations:archive', convId, archived),
+    setCwd: (convId: string, cwd: string): Promise<void> =>
+      ipcRenderer.invoke('conversations:setCwd', convId, cwd),
     title: (input: ConversationTitleInput): Promise<string> =>
       ipcRenderer.invoke('conversations:title', input),
     remove: (convId: string): Promise<void> => ipcRenderer.invoke('conversations:remove', convId),
@@ -326,7 +365,9 @@ const api = {
   },
   app: {
     // Version + local data dir + on-device counts for Settings › About / Privacy.
-    info: (): Promise<AppInfo> => ipcRenderer.invoke('app:info')
+    info: (): Promise<AppInfo> => ipcRenderer.invoke('app:info'),
+    // Reveal the app's own data dir (~/.nsai) in the OS file manager — Settings › Privacy.
+    revealDataDir: (): Promise<void> => ipcRenderer.invoke('app:revealDataDir')
   },
   mcp: {
     list: (): Promise<McpServerDto[]> => ipcRenderer.invoke('mcp:list'),

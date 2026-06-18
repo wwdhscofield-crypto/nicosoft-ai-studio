@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS conversations (
   project_id      TEXT,
   pinned          INTEGER NOT NULL DEFAULT 0,     -- 1 = pinned to the top of History
   archived        INTEGER NOT NULL DEFAULT 0,     -- 1 = moved to the Archived group
+  cwd             TEXT,                            -- workspace Files panel confine root (design §3)
   created_at      TEXT NOT NULL,
   updated_at      TEXT NOT NULL
 );
@@ -282,4 +283,21 @@ CREATE TABLE IF NOT EXISTS gate_outcomes (
   created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_gate_outcomes_created ON gate_outcomes (created_at);
+
+-- Workspace Tasks panel history (design §5): completed-phase TODO snapshots + panel_examine verdicts,
+-- per conversation. dedup_key makes capture replay-idempotent (phase=convId:setHash; examine=convId:
+-- examinedAt). A user Clear flips cleared=1 (rows are kept so the dedup_key still blocks re-add — clear
+-- stays durable against a re-snapshot of identical content); the read filters cleared=0.
+CREATE TABLE IF NOT EXISTS workspace_task_history (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id TEXT NOT NULL,
+  kind            TEXT NOT NULL,                  -- 'phase' | 'examine'
+  dedup_key       TEXT NOT NULL,
+  payload         TEXT NOT NULL,                  -- JSON snapshot
+  cleared         INTEGER NOT NULL DEFAULT 0,
+  created_at      INTEGER NOT NULL,
+  UNIQUE (conversation_id, kind, dedup_key),
+  FOREIGN KEY (conversation_id) REFERENCES conversations (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_wth_conv ON workspace_task_history (conversation_id, created_at);
 `

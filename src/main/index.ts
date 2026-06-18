@@ -11,6 +11,7 @@ import { loadEnabled as loadSkills } from './services/skill.service'
 import { schedulerEngine } from './agent/scheduler/engine'
 import { scheduledTaskStore } from './agent/scheduler/store'
 import { disposeAllE2ESessions } from './agent/tools/e2e-browser'
+import { disposeAll as disposeAllTerminals } from './services/terminal.service'
 
 declare const __APP_VERSION__: string
 
@@ -161,6 +162,13 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
+  // Menu strategy (design §1 P32): the workspace panel shortcuts (Files ⌘P / Tasks ⌘J / Terminal ⌃`)
+  // live in the renderer (App.tsx). None collide with the default app menu roles (Edit/View/Window/Help
+  // bind ⌘C/⌘V/⌘W/⌘M/⌘Q/⌘R etc., not ⌘P/⌘J/⌃`) or ⌘K (cmdk) — verified — so the default menu is kept
+  // as-is rather than swapped for a hand-rolled one (which would risk dropping the standard copy/paste/quit
+  // accelerators the app relies on). The only sharp edge the design flagged is the default ⌘W (Close
+  // Window) discarding renderer state; that's pre-existing window behavior, untouched by this feature.
+
   // Swallow keyboard reload shortcuts (Cmd/Ctrl+R, Cmd/Ctrl+Shift+R, F5). A page reload throws away ALL
   // renderer state; combined with the stream-lifecycle behaviour it used to also abort an in-flight agent
   // run and lose the work — a stray Cmd+R (a child at the keyboard, dogfood 2026-06-13) must never wipe a
@@ -233,4 +241,5 @@ app.on('window-all-closed', () => {
 // endings; this covers quitting mid-run so no Playwright child outlives the app.
 app.on('before-quit', () => {
   void disposeAllE2ESessions()
+  disposeAllTerminals() // kill any live pty so no shell outlives the app
 })

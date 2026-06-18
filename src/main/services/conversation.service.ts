@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { dataDir } from '../db/connection'
 import * as convRepo from '../repos/conversation.repo'
 import * as titleService from './title.service'
+import * as workspaceTasks from './workspace-tasks.service'
 import { persistDataUrl, removeConversationMedia } from '../media/storage'
 import type {
   ConversationCreateDto,
@@ -26,6 +27,7 @@ function toConvDto(r: convRepo.ConversationRow): ConversationDto {
     projectId: r.projectId,
     pinned: r.pinned,
     archived: r.archived,
+    cwd: r.cwd,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt
   }
@@ -100,6 +102,18 @@ export function setArchived(convId: string, archived: boolean): void {
   convRepo.setArchived(convId, archived)
 }
 
+// Persist the conversation's workspace cwd — the authoritative confine root the Files panel reads
+// back via fs:* IPC. The renderer resolves the value (design §3 P17) and pushes it here.
+export function setCwd(convId: string, cwd: string): void {
+  convRepo.setCwd(convId, cwd)
+}
+
+// The conversation's confine root, or null. Used by fs:* handlers to resolve convId → cwd in the main
+// process (the renderer only ever passes convId + a relative path).
+export function getCwd(convId: string): string | null {
+  return convRepo.getById(convId)?.cwd ?? null
+}
+
 // Generate a title for a fresh conversation from the user's first message (small/fast model — see
 // title.service) and persist it. Returns the title so the renderer can patch its history list.
 export async function generateTitle(input: ConversationTitleInput): Promise<string> {
@@ -114,6 +128,7 @@ export async function generateTitle(input: ConversationTitleInput): Promise<stri
 
 export function remove(convId: string): void {
   convRepo.remove(convId)
+  workspaceTasks.dropLive(convId) // workspace_task_history rows cascade via FK; the in-memory live phase doesn't
   removeConversationMedia(convId) // DB rows cascade via FK; the media files don't — drop them too
   // Agent runs persist transcript.jsonl + tool-results/ (and e2e screenshots) under
   // ~/.nsai/sessions/<convId>/ — outside both the DB and the media dir, so neither cleanup above touches

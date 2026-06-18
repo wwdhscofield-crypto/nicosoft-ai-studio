@@ -1,7 +1,6 @@
 import { ipcMain, shell } from 'electron'
-import { existsSync } from 'node:fs'
-import { isAbsolute, join, dirname } from 'node:path'
 import { saveToFile } from './dialogs'
+import { dataDir } from '../db/connection'
 import * as analyticsService from '../services/analytics.service'
 import { readMediaFile } from '../media/storage'
 import type { AppInfo } from './contracts'
@@ -28,24 +27,11 @@ export function registerMediaHandlers(): void {
     )
   })
 
-  // Reveal a file the agent produced in the OS file manager (Finder / Explorer). Transcript-logged paths may
-  // be relative to the run's cwd, so resolve against the conversation's cwd. If the exact file is gone (moved
-  // / deleted), fall back to opening its parent directory; return false when there's nothing to show.
-  ipcMain.handle('shell:reveal', async (_e, filePath: string, cwd?: string): Promise<boolean> => {
-    if (!filePath) return false
-    const abs = isAbsolute(filePath) ? filePath : cwd ? join(cwd, filePath) : filePath
-    if (existsSync(abs)) {
-      shell.showItemInFolder(abs)
-      return true
-    }
-    const dir = dirname(abs)
-    if (existsSync(dir)) {
-      await shell.openPath(dir)
-      return true
-    }
-    return false
-  })
-
   // App info for Settings › About / Privacy: version + local data dir + on-device counts (all local).
   ipcMain.handle('app:info', (): AppInfo => analyticsService.appInfo(__APP_VERSION__))
+
+  // Reveal the app's OWN data dir (~/.nsai) in the OS file manager — Settings › Privacy. Takes no path
+  // from the renderer (main owns dataDir()), so there's nothing to confine. The cwd-relative file reveal
+  // used by the workspace Files panel is the separate, confined `shell:reveal` (fs.handler).
+  ipcMain.handle('app:revealDataDir', (): void => shell.showItemInFolder(dataDir()))
 }

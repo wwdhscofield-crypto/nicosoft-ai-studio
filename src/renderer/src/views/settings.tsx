@@ -302,7 +302,7 @@ function GenericSettingsPage({ id }: { id: string }): ReactElement {
             <span className="set-row-val">{info ? t("settings.privacy.stats", { conversations: info.conversations, memories: info.memories }) : "—"}</span>
           </div>
           {info && (
-            <div className="set-row clickable" onClick={() => void window.api.revealFile(info.dataDir)} title={t("settings.privacy.revealTitle")}>
+            <div className="set-row clickable" onClick={() => void window.api.app.revealDataDir()} title={t("settings.privacy.revealTitle")}>
               <span className="set-row-label">{t("settings.privacy.dataFolder")}</span>
               <span className="set-row-val mono">{info.dataDir}</span>
               <span className="set-row-ic"><Icons.folder size={14} /></span>

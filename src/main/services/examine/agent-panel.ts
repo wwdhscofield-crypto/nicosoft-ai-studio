@@ -8,6 +8,7 @@
 import { ulid } from '../../db/id'
 import * as rolesService from '../roles.service'
 import * as settingsService from '../settings.service'
+import * as workspaceTasks from '../workspace-tasks.service'
 import { chooseVerifierRole } from './verifier'
 import { runPanelExamine } from './panel'
 import { runUnderstand } from './understand'
@@ -134,6 +135,19 @@ export function createPanelHandle(deps: PanelHandleDeps): PanelHandle {
       const passed = produced.filter((f) => f.passed)
       const lines = produced.map((f) => `- ${f.key}: ${f.refuted ? 'FALSE-POSITIVE (refuted by skeptics)' : f.passed ? 'PASS' : 'FAIL'} — ${firstLine(f.feedback)}`)
       const message = `panel_examine (review by ${reviewer}) ran ${produced.length} reviewer perspective(s): ${passed.length} pass, ${flagged.length} flagged${refuted.length ? `, ${refuted.length} refuted as false-positive` : ''}.\n${lines.join('\n')}`
+      // Workspace Tasks history (design §5 P13/P14): this is the single write point — convId + structured
+      // findings are both in scope here. Gated to ok + non-empty findings (the early returns above never
+      // reach here), so a disabled/failed/empty examine never persists a phantom all-clear.
+      workspaceTasks.recordExamine(deps.convId, {
+        subject: paths.join(', '),
+        findings: produced.map((f) => ({
+          axis: f.key,
+          verdict: f.refuted ? 'false-positive' : f.passed ? 'pass' : 'fail',
+          feedback: firstLine(f.feedback)
+        })),
+        message,
+        examinedAt: Date.now()
+      })
       return {
         ok: true,
         message,

@@ -119,6 +119,20 @@ export function ChatView({ expert, onOpenSettings, onBackToProject }: { expert: 
     setFocusNonce((n) => n + 1)
   }
 
+  // Workspace Files panel → "Insert path to agent": append the clicked file's (cwd-relative) path to the
+  // composer and focus it. Cross-component via a window event (same pattern as nsai:open-conversation),
+  // since the composer's value lives here, not in the drawer.
+  useEffect(() => {
+    const h = (e: Event): void => {
+      const text = (e as CustomEvent<{ text?: string }>).detail?.text
+      if (!text) return
+      setValue((v) => (v && !v.endsWith(' ') ? v + ' ' : v) + text + ' ')
+      setFocusNonce((n) => n + 1)
+    }
+    window.addEventListener('nsai:insert-to-composer', h)
+    return () => window.removeEventListener('nsai:insert-to-composer', h)
+  }, [])
+
   return (
     <div className="main-col">
       {onBackToProject && (

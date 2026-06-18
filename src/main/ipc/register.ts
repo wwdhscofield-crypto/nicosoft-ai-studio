@@ -8,6 +8,9 @@ import { registerSettingsHandlers } from './settings.handler'
 import { registerChatHandlers } from './chat.handler'
 import { registerMemoryHandlers } from './memory.handler'
 import { registerMediaHandlers } from './media.handler'
+import { registerFsHandlers } from './fs.handler'
+import { registerTaskHandlers } from './tasks.handler'
+import { registerTerminalHandlers } from './terminal.handler'
 import { registerMcpHandlers } from './mcp.handler'
 import { registerSkillHandlers } from './skill.handler'
 import { registerPluginHandlers } from './plugin.handler'
@@ -27,6 +30,9 @@ export function registerIpc(): void {
   registerConversationHandlers()
   registerMemoryHandlers()
   registerMediaHandlers()
+  registerFsHandlers()
+  registerTaskHandlers()
+  registerTerminalHandlers()
   registerMcpHandlers()
   registerSkillHandlers()
   registerPluginHandlers()

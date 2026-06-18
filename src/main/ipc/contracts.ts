@@ -561,6 +561,7 @@ export interface ConversationDto {
   projectId: string | null // set when a collaborate turn linked this chat to a project (doc 19 §1)
   pinned: boolean // pinned to the top of History
   archived: boolean // moved to the Archived group
+  cwd: string | null // workspace Files panel confine root (design §3); null until a folder is resolved
   createdAt: string
   updatedAt: string
 }
@@ -568,6 +569,74 @@ export interface ConversationCreateDto {
   kind: string
   primaryRoleId?: string
   title?: string
+}
+// Workspace Files panel (design §3). listDir returns name+type only (size/mtime are lazy — fetched per
+// file on view). `root` is the resolved confine root for display, or null when the conversation has no
+// cwd (→ empty state). `truncated` flags a directory clipped to the entry cap.
+export interface FsEntryDto {
+  name: string
+  type: 'file' | 'dir'
+}
+export interface FsListDirResult {
+  root: string | null
+  entries: FsEntryDto[]
+  truncated: boolean
+}
+export type FsViewKind = 'text' | 'image' | 'binary' | 'toolarge'
+export interface FsReadForViewResult {
+  kind: FsViewKind
+  text?: string // kind=text
+  dataUrl?: string // kind=image
+  lang?: string // kind=text — Shiki language id
+  size?: number
+  mtime?: number
+}
+// Workspace Tasks panel history (design §5). Phases = completed-list snapshots; examines = panel_examine
+// verdicts. Both per conversation, newest-first.
+export interface WorkspacePhaseDto {
+  id: number
+  createdAt: number
+  items: { content: string; status: string }[]
+  setHash: string
+  completedAt: number
+}
+export interface WorkspaceExamineFindingDto {
+  axis: string
+  verdict: 'pass' | 'fail' | 'false-positive'
+  feedback: string
+}
+export interface WorkspaceExamineDto {
+  id: number
+  createdAt: number
+  subject: string
+  findings: WorkspaceExamineFindingDto[]
+  message: string
+  examinedAt: number
+}
+export interface WorkspaceTaskHistoryDto {
+  phases: WorkspacePhaseDto[]
+  examines: WorkspaceExamineDto[]
+}
+export interface TasksHistoryChanged {
+  convId: string
+}
+// Workspace Terminal panel (design §4). pty backend in main, xterm in renderer; streamed over IPC.
+export interface TerminalCreateInput {
+  cwd?: string
+  cols?: number
+  rows?: number
+}
+export interface TerminalData {
+  id: string
+  data: string
+}
+export interface TerminalExit {
+  id: string
+  code: number
+}
+export interface TerminalTitle {
+  id: string
+  title: string // the pty's current foreground process name (zsh, node, npm, ...) for the tab label
 }
 export interface MessageDto {
   id: string

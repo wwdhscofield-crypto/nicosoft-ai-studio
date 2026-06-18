@@ -20,8 +20,14 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   - '!{.eslintrc.cjs,.eslintignore,.prettierrc,.prettierignore,.editorconfig}'
 
-# node:sqlite is built into the Electron runtime — no native modules to rebuild.
-npmRebuild: false
+# node-pty is a native module (the Terminal panel's pty backend) — electron-builder must rebuild it
+# against the target Electron's ABI at pack time (npmRebuild defaults to true; kept explicit). node:sqlite
+# stays runtime-built, no action needed for it.
+npmRebuild: true
+# A native .node can't run from inside the asar archive — unpack node-pty (pty.node + its spawn-helper)
+# so dlopen can load it at runtime.
+asarUnpack:
+  - '**/node_modules/node-pty/**'
 
 mac:
   icon: build/icon.icns
