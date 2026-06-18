@@ -41,10 +41,31 @@ A desktop app where **nine named AI experts** work for you — each with its own
 - **Multi-model, three protocols.** Connect OpenAI, Anthropic, and Google Gemini natively, or any OpenAI-compatible gateway. Each expert can run on a different provider — bring your own key.
 - **Experts that do real work.** Behind each expert is a full agent loop with tools: read/write/edit files, run shell commands, search & fetch the web, execute code in a sandbox, generate images, and produce PDFs.
 - **They collaborate.** The coordinator (Danny) can convene the relevant experts, plan a multi-step task, and divide the work across them — or hand off directly to a single specialist.
+- **It checks its own work.** An expert runs the actual build and tests before calling a task done; in team mode a separate reviewer independently re-verifies the result and sends it back if it doesn't hold up. The agent's self-report is never the final word — see [Validation](#-validation).
 - **Memory that grows.** A three-layer memory — about you, per-expert, and shared across hand-offs — learns your preferences from conversations and gets better the more you use it. It dedupes, self-corrects, and can be turned off anytime.
 - **Projects & history.** Organize work into projects, and keep a tidy conversation history with pin, rename, archive, and grouping by recency.
 - **Model Context Protocol.** Attach MCP servers to extend any expert with external tools and resources.
 - **Yours, on this device.** Conversations, memory, and projects live in a local SQLite database; API keys sit in your OS keychain. No account, no server, no telemetry.
+
+---
+
+## 🔬 Validation
+
+How do you trust an agent that grades its own homework? You don't — so the loop is tested adversarially. We take a **real production codebase**, revert genuine bug-fixes to re-plant real bugs, hand an expert only the **symptom** (never the fix), and then **independently re-run the build, tests, and a hidden oracle** — the agent's own report is never trusted.
+
+Across ~24 such runs spanning ~11 task domains:
+
+| Property under test | Result |
+|---|---|
+| Derives its own acceptance criteria from a plain-language symptom | ✅ |
+| Runs the real build & tests — actually executed, not just claimed | ✅ |
+| Converges — fixes in one pass, or fails-then-fixes, without looping | ✅ |
+| **Report = reality** — held in every finished run | ✅ 24 / 24 |
+| **Admits when a task genuinely can't be done**, instead of fabricating success | ✅ 6 / 6 hard cases (benefit unverifiable · race unreproducible · task impossible) |
+| **Reproduces the planted bug — and refuses to "simplify" correct code** | ✅ both directions |
+| Team-mode reviewer independently re-verifies the implementer | ✅ |
+
+Two limits we don't paper over: the loop-breaker for *repeated* failure hasn't had to fire (the agent kept converging on its own), and one internal "did recalling a past lesson change later behavior" measurement is inconclusive — the agent rarely makes the mistake such a lesson would prevent.
 
 ---
 
