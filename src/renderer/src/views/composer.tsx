@@ -177,17 +177,22 @@ export function Composer({
   }
 
   // Slash-command palette (optimization E): `/` at the start (no space yet) opens a quick-action menu.
-  const cmdQuery = value.startsWith('/') && !/\s/.test(value) ? value : ''
+  // Single-line `/…` input opens the palette; matchCommands does the precise filtering (so prose like
+  // "/clear the cache" yields no match → closed), and multi-word commands like `/mode Ask` keep it open.
+  const cmdQuery = value.startsWith('/') && !value.includes('\n') ? value : ''
   const cmdMatches = cmdQuery ? matchCommands(cmdQuery) : []
   const cmdOpen = cmdMatches.length > 0
   const runCommand = (cmd: SlashCommand): void => {
+    // arg = whatever the user typed after the command name (e.g. "Ask" in "/mode Ask"); undefined if none.
+    const arg = value.replace(/^\//, '').slice(cmd.name.length).trim() || undefined
     cmd.run({
       newConversation: chat.newConversation,
       compact: () => {
         if (activeConv) void window.api.agent.compact(activeConv)
       },
-      setPlanMode: (on) => setMode(expert.id, on ? 'plan' : 'default')
-    })
+      setPlanMode: (on) => setMode(expert.id, on ? 'plan' : 'default'),
+      setMode: (m) => setMode(expert.id, m)
+    }, arg)
     setValue('')
     setCmdIndex(0)
     setTimeout(grow, 0)
