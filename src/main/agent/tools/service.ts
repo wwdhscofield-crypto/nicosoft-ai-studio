@@ -33,7 +33,7 @@ export const startServiceTool = buildTool<typeof startSchema, { info?: ServiceIn
   async call(input, ctx) {
     if (!ctx.services) return { data: { error: NO_REGISTRY } }
     try {
-      const info = await ctx.services.start({ name: input.name, command: input.command, cwd: ctx.cwd, readyLog: input.readyLog, readyUrl: input.readyUrl })
+      const info = await ctx.services.start({ name: input.name, command: input.command, cwd: ctx.cwd, owner: ctx.roleId, readyLog: input.readyLog, readyUrl: input.readyUrl })
       return { data: { info } }
     } catch (e) {
       return { data: { error: e instanceof Error ? e.message : String(e) } }

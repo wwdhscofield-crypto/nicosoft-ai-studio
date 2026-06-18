@@ -26,6 +26,8 @@ import { manager as skillManager } from './skill.service'
 import { DEV_ROLES, E2E_TOOLS, toolsForAgentRole } from './agent-tools'
 import { createPanelHandle } from './examine/agent-panel'
 import { buildAgentSystem } from './agent-system'
+import { setActiveServices, clearActiveServices, broadcastConvServices } from './active-services'
+import * as workspaceTasks from './workspace-tasks.service'
 
 // One expert in a collaboration: who, the task it starts on, its endpoint + cwd. Same per-role binding the
 // coordinator resolves for a dispatch, but collected into a CollabSession instead of run one-shot.
@@ -97,6 +99,13 @@ export async function runCollabSession(
   // One service registry per collaboration, shared by all its experts (Flynn starts a backend, Shuri
   // lists + connects). Tree-killed in the finally below when the session ends — no zombie ports survive.
   const registry = new ServiceRegistry()
+  // Live Tasks-panel wiring: push the active service set on every change; archive each one to history as it
+  // exits; register the handle so the renderer can stop / read logs of a running service on demand.
+  registry.setHooks({
+    onChange: (activeSvcs) => broadcastConvServices(convId, activeSvcs),
+    onExit: (info) => workspaceTasks.recordServiceExit(convId, info)
+  })
+  setActiveServices(convId, registry)
   const inTokensByRole = new Map<string, number>() // accumulated TOTAL prompt tokens (incl. cache) per expert → billing
   const contextByRole = new Map<string, number>() // per expert: LAST turn's context size → per-message ↑ display (overwrite, NOT accumulated)
   const outTokensByRole = new Map<string, number>() // accumulated output tokens per expert → its per-message ↓ readout
@@ -141,6 +150,7 @@ export async function runCollabSession(
         const ctx: AgentContext = {
           cwd: x.cwd,
           signal: sig,
+          roleId: x.roleId,
           readFileState,
           permissionMode: x.permissionMode ?? 'default',
           requestPermission: (req, s) => hooks.requestPermission(x.roleId, req, s),
@@ -235,6 +245,8 @@ export async function runCollabSession(
     )
   } finally {
     hooks.onServices?.([])
+    clearActiveServices(convId, registry)
+    broadcastConvServices(convId, []) // clear the Tasks panel's Services section on teardown
     registry.dispose() // tree-kill every service the collaboration started — no lingering ports
     for (const lsp of lspByExpert) lsp.dispose() // tree-kill each expert's language server
   }

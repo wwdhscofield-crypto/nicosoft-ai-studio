@@ -13,6 +13,8 @@ import type {
   ConvUsage,
   ConvImage,
   ConvTodos,
+  ConvServices,
+  ServiceInfoDto,
   AnalyticsSummary,
   AppInfo,
   FsListDirResult,
@@ -125,6 +127,10 @@ const api = {
   // Tasks panel tracks real progress instead of waiting for the turn to settle into the transcript.
   onConvTodos: (cb: (d: ConvTodos) => void): (() => void) => agentListen('conv:todos', cb),
 
+  // Live per-conversation background services (start_service), pushed on every start/ready/port/exit — the
+  // workspace Tasks panel's Services section. Only active (starting/ready); exited ones go to history.
+  onConvServices: (cb: (d: ConvServices) => void): (() => void) => agentListen('conv:services', cb),
+
   // Workspace Tasks panel: refetch history when a phase/examine is archived.
   onTasksHistoryChanged: (cb: (d: TasksHistoryChanged) => void): (() => void) => agentListen('tasks:historyChanged', cb),
 
@@ -152,6 +158,14 @@ const api = {
   tasks: {
     history: (convId: string): Promise<WorkspaceTaskHistoryDto> => ipcRenderer.invoke('tasks:history', convId),
     clearHistory: (convId: string): Promise<void> => ipcRenderer.invoke('tasks:clearHistory', convId)
+  },
+
+  // Workspace Tasks panel — control a conversation's live background services (list active / read logs /
+  // stop). Backed by the per-run ServiceRegistry via active-services; all no-op when no run is live.
+  services: {
+    list: (convId: string): Promise<ServiceInfoDto[]> => ipcRenderer.invoke('services:list', convId),
+    logs: (convId: string, id: string): Promise<string | null> => ipcRenderer.invoke('services:logs', convId, id),
+    stop: (convId: string, id: string): Promise<boolean> => ipcRenderer.invoke('services:stop', convId, id)
   },
 
   // Workspace Terminal panel — pty control (node-pty lives in main; this only forwards over IPC, never

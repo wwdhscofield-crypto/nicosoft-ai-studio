@@ -1,16 +1,22 @@
 /* ============================================================
-   Workspace · Tasks panel (live + history + clear).
+   Workspace · Tasks panel (live + services + history + clear).
    Live = the active conversation's current TodoWrite list (pushed mid-turn via conv:todos; transcript-
-   derived fallback restores it on reopen). History = completed-phase snapshots + panel_examine verdicts,
-   read from SQLite (never re-derived from the transcript) and refreshed on tasks:historyChanged. Clear
-   hides history but keeps the live list.
+   derived fallback restores it on reopen). Once every item is completed the Live section collapses to an
+   empty state — the finished checklist lives only in History.
+   Services = the conversation's live background services started via start_service (pushed via conv:services;
+   only active starting/ready ones — exited services move to History). Single chat lists them flat; a group
+   chat groups them by the expert that started them. Each card can expand its logs inline and be stopped.
+   History = completed-phase snapshots + panel_examine verdicts + exited services, read from SQLite (never
+   re-derived from the transcript) and refreshed on tasks:historyChanged. Clear hides history.
    ============================================================ */
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { Icons } from '@/components/icons'
 import { useChat } from '@/stores/chat'
 import { useT } from '@/stores/locale'
 import { useConvTodos } from '@/stores/conv-todos'
-import type { WorkspaceTaskHistory, WorkspacePhase, WorkspaceExamine } from '@/lib/api'
+import { useConvServices } from '@/stores/conv-services'
+import { useAllExperts } from '@/lib/all-experts'
+import type { WorkspaceTaskHistory, WorkspacePhase, WorkspaceExamine, WorkspaceService, ServiceInfo } from '@/lib/api'
 
 const TASK: Record<string, { cls: string; labelKey: string }> = {
   pending: { cls: 'todo', labelKey: 'tasks.statusTodo' },
@@ -22,7 +28,7 @@ interface WsTask {
   content: string
   status: string
 }
-const EMPTY: WorkspaceTaskHistory = { phases: [], examines: [] }
+const EMPTY: WorkspaceTaskHistory = { phases: [], examines: [], services: [] }
 
 function fmtTime(ms: number): string {
   try {
@@ -30,6 +36,16 @@ function fmtTime(ms: number): string {
   } catch {
     return ''
   }
+}
+
+// Static run duration (start → end) for an EXITED service. Never used for a live service — a ticking
+// duration would need a timer, and we avoid blind interval polling; live cards show PID + status instead.
+function fmtDur(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000))
+  if (s < 60) return `${s}s`
+  const m = Math.round(s / 60)
+  if (m < 60) return `${m}m`
+  return `${Math.round(m / 60)}h`
 }
 
 export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): ReactElement {
@@ -51,6 +67,15 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
   // collapse the Live section to an empty state rather than duplicating the finished checklist against the
   // History card. Any mixed list (a pending / in-progress item remains) still renders in full.
   const allDone = tasks.length > 0 && tasks.every((tk) => tk.status === 'completed')
+
+  // — Live background services — same app-lifetime cache pattern as todos (stores/conv-services), so the
+  // panel shows the current set the moment it opens. Only active (starting/ready) services are here.
+  const liveServices = useConvServices((s) => (activeConv ? s.byConv[activeConv] : undefined)) ?? []
+  // Group chats (conversation.kind === 'multi') group services by the expert that started them; single
+  // chats list them flat. Owner → display name/color comes from the merged experts map.
+  const isGroup = useChat((s) => s.conversations.find((c) => c.id === activeConv)?.kind === 'multi')
+  const { byId: expertsById } = useAllExperts()
+  const groups = groupByOwner(liveServices)
 
   // Transcript-derived fallback — only when this session has no live push for the conv (liveTodos
   // undefined). Keyed on msgCount / streaming edges so reopening an old chat restores its last list. Once
@@ -80,7 +105,7 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
     }
   }, [activeConv, msgCount, streaming, liveTodos])
 
-  // — History (SQLite; refreshed when a phase/examine is archived) —
+  // — History (SQLite; refreshed when a phase/examine/service is archived) —
   const loadHistory = useRef<(() => void) | null>(null)
   useEffect(() => {
     if (!activeConv) {
@@ -109,10 +134,15 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
     void window.api.tasks.clearHistory(activeConv).then(() => setHistory(EMPTY))
   }
 
-  // Merge phases + examines into one newest-first timeline.
-  const timeline: ({ kind: 'phase'; row: WorkspacePhase } | { kind: 'examine'; row: WorkspaceExamine })[] = [
+  // Merge phases + examines + exited services into one newest-first timeline.
+  const timeline: (
+    | { kind: 'phase'; row: WorkspacePhase }
+    | { kind: 'examine'; row: WorkspaceExamine }
+    | { kind: 'service'; row: WorkspaceService }
+  )[] = [
     ...history.phases.map((p) => ({ kind: 'phase' as const, row: p })),
-    ...history.examines.map((e) => ({ kind: 'examine' as const, row: e }))
+    ...history.examines.map((e) => ({ kind: 'examine' as const, row: e })),
+    ...history.services.map((s) => ({ kind: 'service' as const, row: s }))
   ].sort((a, b) => b.row.createdAt - a.row.createdAt)
 
   return (
@@ -137,6 +167,25 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
           </div>
         )}
 
+        {liveServices.length > 0 && activeConv && (
+          <div className="ws-services">
+            <div className="ws-sub-head">{t('tasks.services')}</div>
+            {isGroup
+              ? groups.map(([owner, svcs]) => (
+                  <div className="ws-svc-group" key={owner || 'unknown'}>
+                    <div className="ws-svc-owner">
+                      <span className="ws-svc-owner-dot" style={{ background: expertsById[owner]?.color ?? 'var(--text-3)' }} />
+                      <span className="ws-svc-owner-name">{expertsById[owner]?.name ?? owner ?? t('tasks.svcUnknownOwner')}</span>
+                    </div>
+                    {svcs.map((s) => (
+                      <ServiceCard key={s.id} svc={s} convId={activeConv} t={t} />
+                    ))}
+                  </div>
+                ))
+              : liveServices.map((s) => <ServiceCard key={s.id} svc={s} convId={activeConv} t={t} />)}
+          </div>
+        )}
+
         {timeline.length > 0 && (
           <div className="ws-history">
             <div className="ws-sub-head ws-history-head">
@@ -148,13 +197,112 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
             {timeline.map((it) =>
               it.kind === 'phase' ? (
                 <PhaseCard key={'p' + it.row.id} phase={it.row} t={t} />
-              ) : (
+              ) : it.kind === 'examine' ? (
                 <ExamineCard key={'e' + it.row.id} examine={it.row} t={t} />
+              ) : (
+                <ServiceHistCard key={'s' + it.row.id} svc={it.row} t={t} />
               )
             )}
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// Group services by owner roleId, preserving first-seen order of both owners and services within an owner.
+function groupByOwner(services: ServiceInfo[]): [string, ServiceInfo[]][] {
+  const map = new Map<string, ServiceInfo[]>()
+  for (const s of services) {
+    const key = s.owner ?? ''
+    const arr = map.get(key)
+    if (arr) arr.push(s)
+    else map.set(key, [s])
+  }
+  return [...map]
+}
+
+// A live (active) background service. Logs expand inline into a fixed-height, scrollable pane that scrolls
+// to the bottom; Stop tree-kills it. starting → amber "doing", ready → green "done".
+function ServiceCard({ svc, convId, t }: { svc: ServiceInfo; convId: string; t: ReturnType<typeof useT> }): ReactElement {
+  const [logs, setLogs] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
+  const logRef = useRef<HTMLPreElement>(null)
+  const starting = svc.status === 'starting'
+  const cls = starting ? 'doing' : 'done'
+
+  // Keep the log pane pinned to the bottom (latest output) whenever it opens or its content changes.
+  useEffect(() => {
+    if (open && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
+  }, [open, logs])
+
+  const toggleLogs = (): void => {
+    if (open) {
+      setOpen(false)
+      return
+    }
+    void window.api.services.logs(convId, svc.id).then((l) => {
+      setLogs(l ?? '')
+      setOpen(true)
+    })
+  }
+  const stop = (): void => {
+    void window.api.services.stop(convId, svc.id)
+  }
+
+  return (
+    <div className="ws-svc">
+      <div className="ws-svc-head">
+        <span className={'ws-svc-dot ' + cls} />
+        <span className="ws-svc-name">{svc.name}</span>
+        <span className="ws-svc-badges">
+          <span className={'task-status ' + cls}>{starting ? t('tasks.svcStarting') : t('tasks.svcRunning')}</span>
+          {svc.port != null && (
+            <a className="ws-svc-port" href={`http://localhost:${svc.port}`} target="_blank" rel="noreferrer" title={`http://localhost:${svc.port}`}>
+              :{svc.port}
+              <Icons.externalLink size={11} />
+            </a>
+          )}
+        </span>
+      </div>
+      <div className="ws-svc-cmd" title={svc.command}>
+        {svc.command}
+        {starting && svc.port == null ? ` · ${t('tasks.svcWaitingPort')}` : ''}
+      </div>
+      <div className="ws-svc-foot">
+        <span className="ws-svc-meta">PID {svc.pid}</span>
+        <span className="ws-svc-actions">
+          <button className="ws-svc-btn" onClick={toggleLogs}>
+            <Icons.file size={12} /> {t('tasks.svcLogs')}
+          </button>
+          <button className="ws-svc-btn ws-svc-stop" onClick={stop}>
+            <Icons.x size={12} /> {t('tasks.svcStop')}
+          </button>
+        </span>
+      </div>
+      {open && (
+        <pre className="ws-svc-logs" ref={logRef}>
+          {logs && logs.length ? logs : t('tasks.svcNoLogs')}
+        </pre>
+      )}
+    </div>
+  )
+}
+
+// An exited service in History — command + exit code (red when non-zero) + run duration.
+function ServiceHistCard({ svc, t }: { svc: WorkspaceService; t: ReturnType<typeof useT> }): ReactElement {
+  const ok = svc.exitCode === 0 || svc.exitCode == null
+  return (
+    <div className="ws-hist-card">
+      <div className="ws-hist-head">
+        <Icons.box size={13} />
+        <span className="ws-hist-title">{svc.name}</span>
+        <span className={'task-status ' + (ok ? 'todo' : 'fail')}>
+          {t('tasks.svcExited')} · {svc.exitCode ?? '—'}
+        </span>
+        <span className="ws-hist-time">{fmtDur(svc.exitedAt - svc.startedAt)}</span>
+      </div>
+      <div className="ws-svc-cmd ws-hist-cmd" title={svc.command}>{svc.command}</div>
     </div>
   )
 }

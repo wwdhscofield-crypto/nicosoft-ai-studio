@@ -1393,6 +1393,32 @@
 .task-status.todo { color: var(--text-4); background: var(--bg-2); }
 .task-status.doing { color: var(--accent); background: var(--accent-soft); }
 .task-status.done { color: var(--success); background: color-mix(in oklab, var(--success) 12%, transparent); }
+.task-status.fail { color: var(--error, #e0584b); background: color-mix(in oklab, var(--error, #e0584b) 13%, transparent); }
+
+/* Workspace Tasks · Services section (live background services started via start_service) */
+.ws-services { margin-top: 22px; }
+.ws-svc-group { margin-bottom: 12px; }
+.ws-svc-owner { display: flex; align-items: center; gap: 6px; margin: 2px 0 6px; }
+.ws-svc-owner-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+.ws-svc-owner-name { font-size: 12px; font-weight: 500; color: var(--text-2); }
+.ws-svc { padding: 9px 11px; margin-bottom: 7px; border: 1px solid var(--border-1); border-radius: 9px; background: var(--bg-2); }
+.ws-svc-head { display: flex; align-items: center; gap: 8px; }
+.ws-svc-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+.ws-svc-dot.done { background: var(--success, #43c478); }
+.ws-svc-dot.doing { background: var(--warning, #e0a83b); }
+.ws-svc-name { min-width: 0; font-size: 12.5px; font-weight: 500; color: var(--text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-svc-badges { display: flex; align-items: center; gap: 5px; margin-left: auto; flex: 0 0 auto; }
+.ws-svc-port { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; padding: 1px 7px; border-radius: 5px; color: var(--accent); background: var(--accent-soft); text-decoration: none; font-variant-numeric: tabular-nums; }
+.ws-svc-port:hover { text-decoration: underline; }
+.ws-svc-cmd { margin: 6px 0 0; font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace); font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ws-svc-foot { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
+.ws-svc-meta { font-size: 11px; color: var(--text-4); font-variant-numeric: tabular-nums; }
+.ws-svc-actions { display: flex; gap: 6px; margin-left: auto; }
+.ws-svc-btn { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 7px; border: 1px solid var(--border-1); border-radius: 6px; background: transparent; color: var(--text-3); cursor: pointer; }
+.ws-svc-btn:hover { background: var(--bg-3); color: var(--text-2); }
+.ws-svc-stop:hover { color: var(--error, #e0584b); border-color: color-mix(in oklab, var(--error, #e0584b) 40%, transparent); }
+.ws-svc-logs { margin: 8px 0 0; height: 118px; overflow-y: auto; background: var(--bg-1); border: 1px solid var(--border-1); border-radius: 6px; padding: 8px 10px; font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace); font-size: 11px; line-height: 1.5; color: var(--text-3); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ws-hist-cmd { margin-top: 6px; }
 
 /* execute timeline */
 .exec-dot.todo { background: var(--text-4); }

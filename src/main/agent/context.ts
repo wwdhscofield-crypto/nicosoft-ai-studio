@@ -141,6 +141,10 @@ export interface AgentContext {
   // CollabSession; the send_message / assign_task / wait tools reach the session through it. Undefined for
   // a solo dispatch / direct chat, so those tools no-op with a clear message.
   collab?: CollabHandle
+  // roleId of the expert running in this context (group chat) / the dispatched role (single run). Tools use
+  // it to attribute effects to an expert — the service tools stamp ServiceInfo.owner with it so the Tasks
+  // panel can group running services by expert in a group chat. Undefined where no role applies.
+  roleId?: string
   // Long-running dev service registry (doc 19 §10), shared across a collaboration's experts (Flynn starts
   // a backend, Shuri connects). The start_service / stop_service / service_logs / list_services tools reach
   // it here. Undefined outside a collaboration → those tools no-op with a message.

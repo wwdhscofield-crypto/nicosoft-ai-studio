@@ -11,7 +11,7 @@
 import { BrowserWindow } from 'electron'
 import * as repo from '../repos/workspace-task.repo'
 import { contentSet, setHash, classifyTransition, allComplete, type PhaseTodo } from './workspace-phase'
-import type { WorkspaceTaskHistoryDto, WorkspacePhaseDto, WorkspaceExamineDto, WorkspaceExamineFindingDto } from '../ipc/contracts'
+import type { WorkspaceTaskHistoryDto, WorkspacePhaseDto, WorkspaceExamineDto, WorkspaceExamineFindingDto, WorkspaceServiceDto } from '../ipc/contracts'
 
 // Tell open Tasks panels to refetch (a phase/examine was archived). Broadcast to every window — the
 // single conv-scoped panel filters by convId (mirrors memory.service's change broadcast).
@@ -85,20 +85,41 @@ export function recordExamine(
   safeInsert(convId, 'examine', `${convId}:${data.examinedAt}`, JSON.stringify(data), data.examinedAt)
 }
 
+// A background service exited (or was stopped) — archive it from the live Services section into history, so
+// the panel keeps a record (command, exit code, port, duration) after it leaves the active list. Deduped by
+// service id, so the same exit recorded twice (exit event + dispose) collapses to one row.
+export function recordServiceExit(
+  convId: string,
+  info: { id: string; name: string; command: string; owner: string | null; exitCode: number | null; port: number | null; startedAt: number }
+): void {
+  const payload = JSON.stringify({
+    name: info.name,
+    command: info.command,
+    owner: info.owner,
+    exitCode: info.exitCode,
+    port: info.port,
+    startedAt: info.startedAt,
+    exitedAt: Date.now()
+  })
+  safeInsert(convId, 'service', `${convId}:svc:${info.id}`, payload, Date.now())
+}
+
 export function history(convId: string): WorkspaceTaskHistoryDto {
   const rows = repo.listHistory(convId)
   const phases: WorkspacePhaseDto[] = []
   const examines: WorkspaceExamineDto[] = []
+  const services: WorkspaceServiceDto[] = []
   for (const r of rows) {
     try {
       const body = JSON.parse(r.payload) as Record<string, unknown>
       if (r.kind === 'phase') phases.push({ id: r.id, createdAt: r.createdAt, ...(body as object) } as WorkspacePhaseDto)
       else if (r.kind === 'examine') examines.push({ id: r.id, createdAt: r.createdAt, ...(body as object) } as WorkspaceExamineDto)
+      else if (r.kind === 'service') services.push({ id: r.id, createdAt: r.createdAt, ...(body as object) } as WorkspaceServiceDto)
     } catch {
       /* skip an unparsable row rather than fail the whole read */
     }
   }
-  return { phases, examines }
+  return { phases, examines, services }
 }
 
 export function clearHistory(convId: string): void {

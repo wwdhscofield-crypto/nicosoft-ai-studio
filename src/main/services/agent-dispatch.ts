@@ -32,6 +32,8 @@ import { agentEvents } from './event-bus'
 import { manager as skillManager } from './skill.service'
 import { DEV_ROLES, E2E_TOOLS, SERVICE_TOOLS, SUBAGENT_TOOLS, toolsForAgentRole } from './agent-tools'
 import { buildAgentSystem } from './agent-system'
+import { setActiveServices, clearActiveServices, broadcastConvServices } from './active-services'
+import * as workspaceTasks from './workspace-tasks.service'
 
 export interface AgentCallbacks {
   onStream: (e: AgentLlmEvent) => void // fine-grained deltas (text + tool_use input) for streaming UI
@@ -122,6 +124,13 @@ export async function runAgentLoop(
   // Per-run service registry: dev roles start dev servers through it (start_service); everything it
   // launched is tree-killed when the run ends (finally) — no leftover dev servers piling up across runs.
   const registry = new ServiceRegistry()
+  // Live Tasks-panel wiring: push the active service set on every change; archive each one to history as it
+  // exits; register the handle so the renderer can stop / read logs of a running service on demand.
+  registry.setHooks({
+    onChange: (activeSvcs) => broadcastConvServices(loop.convId, activeSvcs),
+    onExit: (info) => workspaceTasks.recordServiceExit(loop.convId, info)
+  })
+  setActiveServices(loop.convId, registry)
   // Per-run async sub-agent pool (batch 3): runAgent injects the child runner into it; tree-killed in the
   // same finally as the registry so no background child outlives the run.
   const subAgents = new AsyncSubAgentPool(signal)
@@ -131,6 +140,7 @@ export async function runAgentLoop(
   const ctx: AgentContext = {
     cwd,
     signal,
+    roleId: loop.roleId,
     runId: loop.runId, // run-scoped resource ownership — e2e_browser sessions are reclaimed by it below
     readFileState: new Map(),
     writtenPaths: new Set(), // git-free change event bus — Write/Edit/MultiEdit record here; harvested below for Gate B
@@ -245,6 +255,8 @@ export async function runAgentLoop(
     }
   } finally {
     transcript.end()
+    clearActiveServices(loop.convId, registry)
+    broadcastConvServices(loop.convId, []) // clear the Tasks panel's Services section on teardown
     registry.dispose() // tree-kill any dev servers this run started — no zombies, no resource pile-up
     subAgents.disposeAll() // tree-kill any background sub-agents — none outlive the parent run
     lsp?.dispose() // tree-kill the language server if one was spawned

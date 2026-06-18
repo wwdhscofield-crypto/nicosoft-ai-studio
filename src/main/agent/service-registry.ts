@@ -51,6 +51,7 @@ export interface StartServiceInput {
   name: string
   command: string
   cwd: string
+  owner?: string // roleId of the expert that started it — drives the group-chat "by expert" grouping in the Tasks panel
   readyLog?: string // mark ready once this substring appears in the logs
   readyUrl?: string // mark ready once this URL answers (any HTTP response < 500)
   readyTimeoutMs?: number
@@ -66,6 +67,7 @@ export interface ServiceInfo {
   status: 'starting' | 'ready' | 'exited'
   exitCode: number | null
   startedAt: number
+  owner: string | null // roleId of the expert that started it (group chat); null in single chat / when unknown
 }
 
 // What the service tools (start/stop/logs/list) reach through ctx.services. dispose() is intentionally NOT
@@ -85,7 +87,7 @@ interface ServiceRecord extends ServiceInfo {
 function toInfo(r: ServiceRecord): ServiceInfo {
   return {
     id: r.id, name: r.name, command: r.command, cwd: r.cwd, pid: r.pid,
-    port: r.port, status: r.status, exitCode: r.exitCode, startedAt: r.startedAt,
+    port: r.port, status: r.status, exitCode: r.exitCode, startedAt: r.startedAt, owner: r.owner,
   }
 }
 
@@ -102,6 +104,16 @@ async function httpOk(url: string): Promise<boolean> {
 
 export class ServiceRegistry implements ServiceHandle {
   private services = new Map<string, ServiceRecord>()
+  // Live-update hooks so the Tasks panel reflects changes in real time. onChange fires on every
+  // start/ready/port/exit with the ACTIVE (non-exited) snapshot; onExit fires once the moment a service
+  // exits, so the consumer can archive it to history. Set by the run owner (collab / single dispatch).
+  private hooks: { onChange?: (active: ServiceInfo[]) => void; onExit?: (info: ServiceInfo) => void } = {}
+  setHooks(h: { onChange?: (active: ServiceInfo[]) => void; onExit?: (info: ServiceInfo) => void }): void {
+    this.hooks = h
+  }
+  private emitChange(): void {
+    this.hooks.onChange?.(this.list().filter((s) => s.status !== 'exited'))
+  }
 
   // Start a long-running service. detached:true puts the child in its own process group so stop()/dispose()
   // can tree-kill it (and any children it forks) with kill(-pid). The record is stored BEFORE awaiting
@@ -120,15 +132,19 @@ export class ServiceRegistry implements ServiceHandle {
 
     const rec: ServiceRecord = {
       id: ulid(), name: input.name, command: input.command, cwd: input.cwd, pid: child.pid,
-      port: null, status: 'starting', exitCode: null, startedAt: Date.now(), child, logs: new HeadTailBuffer(),
+      port: null, status: 'starting', exitCode: null, startedAt: Date.now(), owner: input.owner ?? null, child, logs: new HeadTailBuffer(),
     }
     // STORE BEFORE awaiting readiness (store-before-output) — an abort mid-startup mustn't orphan it.
     this.services.set(rec.id, rec)
+    this.emitChange() // surface the 'starting' row in the panel immediately
 
     const onChunk = (d: Buffer): void => {
       const s = d.toString()
       rec.logs.push(s)
-      if (rec.port == null) rec.port = detectPort(s)
+      if (rec.port == null) {
+        const p = detectPort(s)
+        if (p != null) { rec.port = p; this.emitChange() } // a port appeared → push the updated row
+      }
     }
     child.stdout?.on('data', onChunk)
     child.stderr?.on('data', onChunk)
@@ -136,6 +152,8 @@ export class ServiceRegistry implements ServiceHandle {
     child.on('exit', (code) => {
       rec.status = 'exited'
       rec.exitCode = code
+      this.hooks.onExit?.(toInfo(rec)) // archive the exited service to history
+      this.emitChange() // drop it from the active list
     })
 
     await this.awaitReady(rec, input.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS, input.readyLog, input.readyUrl)
@@ -147,6 +165,8 @@ export class ServiceRegistry implements ServiceHandle {
     if (!rec || rec.status === 'exited') return false
     treeKill(rec)
     rec.status = 'exited'
+    this.hooks.onExit?.(toInfo(rec)) // archive the stopped service to history
+    this.emitChange() // drop it from the active list
     return true
   }
 
@@ -184,12 +204,13 @@ export class ServiceRegistry implements ServiceHandle {
       if (rec.status === 'exited') {
         throw new Error(`service "${rec.name}" exited during startup (code ${rec.exitCode}). Logs:\n${rec.logs.toString().slice(-800)}`)
       }
-      if (readyLog && rec.logs.toString().includes(readyLog)) return void (rec.status = 'ready')
-      if (readyUrl && (await httpOk(readyUrl))) return void (rec.status = 'ready')
-      if (!readyLog && !readyUrl && rec.port != null) return void (rec.status = 'ready')
+      if (readyLog && rec.logs.toString().includes(readyLog)) { rec.status = 'ready'; this.emitChange(); return }
+      if (readyUrl && (await httpOk(readyUrl))) { rec.status = 'ready'; this.emitChange(); return }
+      if (!readyLog && !readyUrl && rec.port != null) { rec.status = 'ready'; this.emitChange(); return }
       await delay(300)
     }
     rec.status = 'ready' // alive at timeout — usable, readiness just couldn't be confirmed
+    this.emitChange()
   }
 }
 

@@ -147,6 +147,26 @@ export interface ConvTodos {
   convId: string
   todos: { content: string; status: string }[]
 }
+// Live background services (start_service) for a conversation, pushed the moment a service starts / becomes
+// ready / binds a port / exits — drives the Tasks panel "Services" section. Mirrors ServiceInfo in
+// main/agent/service-registry. Only ACTIVE (starting/ready) services are broadcast; exited ones move to
+// Tasks history instead.
+export interface ServiceInfoDto {
+  id: string
+  name: string
+  command: string
+  cwd: string
+  pid: number
+  port: number | null
+  status: 'starting' | 'ready' | 'exited'
+  exitCode: number | null
+  startedAt: number
+  owner: string | null // roleId that started it (group chat); null in single chat / when unknown
+}
+export interface ConvServices {
+  convId: string
+  services: ServiceInfoDto[]
+}
 // A generated image surfaced live from an in-flight agent turn, keyed by convId (like ConvUsage). An agent
 // tool (ns_generate_image, code_execution charts, view_image) returned an image; the loop persisted it to
 // the media store (nsai-media:// ref) and broadcasts it here so the renderer attaches it to the streaming
@@ -615,9 +635,22 @@ export interface WorkspaceExamineDto {
   message: string
   examinedAt: number
 }
+// A background service that has exited (archived from the live Services section into Tasks history).
+export interface WorkspaceServiceDto {
+  id: number
+  createdAt: number
+  name: string
+  command: string
+  owner: string | null
+  exitCode: number | null
+  port: number | null
+  startedAt: number
+  exitedAt: number
+}
 export interface WorkspaceTaskHistoryDto {
   phases: WorkspacePhaseDto[]
   examines: WorkspaceExamineDto[]
+  services: WorkspaceServiceDto[]
 }
 export interface TasksHistoryChanged {
   convId: string

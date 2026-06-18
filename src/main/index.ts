@@ -12,6 +12,7 @@ import { schedulerEngine } from './agent/scheduler/engine'
 import { scheduledTaskStore } from './agent/scheduler/store'
 import { disposeAllE2ESessions } from './agent/tools/e2e-browser'
 import { disposeAll as disposeAllTerminals } from './services/terminal.service'
+import { disposeAllActiveServices } from './services/active-services'
 
 declare const __APP_VERSION__: string
 
@@ -244,4 +245,5 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   void disposeAllE2ESessions()
   disposeAllTerminals() // kill any live pty so no shell outlives the app
+  disposeAllActiveServices() // tree-kill detached dev servers so none outlive the app holding ports
 })
