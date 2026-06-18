@@ -385,6 +385,7 @@
   "workspace.resize": "拖曳調整寬度",
   "tasks.live": "目前",
   "tasks.empty": "此對話尚無任務清單。",
+  "tasks.noActive": "目前無進行中任務。",
   "tasks.history": "歷史",
   "tasks.clear": "清除",
   "tasks.statusTodo": "待辦",

@@ -385,6 +385,7 @@
   "workspace.resize": "Drag to resize",
   "tasks.live": "Live",
   "tasks.empty": "No task list for this chat.",
+  "tasks.noActive": "No active tasks.",
   "tasks.history": "History",
   "tasks.clear": "Clear",
   "tasks.statusTodo": "To do",

@@ -9,6 +9,7 @@ import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { Icons } from '@/components/icons'
 import { useChat } from '@/stores/chat'
 import { useT } from '@/stores/locale'
+import { useConvTodos } from '@/stores/conv-todos'
 import type { WorkspaceTaskHistory, WorkspacePhase, WorkspaceExamine } from '@/lib/api'
 
 const TASK: Record<string, { cls: string; labelKey: string }> = {
@@ -33,32 +34,30 @@ function fmtTime(ms: number): string {
 
 export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): ReactElement {
   const t = useT()
-  const [tasks, setTasks] = useState<WsTask[]>([])
+  // — Live tasks — read from the app-lifetime conv:todos subscription (stores/conv-todos), which keeps
+  // caching every conversation's latest TodoWrite list even while this panel is closed. That's the fix
+  // for "open the panel mid-run and it's empty / stale": a component-mounted onConvTodos subscription only
+  // started listening once the panel was expanded, so every push before that was lost and the transcript
+  // fallback couldn't recover in-flight state (the transcript hasn't settled mid-turn). Reading the cache
+  // shows current items (completed / in-progress / pending) immediately. Only a conversation with no live
+  // push this session (e.g. reopening an old chat) falls back to the transcript-derived list below.
+  const liveTodos = useConvTodos((s) => (activeConv ? s.byConv[activeConv] : undefined))
+  const [fallbackTasks, setFallbackTasks] = useState<WsTask[]>([])
   const [history, setHistory] = useState<WorkspaceTaskHistory>(EMPTY)
   const msgCount = useChat((s) => (activeConv ? (s.byConversation[activeConv]?.length ?? 0) : 0))
   const streaming = useChat((s) => (activeConv ? !!s.streaming[activeConv] : false))
+  const tasks: WsTask[] = liveTodos ?? fallbackTasks
+  // Once every item is completed the run is finished and the same list is archived into History below, so
+  // collapse the Live section to an empty state rather than duplicating the finished checklist against the
+  // History card. Any mixed list (a pending / in-progress item remains) still renders in full.
+  const allDone = tasks.length > 0 && tasks.every((tk) => tk.status === 'completed')
 
-  // — Live tasks — pushed event-driven by main the moment TodoWrite executes (onConvTodos below); the
-  // transcript-derive effect is only a fallback for restoring an old chat's list (keyed on msgCount /
-  // streaming edges). No re-derive poll: once a live push lands, liveTasksRef makes the derive a no-op,
-  // so a periodic tick only ran an agent.transcript IPC whose result was discarded.
-  const liveTasksRef = useRef(false)
+  // Transcript-derived fallback — only when this session has no live push for the conv (liveTodos
+  // undefined). Keyed on msgCount / streaming edges so reopening an old chat restores its last list. Once
+  // a live push exists the effect clears the fallback and the cached live list wins.
   useEffect(() => {
-    liveTasksRef.current = false
-    if (!activeConv) {
-      setTasks([])
-      return
-    }
-    return window.api.onConvTodos((d) => {
-      if (d.convId !== activeConv) return
-      liveTasksRef.current = true
-      setTasks(d.todos)
-    })
-  }, [activeConv])
-
-  useEffect(() => {
-    if (!activeConv) {
-      setTasks([])
+    if (!activeConv || liveTodos) {
+      setFallbackTasks([])
       return
     }
     let cancelled = false
@@ -74,12 +73,12 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
           }
         }
       }
-      if (!liveTasksRef.current) setTasks(latestTodos ?? [])
+      if (!cancelled) setFallbackTasks(latestTodos ?? [])
     })()
     return () => {
       cancelled = true
     }
-  }, [activeConv, msgCount, streaming])
+  }, [activeConv, msgCount, streaming, liveTodos])
 
   // — History (SQLite; refreshed when a phase/examine is archived) —
   const loadHistory = useRef<(() => void) | null>(null)
@@ -122,6 +121,8 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
         <div className="ws-sub-head">{t('tasks.live')}</div>
         {tasks.length === 0 ? (
           <div className="ws-empty">{t('tasks.empty')}</div>
+        ) : allDone ? (
+          <div className="ws-empty">{t('tasks.noActive')}</div>
         ) : (
           <div className="ws-tasks">
             {tasks.map((tk, i) => {

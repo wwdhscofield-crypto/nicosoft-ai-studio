@@ -385,6 +385,7 @@
   "workspace.resize": "ドラッグでサイズ変更",
   "tasks.live": "現在",
   "tasks.empty": "このチャットにはタスクリストがありません。",
+  "tasks.noActive": "進行中のタスクはありません。",
   "tasks.history": "履歴",
   "tasks.clear": "クリア",
   "tasks.statusTodo": "未着手",
