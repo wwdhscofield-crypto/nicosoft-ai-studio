@@ -1,6 +1,6 @@
 import { app, shell, BrowserWindow, ipcMain, nativeTheme, protocol } from 'electron'
 import { join } from 'path'
-import { existsSync, renameSync } from 'node:fs'
+import { existsSync, renameSync, readFileSync, writeFileSync } from 'node:fs'
 import { getDb } from './db/connection'
 import * as settingsService from './services/settings.service'
 import { registerIpc } from './ipc/register'
@@ -71,10 +71,47 @@ protocol.registerSchemesAsPrivileged([MEDIA_PRIVILEGED_SCHEME])
 // default dock icon — that's expected and matches every electron-vite project; the real icon ships in
 // the packaged .app/.exe. No runtime icon code needed.
 
+// — Window bounds persistence — remember the user's resized/moved window across launches. Saved to a small
+// JSON in userData (pinned above); restored when the next window is created. Hand-rolled (no extra dep).
+interface WindowState {
+  width: number
+  height: number
+  x?: number
+  y?: number
+  maximized?: boolean
+}
+function windowStateFile(): string {
+  return join(app.getPath('userData'), 'window-state.json')
+}
+function loadWindowState(): WindowState {
+  try {
+    const s = JSON.parse(readFileSync(windowStateFile(), 'utf8')) as WindowState
+    if (typeof s.width === 'number' && typeof s.height === 'number' && s.width >= 1024 && s.height >= 700) {
+      return s
+    }
+  } catch {
+    /* no/invalid state → defaults */
+  }
+  return { width: 1280, height: 800 }
+}
+function saveWindowState(win: BrowserWindow): void {
+  if (win.isDestroyed() || win.isMinimized()) return
+  try {
+    const maximized = win.isMaximized()
+    // While maximized, getBounds() is the full-screen rect; persist the restorable normal bounds instead.
+    const b = maximized ? win.getNormalBounds() : win.getBounds()
+    writeFileSync(windowStateFile(), JSON.stringify({ width: b.width, height: b.height, x: b.x, y: b.y, maximized }))
+  } catch {
+    /* ignore write failures */
+  }
+}
+
 function createWindow(): void {
+  const winState = loadWindowState()
   const win = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    width: winState.width,
+    height: winState.height,
+    ...(winState.x != null && winState.y != null ? { x: winState.x, y: winState.y } : {}),
     minWidth: 1024,
     minHeight: 700,
     show: false,
@@ -100,6 +137,16 @@ function createWindow(): void {
   })
 
   win.on('ready-to-show', () => win.show())
+  if (winState.maximized) win.maximize()
+  // Persist size/position across launches: debounced on resize/move, flushed on close.
+  let winSaveTimer: ReturnType<typeof setTimeout> | null = null
+  const persistBounds = (): void => {
+    if (winSaveTimer) clearTimeout(winSaveTimer)
+    winSaveTimer = setTimeout(() => saveWindowState(win), 400)
+  }
+  win.on('resize', persistBounds)
+  win.on('move', persistBounds)
+  win.on('close', () => saveWindowState(win))
 
   win.webContents.setWindowOpenHandler((details) => {
     // Only hand the OS well-known safe schemes. Model output / web-search results render as links —
