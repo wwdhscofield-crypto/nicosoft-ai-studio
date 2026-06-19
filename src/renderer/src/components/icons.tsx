@@ -448,3 +448,36 @@ export const Icons: Record<string, IconFn> = {
     </Icon>
   )
 }
+
+// Tool name → Icons key. Shared by the Workbench timeline (projects.tsx — normalized action names)
+// and the analytics "Tool calls today" scan (analytics.service.ts — raw tool_use names from
+// transcripts). Resolve through toolIconName() so dynamic MCP names + unknowns fall back sensibly.
+const TOOL_ICON: Record<string, string> = {
+  // files & docs (no penSquare glyph → Write/Edit share 'edit')
+  Read: 'file', Write: 'edit', Edit: 'edit', MultiEdit: 'edit', NotebookEdit: 'edit', WritePdf: 'note',
+  // shell & sandboxed code
+  Bash: 'terminal', code_execution: 'terminal',
+  // search & filesystem
+  Grep: 'search', Glob: 'search', LS: 'folder',
+  // web
+  WebFetch: 'globe', WebSearch: 'globe',
+  // image generation
+  ns_generate_image: 'image',
+  // scheduled tasks
+  schedule_create: 'calendarClock', schedule_list: 'calendarClock', schedule_delete: 'calendarClock',
+  // planning
+  Plan: 'listChecks', EnterPlanMode: 'listChecks', ExitPlanMode: 'listChecks', Task: 'listChecks',
+  Dispatch: 'arrowRight', Watch: 'eye', panel_examine: 'compass',
+  // sub-agents
+  agent_spawn: 'users', agent_send: 'users', agent_wait: 'users', agent_close: 'users', agent_batch: 'users',
+  // dev services & e2e
+  start_service: 'box', stop_service: 'box', list_services: 'box', service_logs: 'note',
+  e2e_browser: 'globe', e2e_request: 'zap',
+  // skills
+  Skill: 'sparkle',
+}
+
+// Resolve a tool name to an Icons key: exact match → MCP tools (mcp__server__tool) → 'file'.
+export function toolIconName(tool: string): string {
+  return TOOL_ICON[tool] ?? (tool.startsWith('mcp__') ? 'plug' : 'file')
+}

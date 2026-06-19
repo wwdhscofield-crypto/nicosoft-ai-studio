@@ -9,7 +9,7 @@
    ============================================================ */
 import { Fragment, useCallback, useEffect, useLayoutEffect, useState } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
-import { Icons } from '@/components/icons'
+import { Icons, toolIconName } from '@/components/icons'
 import { Avatar, AvatarStack } from '@/components/primitives'
 import { STUDIO_DATA, PHASES, PHASE_INDEX } from '@/data/studio-data'
 import { toast } from '@/stores/toast'
@@ -206,19 +206,13 @@ function fmtClock(iso?: string): string {
   if (Number.isNaN(d.getTime())) return ''
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
-// tool → glyph, mirroring the Project Workbench design (no penSquare glyph here → Write uses edit).
-const TOOL_ICON: Record<string, string> = {
-  Read: 'file', Write: 'edit', Edit: 'edit', MultiEdit: 'edit', NotebookEdit: 'edit',
-  Bash: 'terminal', Grep: 'search', Glob: 'search', LS: 'folder', WebFetch: 'globe', WebSearch: 'globe',
-  Plan: 'listChecks', Dispatch: 'arrowRight', Watch: 'eye', Task: 'listChecks',
-}
 
 type LaneStatus = { state: string; label: string }
 type LaneEvent = { id: string; toolName: string; target: string | null; zone?: string; createdAt?: string }
 
 /* — one event card on a lane's timeline (READ / WRITE / BASH …); head(icon+tool) / target / foot(ts+tag) — */
 function EventCard({ ev, running, onClick }: { ev: LaneEvent; running?: boolean; onClick?: () => void }): ReactElement {
-  const Ico = Icons[TOOL_ICON[ev.toolName] ?? 'file']
+  const Ico = Icons[toolIconName(ev.toolName)]
   return (
     <div className={'wb-card' + (running ? ' running' : '') + (onClick ? ' clickable' : '')} onClick={onClick}>
       <div className="wb-card-head">
@@ -239,7 +233,7 @@ function EventCard({ ev, running, onClick }: { ev: LaneEvent; running?: boolean;
 // Detail popover for one orchestration event — the full target (long commands/paths aren't truncated here)
 // plus its tool + timestamp + zone. (We persist the call's target, not its full output, so that's what shows.)
 function EventDetailModal({ ev, onClose }: { ev: LaneEvent; onClose: () => void }): ReactElement {
-  const Ico = Icons[TOOL_ICON[ev.toolName] ?? 'file']
+  const Ico = Icons[toolIconName(ev.toolName)]
   return (
     <div className="overlay" onMouseDown={onClose}>
       <div className="dialog ev-detail" onMouseDown={(e) => e.stopPropagation()}>

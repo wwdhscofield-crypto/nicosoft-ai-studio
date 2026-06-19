@@ -5,7 +5,7 @@
    ============================================================ */
 import { useEffect, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
-import { Icons } from '@/components/icons'
+import { Icons, toolIconName } from '@/components/icons'
 import { Avatar } from '@/components/primitives'
 import { STUDIO_DATA, expertMeta } from '@/data/studio-data'
 import { fmtTokens } from '@/lib/format'
@@ -305,13 +305,16 @@ export function StatsPage(): ReactElement {
               {a.activity.tools.length === 0 ? (
                 <div className="an-mini-label">No tool calls today.</div>
               ) : (
-                a.activity.tools.map((t) => (
-                  <div className="tool-row" key={t.label}>
-                    <span className="tool-ic"><Icons.file size={14} /></span>
-                    <span className="tool-lbl">{t.label}</span>
-                    <span className="tool-val">{t.v}</span>
-                  </div>
-                ))
+                a.activity.tools.map((t) => {
+                  const Ico = Icons[toolIconName(t.label)]
+                  return (
+                    <div className="tool-row" key={t.label}>
+                      <span className="tool-ic"><Ico size={14} /></span>
+                      <span className="tool-lbl">{t.label}</span>
+                      <span className="tool-val">{t.v}</span>
+                    </div>
+                  )
+                })
               )}
             </div>
           </AnCard>
