@@ -138,7 +138,7 @@ export const useChat = create<ChatState>((set, get) => {
         }
       }))
     })
-    api.onDone((d) => {
+    api.onDone(async (d) => {
       const meta = streamMeta.get(d.streamId)
       streamMeta.delete(d.streamId)
       if (!meta) return
@@ -164,7 +164,15 @@ export const useChat = create<ChatState>((set, get) => {
       void window.api.conversations
         .append(meta.convId, { author: 'expert', expertId: meta.expertId, model: meta.model, content: d.text, inputTokens: ctxTok, outputTokens: d.usage?.outTokens, sentTokens: d.usage?.inTokens })
         .then(() => get().loadConversations())
-      void window.api.memory.onTurn({ convId: meta.convId, roleId: meta.expertId, endpointId: meta.endpointId, model: meta.model })
+      // B6/#8: await the post-turn memory extraction BEFORE firing compaction, so compaction's STEP 0
+      // extraction can't lose the per-conversation CAS lock to it and fold before memory is captured —
+      // restoring the documented "extract synchronously before folding" ordering. With onTurn serialized
+      // first, compress's own STEP 0 extraction then runs uncontended and catches anything onTurn missed,
+      // all before the fold. onTurn only runs an LLM extraction on its cadence turns; other turns this
+      // resolves immediately. Best-effort — a failed extraction must not block compaction.
+      await window.api.memory
+        .onTurn({ convId: meta.convId, roleId: meta.expertId, endpointId: meta.endpointId, model: meta.model })
+        .catch(() => {})
       void window.api.chat.compress({ convId: meta.convId, roleId: meta.expertId, endpointId: meta.endpointId, model: meta.model, currentTokens: ctxTok })
     })
     api.onError((d) => {
