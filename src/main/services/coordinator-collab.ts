@@ -51,6 +51,9 @@ export async function runCollaboration(
       baseUrl: ep.baseUrl,
       apiKey,
       model: binding.model,
+      // B1/#3: real window for this expert's autocompact threshold (else agent-collab falls back to 200K,
+      // so proactive compaction never fires for a sub-200K-bound expert). `|| undefined` preserves that fallback for 0.
+      contextWindow: ep.availableModels.find((m) => m.slug === binding.model)?.contextLength || undefined,
       permissionMode: input.modeByRole?.[roleId],
       thinking: resolveDepth(ep.protocol, binding.model, binding.thinkingDepth)
     })

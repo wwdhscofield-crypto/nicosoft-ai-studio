@@ -196,6 +196,10 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
         apiKey,
         model: binding.model,
         endpointId: binding.endpointId,
+        // B1/#5: resolve the bound model's REAL context window so the agent loop's autocompactThreshold
+        // isn't stuck at the 200K default (proactive compaction otherwise never fires for sub-200K models).
+        // `|| undefined` keeps the downstream `?? 200_000` fallback for a genuinely-unknown (0) window.
+        contextWindow: ep.availableModels.find((m) => m.slug === binding.model)?.contextLength || undefined,
         cacheEnabled: ep.cacheEnabled,
         includeHistory,
         memories,
