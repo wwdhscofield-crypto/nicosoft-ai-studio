@@ -245,20 +245,26 @@ export function readTranscript(convId: string): Record<string, RunTranscript> {
             if (last && last.kind === 'text') last.text += b.text
             else run.blocks.push({ kind: 'text', text: b.text })
           }
+          // Citations ride on the SAME text block (a server-tool answer carries prose + citations together), so
+          // they MUST be extracted here. A separate `else if (b.type === 'text' && Array.isArray(b.citations))`
+          // is unreachable — the `b.type === 'text'` arm above already catches every text block — which silently
+          // dropped ALL citations on transcript rebuild (run.citations stayed [] when a conversation reopened).
+          // Independent of the prose-trim check above: a whitespace-only text block can still carry citations.
+          if (Array.isArray(b.citations)) {
+            const seen = (citeSeen[obj.runId] ??= new Set()) // per-run url dedup
+            for (const c of b.citations) {
+              if (c.url && !seen.has(c.url)) {
+                seen.add(c.url)
+                run.citations.push({ url: c.url, title: c.title })
+              }
+            }
+          }
         } else if (b.type === 'web_search_call') {
           // search → query, open_page → url (visited site). reasoning/other server blocks aren't shown.
           const sv: { serverType: string; query?: string; url?: string } = { serverType: b.type }
           if (b.action?.query) sv.query = b.action.query
           if (b.action?.url) sv.url = b.action.url
           run.servers.push(sv)
-        } else if (b.type === 'text' && Array.isArray(b.citations)) {
-          const seen = (citeSeen[obj.runId] ??= new Set())
-          for (const c of b.citations) {
-            if (c.url && !seen.has(c.url)) {
-              seen.add(c.url)
-              run.citations.push({ url: c.url, title: c.title })
-            }
-          }
         }
       }
     } else if (obj.event.type === 'tool_results') {
