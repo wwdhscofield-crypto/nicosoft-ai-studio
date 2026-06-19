@@ -27,7 +27,6 @@ export interface CollabEvent {
   roleId: string // the acting expert (sender for send/assign, waiter for wait, runner for turn/done)
   to?: string // target roleId for send/assign
   text?: string // message body for send/assign
-  capped?: boolean // assign soft-degraded to send because the pair hit its roundtrip cap (§7)
 }
 
 // What the consult tools call — injected into AgentContext.collab, bound per-expert (self is fixed).
@@ -146,7 +145,7 @@ export class CollabSession {
     const effectiveWake = wake && !capped
 
     target.mailbox.push({ from, text })
-    this.onEvent({ kind: effectiveWake ? 'assign' : 'send', roleId: from, to, text, capped })
+    this.onEvent({ kind: effectiveWake ? 'assign' : 'send', roleId: from, to, text })
 
     if (effectiveWake && target.status === 'parked') {
       target.wake?.('woken')

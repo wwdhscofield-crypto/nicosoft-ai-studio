@@ -18,7 +18,7 @@ export interface PanelExamineResult {
   findings?: Array<{ subject: string; passed: boolean; refuted?: boolean; feedback: string }>
 }
 export interface PanelHandle {
-  examine(input: { paths?: string[]; text?: string; mode: 'review' | 'understand'; subjects?: string[] }): Promise<PanelExamineResult>
+  examine(input: { paths?: string[]; mode: 'review' | 'understand' }): Promise<PanelExamineResult>
 }
 
 export interface ReadFileEntry {
