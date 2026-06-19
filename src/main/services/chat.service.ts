@@ -12,6 +12,7 @@ import { abortableDelay, isRetryableLlmError, retryBackoffMs } from '../agent/re
 import type { ChatAttachment, ChatMessage, ChatResult } from '../llm/types'
 import type { ChatSendInput } from '../ipc/contracts'
 import { resolveToDataUrl } from '../media/storage'
+import * as compressionService from './compression.service'
 
 // Chat send. The backend assembles the full 5-layer context from the conversation id (the renderer no
 // longer ships the message array): system prompt + recalled memories + conversation summary + recent
@@ -31,22 +32,32 @@ export async function send(
   if (!ep) throw new LlmError('bad_request', 'endpoint not found')
   const key = requireApiKey(input.endpointId)
 
-  const messages = await buildContext(input)
+  // Exact prompt tokens (count_tokens for anthropic, rough otherwise) — drives the composer readout + the
+  // compression threshold. Measured on the exact body about to go upstream, so it's re-measured after a
+  // reactive fold too.
+  const measure = async (msgs: ChatMessage[]): Promise<number> => {
+    const native = toAnthropicNative(msgs)
+    return countContext(ep.protocol, {
+      baseUrl: ep.baseUrl,
+      apiKey: key,
+      model: input.model,
+      system: native.system,
+      messages: native.messages,
+      thinkingBudget: input.thinking?.budgetTokens,
+      smallModel: pickSmallModel(ep.protocol, ep.availableModels, input.model)
+    })
+  }
 
-  // Exact prompt tokens (count_tokens for anthropic, rough otherwise) — drives the composer readout +
-  // the compression threshold. Measured here, before the send, on the exact body about to go upstream.
-  const native = toAnthropicNative(messages)
-  const promptTokens = await countContext(ep.protocol, {
-    baseUrl: ep.baseUrl,
-    apiKey: key,
-    model: input.model,
-    system: native.system,
-    messages: native.messages,
-    thinkingBudget: input.thinking?.budgetTokens,
-    smallModel: pickSmallModel(ep.protocol, ep.availableModels, input.model)
-  })
+  let messages = await buildContext(input)
+  let promptTokens = await measure(messages)
   // Live ↑ readout before the stream starts — the prompt size is known now (count_tokens above).
   cb.onUsage?.(promptTokens)
+
+  // B3/#7: the chat path has NO reactive overflow recovery (unlike the agent loop) — a 'prompt too long'
+  // 400 is bad_request → non-retryable → a hard, unrecoverable failure. Resolve the window once so the
+  // catch below can recognize an overflow and fold-and-retry exactly once (bounce-guarded).
+  const ctxLen = compressionService.resolveContextWindow(ep.availableModels, input.model)
+  let reactiveCompacted = false
 
   // Transient-failure retry with exponential backoff (same policy as the agent loop), up to 10 attempts.
   // Critical guard: only retry while NOTHING has streamed yet — re-issuing after partial text would
@@ -105,6 +116,38 @@ export async function send(
           throw err // aborted during backoff → give up
         }
         continue
+      }
+      // B3/#7: reactive overflow recovery — an overflow that slipped past the renderer's post-turn compress.
+      // Fold the persisted history once and retry, mirroring the agent loop's reactive path. 413 is
+      // unambiguous; a bare 400 counts only when the measured prompt is near the window or the body carries
+      // an overflow signature (proxies reshape status but not wording). One fold per send, and only while
+      // nothing has streamed (re-issuing after partial text would duplicate it).
+      const nearWindow = ctxLen > 0 && promptTokens > ctxLen * 0.8
+      const overflow =
+        err instanceof LlmError &&
+        (err.status === 413 ||
+          (err.status === 400 && (nearWindow || /context|too.?long|token|length|exceed/i.test(err.message))))
+      if (overflow && !reactiveCompacted && !emittedAny && !signal?.aborted) {
+        reactiveCompacted = true
+        const summaryBefore = summaryRepo.getLatest(input.convId)?.id
+        await compressionService.maybeCompress({
+          convId: input.convId,
+          roleId: input.roleId,
+          endpointId: input.endpointId,
+          model: input.model,
+          currentTokens: promptTokens,
+          force: true // we already overflowed — fold now regardless of the 90% gate
+        })
+        // A new summary row is the definitive signal that history was actually folded — more robust than
+        // comparing message counts, which a freshly-added summary message can mask. If so, rebuild with the
+        // smaller context and retry; otherwise nothing was foldable (history too short — #9 — or a concurrent
+        // compress held the lock) so surface the overflow rather than re-issuing the same oversized prompt.
+        if (summaryRepo.getLatest(input.convId)?.id !== summaryBefore) {
+          messages = await buildContext(input)
+          promptTokens = await measure(messages)
+          cb.onUsage?.(promptTokens)
+          continue
+        }
       }
       throw err
     }

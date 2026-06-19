@@ -42,24 +42,32 @@ export interface CompressInput {
   force?: boolean // manual /compact — bypass the 90% threshold and fold now (still needs enough to fold)
 }
 
+// Resolve a model's real context window: explicit override → exact catalog slug → largest known
+// text-model window on the same endpoint. The fallback exists because a nicosoft/* OAuth slug is often
+// ABSENT from the endpoint catalog (exact lookup → 0), which would otherwise disable compaction entirely
+// (finding #1); it mirrors the renderer's resolveContextLength so the context meter and the backend agree.
+// Returns 0 only when no model on the endpoint has a known window. Shared by the fold gate (maybeCompress)
+// and the chat reactive-overflow path (chat.service).
+export function resolveContextWindow(
+  availableModels: { slug: string; contextLength: number }[],
+  model: string,
+  explicit?: number
+): number {
+  const exact = explicit ?? availableModels.find((m) => m.slug === model)?.contextLength
+  return exact && exact > 0
+    ? exact
+    : availableModels.reduce((mx, m) => Math.max(mx, m.contextLength || 0), 0)
+}
+
 export async function maybeCompress(input: CompressInput): Promise<void> {
   if (compressing.has(input.convId)) return // a compression for this conversation is already running
   compressing.add(input.convId)
   try {
     const ep = endpointRepo.getById(input.endpointId)
     if (!ep) return
-    // B2/#1: resolve the model's real window. A nicosoft/* OAuth slug is often ABSENT from the endpoint
-    // catalog (exact lookup → contextLength 0), which previously returned here and DISABLED compaction
-    // outright (unbounded growth → a non-recoverable upstream 400; on the council/collab path it also left
-    // even the B2-anchored gate dead because synth runs on the coordinator router model). Fall back to the
-    // largest known text-model window on the same endpoint so the gate still has a ceiling — mirrors the
-    // renderer's resolveContextLength, so the context meter and the backend now agree.
-    const exactWindow =
-      input.contextWindow ?? ep.availableModels.find((m) => m.slug === input.model)?.contextLength
-    const ctxLen =
-      exactWindow && exactWindow > 0
-        ? exactWindow
-        : ep.availableModels.reduce((mx, m) => Math.max(mx, m.contextLength || 0), 0)
+    // B2/#1: resolve the model's real window, falling back to the endpoint's largest known window when the
+    // exact slug is absent from the catalog (the nicosoft/* OAuth-slug case) — see resolveContextWindow.
+    const ctxLen = resolveContextWindow(ep.availableModels, input.model, input.contextWindow)
     if (ctxLen <= 0) return // no known window anywhere on the endpoint — can't compute a threshold
 
     const history = convRepo.listByConversation(input.convId)
@@ -84,7 +92,12 @@ export async function maybeCompress(input: CompressInput): Promise<void> {
       RESERVED_CONTEXT_TOKENS
     const used = Math.max(input.currentTokens ?? 0, foldTargetEstimate)
     if (!input.force && used < ctxLen * COMPRESS_RATIO) return // under threshold (force = manual /compact)
-    if (recent.length <= KEEP_RECENT + 1) return // too little to fold usefully
+    // B3/#9: normally require a couple more than KEEP_RECENT to bother folding. But a conversation that
+    // crossed the window in its first few turns — or via one oversized message — can be over threshold with
+    // too few messages to clear that bar, leaving it permanently stuck. Under force (manual /compact or the
+    // chat reactive-overflow path) fold down to a minimal continuity tail so it always makes progress.
+    if (input.force ? recent.length < 2 : recent.length <= KEEP_RECENT + 1) return
+    const keepTail = input.force ? Math.min(KEEP_RECENT, recent.length - 1) : KEEP_RECENT
 
     agentEvents.emit({ type: 'compact:pre', convId: input.convId, roleId: input.roleId, ts: Date.now() })
 
@@ -94,7 +107,7 @@ export async function maybeCompress(input: CompressInput): Promise<void> {
       'auto'
     )
 
-    const fold = recent.slice(0, recent.length - KEEP_RECENT) // older messages → summary
+    const fold = recent.slice(0, recent.length - keepTail) // older messages → summary
     const coveredUpTo = fold[fold.length - 1].id
 
     const key = keychain.getApiKey(input.endpointId)
