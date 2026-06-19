@@ -138,13 +138,6 @@ export function listForRole(roleId: string): MemoryRow[] {
   return rows.map(mapRow)
 }
 
-export function listShared(): MemoryRow[] {
-  const rows = getDb()
-    .prepare(`SELECT * FROM memories WHERE layer = 'shared' ORDER BY updated_at DESC, id DESC`)
-    .all() as unknown as MemoryRaw[]
-  return rows.map(mapRow)
-}
-
 export function listAll(): MemoryRow[] {
   const rows = getDb().prepare('SELECT * FROM memories ORDER BY updated_at DESC, id DESC').all() as unknown as MemoryRaw[]
   return rows.map(mapRow)

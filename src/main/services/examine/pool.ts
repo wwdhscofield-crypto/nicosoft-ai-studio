@@ -99,7 +99,3 @@ export async function runExamineLimited<T>(endpointId: string, fn: () => Promise
 export function parallelExamineLimited<T>(endpointId: string, tasks: Array<() => Promise<T>>): Promise<(T | null)[]> {
   return Promise.all(tasks.map((t) => runExamineLimited(endpointId, t)))
 }
-
-export function examineConcurrencyInfo(): { global: number; perEndpoint: number } {
-  return { global: GLOBAL_MAX, perEndpoint: PER_ENDPOINT_MAX }
-}

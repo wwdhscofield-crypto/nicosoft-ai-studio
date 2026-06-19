@@ -68,10 +68,3 @@ export function getLatest(convId: string): SummaryRow | null {
     .get(convId) as unknown as SummaryRaw | undefined
   return row ? mapRow(row) : null
 }
-
-export function listByConversation(convId: string): SummaryRow[] {
-  const rows = getDb()
-    .prepare('SELECT * FROM summaries WHERE conversation_id = ? ORDER BY created_at ASC')
-    .all(convId) as unknown as SummaryRaw[]
-  return rows.map(mapRow)
-}
