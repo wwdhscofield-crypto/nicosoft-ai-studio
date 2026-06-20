@@ -429,5 +429,8 @@
   "terminal.unavailable": "터미널을 사용할 수 없습니다 — 네이티브 모듈을 불러오지 못했습니다.",
   "files.copy": "복사",
   "files.copied": "복사됨",
-  "files.resize": "드래그하여 크기 조절"
+  "files.resize": "드래그하여 크기 조절",
+  "update.btn.available": "새 버전 {version} 사용 가능",
+  "update.btn.downloading": "다운로드 중 {percent}%",
+  "update.btn.downloaded": "재시작하여 {version} 설치"
 }

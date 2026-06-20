@@ -429,5 +429,8 @@
   "terminal.unavailable": "终端不可用 — 原生模块加载失败。",
   "files.copy": "复制",
   "files.copied": "已复制",
-  "files.resize": "拖动调整大小"
+  "files.resize": "拖动调整大小",
+  "update.btn.available": "有新版本 {version}",
+  "update.btn.downloading": "下载中 {percent}%",
+  "update.btn.downloaded": "重启以安装 {version}"
 }

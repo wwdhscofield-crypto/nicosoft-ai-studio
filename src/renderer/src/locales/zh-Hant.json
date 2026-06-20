@@ -429,5 +429,8 @@
   "terminal.unavailable": "終端機無法使用 — 原生模組載入失敗。",
   "files.copy": "複製",
   "files.copied": "已複製",
-  "files.resize": "拖曳調整大小"
+  "files.resize": "拖曳調整大小",
+  "update.btn.available": "有新版本 {version}",
+  "update.btn.downloading": "下載中 {percent}%",
+  "update.btn.downloaded": "重啟以安裝 {version}"
 }

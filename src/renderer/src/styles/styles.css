@@ -263,6 +263,22 @@ input, textarea, select { font-family: inherit; color: inherit; }
 }
 .icon-btn:hover { background: var(--bg-3); color: var(--text-1); }
 
+/* App update button (doc 56 §6.1) — first item in .top-actions, shown ONLY while an update is
+   available/downloading/downloaded. Accent-tinted to match the New Project button; color is always
+   var(--accent), never a hardcoded hex, so it tracks the theme (incl. light mode). */
+.update-btn { position: relative; color: var(--accent); background: color-mix(in oklch, var(--accent) 12%, transparent); }
+.update-btn:hover { color: var(--accent); background: color-mix(in oklch, var(--accent) 22%, transparent); }
+.update-btn .spin { animation: update-spin 0.9s linear infinite; }
+/* "有新版本" pulse dot — accent dot, top-right, ringed in the topbar bg so it reads as separate. */
+.update-dot {
+  position: absolute; top: 3px; right: 3px;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 2px var(--bg-1);
+  animation: update-pulse 1.8s ease-in-out infinite;
+}
+@keyframes update-spin { to { transform: rotate(360deg); } }
+@keyframes update-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(0.7); } }
+
 .kbd-hint {
   display: flex; align-items: center; gap: 6px;
   height: 28px; padding: 0 8px 0 10px; border-radius: 6px;

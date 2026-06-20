@@ -429,5 +429,8 @@
   "terminal.unavailable": "ターミナルを利用できません — ネイティブモジュールの読み込みに失敗しました。",
   "files.copy": "コピー",
   "files.copied": "コピーしました",
-  "files.resize": "ドラッグでサイズ変更"
+  "files.resize": "ドラッグでサイズ変更",
+  "update.btn.available": "新しいバージョン {version} が利用可能",
+  "update.btn.downloading": "ダウンロード中 {percent}%",
+  "update.btn.downloaded": "再起動して {version} をインストール"
 }

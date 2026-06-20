@@ -12,6 +12,7 @@ import { PromptDialog } from '@/components/dialogs/prompt-dialog'
 import { useRoles } from '@/stores/roles'
 import { useAllExperts } from '@/lib/all-experts'
 import { useChat } from '@/stores/chat'
+import { useUpdate } from '@/stores/update'
 import { toast } from '@/stores/toast'
 import { useT } from '@/stores/locale'
 import type { Expert } from '@/types'
@@ -39,6 +40,17 @@ export function Topbar({
   const btnRef = useRef<HTMLButtonElement>(null)
   const { menuRef, style } = useAnchoredMenu(menu, btnRef, 'right')
   const t = useT()
+  // App update button (doc 56 §6.1): first item in the cluster (left of the sidebar toggle), rendered ONLY
+  // while an update is in play; idle / up-to-date render nothing at all (no placeholder). Click reopens the card.
+  const update = useUpdate()
+  const showUpdate =
+    update.status === 'available' || update.status === 'downloading' || update.status === 'downloaded'
+  const updateTip =
+    update.status === 'downloading'
+      ? t('update.btn.downloading', { percent: update.progress ?? 0 })
+      : update.status === 'downloaded'
+        ? t('update.btn.downloaded', { version: update.version ?? '' })
+        : t('update.btn.available', { version: update.version ?? '' })
   const doExport = (fmt: 'md' | 'json'): void => {
     setMenu(false)
     // export opens a native save dialog: a truthy path = exported, a falsy value = the user cancelled
@@ -59,6 +71,23 @@ export function Topbar({
         <div className="spacer" />
       )}
       <div className="top-actions">
+        {showUpdate && (
+          <button
+            className={`icon-btn update-btn update-${update.status}`}
+            title={updateTip}
+            aria-label={updateTip}
+            onClick={update.openModal}
+          >
+            {update.status === 'downloading' ? (
+              <Icons.loader size={17} className="spin" />
+            ) : update.status === 'downloaded' ? (
+              <Icons.restart size={17} />
+            ) : (
+              <Icons.cloudDownload size={17} />
+            )}
+            {update.status === 'available' && <span className="update-dot" aria-hidden="true" />}
+          </button>
+        )}
         {sidebar && (
           <button
             className="icon-btn"

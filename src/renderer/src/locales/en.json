@@ -429,5 +429,8 @@
   "terminal.unavailable": "Terminal unavailable — the native module failed to load.",
   "files.copy": "Copy",
   "files.copied": "Copied",
-  "files.resize": "Drag to resize"
+  "files.resize": "Drag to resize",
+  "update.btn.available": "New version {version} available",
+  "update.btn.downloading": "Downloading {percent}%",
+  "update.btn.downloaded": "Restart to install {version}"
 }
