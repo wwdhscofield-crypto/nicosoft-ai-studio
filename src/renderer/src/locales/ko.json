@@ -432,5 +432,18 @@
   "files.resize": "드래그하여 크기 조절",
   "update.btn.available": "새 버전 {version} 사용 가능",
   "update.btn.downloading": "다운로드 중 {percent}%",
-  "update.btn.downloaded": "재시작하여 {version} 설치"
+  "update.btn.downloaded": "재시작하여 {version} 설치",
+  "update.modal.available.title": "새 버전 사용 가능",
+  "update.modal.notesTitle": "변경 사항",
+  "update.modal.downloading.title": "업데이트 다운로드 중",
+  "update.modal.downloading.hint": "백그라운드에서 다운로드 중 — 계속 사용할 수 있습니다",
+  "update.modal.downloaded.title": "설치 준비 완료",
+  "update.modal.downloaded.hint": "다운로드 완료. 재시작하면 적용됩니다.",
+  "update.modal.error.title": "업데이트 실패",
+  "update.btn.update": "지금 업데이트",
+  "update.btn.later": "나중에",
+  "update.btn.restart": "재시작하여 설치",
+  "update.btn.installOnQuit": "종료 시 설치",
+  "update.btn.retry": "다시 시도",
+  "update.btn.close": "닫기"
 }

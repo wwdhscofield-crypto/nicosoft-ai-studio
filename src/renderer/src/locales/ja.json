@@ -432,5 +432,18 @@
   "files.resize": "ドラッグでサイズ変更",
   "update.btn.available": "新しいバージョン {version} が利用可能",
   "update.btn.downloading": "ダウンロード中 {percent}%",
-  "update.btn.downloaded": "再起動して {version} をインストール"
+  "update.btn.downloaded": "再起動して {version} をインストール",
+  "update.modal.available.title": "新しいバージョンがあります",
+  "update.modal.notesTitle": "更新内容",
+  "update.modal.downloading.title": "更新をダウンロード中",
+  "update.modal.downloading.hint": "バックグラウンドでダウンロード中 — 引き続き使用できます",
+  "update.modal.downloaded.title": "インストール準備完了",
+  "update.modal.downloaded.hint": "ダウンロード完了。再起動で適用されます。",
+  "update.modal.error.title": "更新に失敗しました",
+  "update.btn.update": "今すぐ更新",
+  "update.btn.later": "後で",
+  "update.btn.restart": "再起動してインストール",
+  "update.btn.installOnQuit": "終了時にインストール",
+  "update.btn.retry": "再試行",
+  "update.btn.close": "閉じる"
 }

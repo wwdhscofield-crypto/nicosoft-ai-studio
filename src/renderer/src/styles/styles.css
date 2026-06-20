@@ -279,6 +279,25 @@ input, textarea, select { font-family: inherit; color: inherit; }
 @keyframes update-spin { to { transform: rotate(360deg); } }
 @keyframes update-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(0.7); } }
 
+/* Update modal (doc 56 §6.2) — on the standard .dialog shell, sized narrower. */
+.dialog.update-prompt { width: 440px; }
+.up-versions { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 13px; }
+.up-versions .up-cur { color: var(--text-3); }
+.up-versions .up-new { color: var(--accent); font-weight: 600; }
+.up-versions svg { color: var(--text-4); flex: none; }
+.up-notes-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-3); margin-bottom: 6px; }
+.up-notes {
+  max-height: 220px; overflow-y: auto;
+  font-size: 13px; line-height: 1.55; color: var(--text-2);
+  white-space: pre-wrap; word-break: break-word;
+  background: var(--bg-1); border: 1px solid var(--border-1); border-radius: 8px; padding: 10px 12px;
+}
+.up-progress { height: 6px; border-radius: 999px; background: var(--bg-3); overflow: hidden; }
+.up-progress-fill { height: 100%; background: var(--accent); border-radius: 999px; transition: width 0.2s ease; }
+.up-progress-row { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--text-2); }
+.up-progress-row .up-pct { color: var(--accent); font-variant-numeric: tabular-nums; }
+.up-msg { font-size: 13.5px; color: var(--text-2); line-height: 1.55; margin: 0; }
+
 .kbd-hint {
   display: flex; align-items: center; gap: 6px;
   height: 28px; padding: 0 8px 0 10px; border-radius: 6px;

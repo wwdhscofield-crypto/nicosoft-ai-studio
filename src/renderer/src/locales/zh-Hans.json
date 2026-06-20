@@ -432,5 +432,18 @@
   "files.resize": "拖动调整大小",
   "update.btn.available": "有新版本 {version}",
   "update.btn.downloading": "下载中 {percent}%",
-  "update.btn.downloaded": "重启以安装 {version}"
+  "update.btn.downloaded": "重启以安装 {version}",
+  "update.modal.available.title": "发现新版本",
+  "update.modal.notesTitle": "更新内容",
+  "update.modal.downloading.title": "正在下载更新",
+  "update.modal.downloading.hint": "后台下载中，可继续使用",
+  "update.modal.downloaded.title": "新版本已就绪",
+  "update.modal.downloaded.hint": "新版本已下载，重启后生效",
+  "update.modal.error.title": "更新失败",
+  "update.btn.update": "立即更新",
+  "update.btn.later": "稍后",
+  "update.btn.restart": "重启并安装",
+  "update.btn.installOnQuit": "退出时安装",
+  "update.btn.retry": "重试",
+  "update.btn.close": "关闭"
 }

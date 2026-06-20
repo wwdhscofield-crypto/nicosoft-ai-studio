@@ -24,6 +24,7 @@ import { useCustomRoles } from '@/stores/custom-roles'
 import { useMemoryCloud } from '@/stores/memory-cloud'
 import { useAllExperts } from '@/lib/all-experts'
 import { Toaster } from '@/components/toaster'
+import { UpdatePrompt } from '@/components/update-prompt'
 
 const LS_KEY = 'nicosoft-studio-state-v1'
 
@@ -374,6 +375,7 @@ export default function App(): ReactElement {
           onClose={() => setRolePicker(false)}
         />
       )}
+      <UpdatePrompt />
       <Toaster />
       <WindowControls />
     </div>

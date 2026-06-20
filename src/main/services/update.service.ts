@@ -114,8 +114,10 @@ export async function checkSilently(): Promise<void> {
 }
 
 // Download the available update (user clicked "立即更新"). Progress streams via download-progress → state.
+// Also runnable from `error` so the modal's "重试" can re-attempt a failed download (§8) — autoUpdater still
+// holds the last check's UpdateInfo, so downloadUpdate() retries without a re-check.
 export async function download(): Promise<void> {
-  if (state.status !== 'available') return
+  if (state.status !== 'available' && state.status !== 'error') return
   silent = false
   setState({ status: 'downloading', progress: 0, error: undefined })
   try {

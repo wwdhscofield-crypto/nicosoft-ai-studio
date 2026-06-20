@@ -432,5 +432,18 @@
   "files.resize": "Drag to resize",
   "update.btn.available": "New version {version} available",
   "update.btn.downloading": "Downloading {percent}%",
-  "update.btn.downloaded": "Restart to install {version}"
+  "update.btn.downloaded": "Restart to install {version}",
+  "update.modal.available.title": "New version available",
+  "update.modal.notesTitle": "What's new",
+  "update.modal.downloading.title": "Downloading update",
+  "update.modal.downloading.hint": "Downloading in the background — you can keep working",
+  "update.modal.downloaded.title": "Ready to install",
+  "update.modal.downloaded.hint": "Downloaded. Restart to apply the update.",
+  "update.modal.error.title": "Update failed",
+  "update.btn.update": "Update now",
+  "update.btn.later": "Later",
+  "update.btn.restart": "Restart & install",
+  "update.btn.installOnQuit": "Install on quit",
+  "update.btn.retry": "Retry",
+  "update.btn.close": "Close"
 }
