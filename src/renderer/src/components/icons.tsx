@@ -159,6 +159,27 @@ export const Icons: Record<string, IconFn> = {
       <path d="M12 15V3" />
     </Icon>
   ),
+  // cloud-download — the update button's "有新版本" face (doc 56 §6.1): a cloud with a down arrow.
+  cloudDownload: (p) => (
+    <Icon {...p}>
+      <path d="M12 13v8" />
+      <path d="m8 17 4 4 4-4" />
+      <path d="M20 16.2A4.5 4.5 0 0 0 17.5 8h-1.8A7 7 0 1 0 4 14.9" />
+    </Icon>
+  ),
+  // rotate-cw — the "待重启安装" (downloaded) face; reads as "restart to apply".
+  restart: (p) => (
+    <Icon {...p}>
+      <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
+      <path d="M21 3v5h-5" />
+    </Icon>
+  ),
+  // loader arc — spun via CSS (.spin) for the downloading state.
+  loader: (p) => (
+    <Icon {...p}>
+      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+    </Icon>
+  ),
   eye: (p) => (
     <Icon {...p}>
       <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
