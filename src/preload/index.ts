@@ -93,7 +93,8 @@ import type {
   ScheduledFiredEvent,
   VerifyProgressEvent,
   VerifyToolEvent,
-  VerifyDoneEvent
+  VerifyDoneEvent,
+  UpdateState
 } from '../main/ipc/contracts'
 
 // Typed bridge exposed to the renderer as `window.api`. Window controls (Batch 0) + Batch 1
@@ -384,6 +385,16 @@ const api = {
     info: (): Promise<AppInfo> => ipcRenderer.invoke('app:info'),
     // Reveal the app's own data dir (~/.nsai) in the OS file manager — Settings › Privacy.
     revealDataDir: (): Promise<void> => ipcRenderer.invoke('app:revealDataDir')
+  },
+  // App self-update (doc 56). check = manual (About, surfaces failures); download/install act on the
+  // available/downloaded update. getState hydrates the store on mount; onState streams every transition the
+  // main-process service broadcasts (the modal + Topbar button + About row all read the mirrored state).
+  update: {
+    check: (): Promise<void> => ipcRenderer.invoke('update:check'),
+    download: (): Promise<void> => ipcRenderer.invoke('update:download'),
+    install: (): Promise<void> => ipcRenderer.invoke('update:install'),
+    getState: (): Promise<UpdateState> => ipcRenderer.invoke('update:getState'),
+    onState: (cb: (s: UpdateState) => void): (() => void) => agentListen('update:state', cb)
   },
   mcp: {
     list: (): Promise<McpServerDto[]> => ipcRenderer.invoke('mcp:list'),
