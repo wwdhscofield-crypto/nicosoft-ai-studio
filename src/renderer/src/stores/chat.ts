@@ -455,15 +455,28 @@ export const useChat = create<ChatState>((set, get) => {
       if (!meta) return
       set((s) => {
         const msgs = (s.byConversation[meta.convId] ?? []).map((m) => ({ ...m }))
+        // Optimistic placeholder from send() is the FIRST step's slot (tail, no expertId yet) — reuse it.
         const cur = msgs[msgs.length - 1]
-        // Optimistic placeholder from send() is the FIRST step's slot — reuse it (rebinding role).
-        // If it's already been finalized (subsequent steps), append a new streaming placeholder.
         if (cur && cur.role === 'assistant' && cur.streaming && !cur.expertId) {
           cur.expertId = d.roleId
           cur.dispatch = d.dispatch
           cur.segmentKind = d.segmentKind ?? null
         } else {
-          msgs.push({ id: uid(), role: 'assistant', text: '', streaming: true, expertId: d.roleId, dispatch: d.dispatch, segmentKind: d.segmentKind ?? null })
+          // Else adopt this role's un-adopted streaming PLACEHOLDER anywhere in the list — a sub-tool event (e.g.
+          // a panel_examine card) may have opened the role's bubble before this step:start, and it is not
+          // necessarily the tail if another role's event interleaved. Walk back like the sibling handlers; a
+          // placeholder is identified by `dispatch === undefined` (a real step's bubble always has dispatch set,
+          // even to null), so we fill it in place instead of stranding it into a duplicate same-role segment.
+          let adopt = -1
+          for (let i = msgs.length - 1; i >= 0; i--) {
+            const m = msgs[i]
+            if (m.role === 'assistant' && m.streaming && m.expertId === d.roleId && m.dispatch === undefined) { adopt = i; break }
+          }
+          if (adopt >= 0) {
+            msgs[adopt] = { ...msgs[adopt], dispatch: d.dispatch, segmentKind: d.segmentKind ?? null }
+          } else {
+            msgs.push({ id: uid(), role: 'assistant', text: '', streaming: true, expertId: d.roleId, dispatch: d.dispatch, segmentKind: d.segmentKind ?? null })
+          }
         }
         return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
       })
@@ -500,6 +513,12 @@ export const useChat = create<ChatState>((set, get) => {
           cur.streaming = false
           if (cur.inputTokens === undefined && typeof d.inputTokens === 'number') cur.inputTokens = d.inputTokens
           if (cur.outputTokens === undefined && typeof d.outputTokens === 'number') cur.outputTokens = d.outputTokens
+        }
+        // Finalize ANY other leftover streaming assistant bubble at run end — e.g. a never-adopted placeholder
+        // (a sub-tool card opened a role bubble whose step:start never arrived) would otherwise stream a phantom
+        // "Thinking…" forever, since step:done/the tail-clear only touch the last message.
+        for (let i = 0; i < msgs.length - 1; i++) {
+          if (msgs[i].role === 'assistant' && msgs[i].streaming) msgs[i] = { ...msgs[i], streaming: false }
         }
         // The "/ window" meter shows the CURRENT context of the COMPOSER's role (the coordinator), NOT
         // whichever expert ran last. Two traps, both seen in dogfood:
@@ -555,7 +574,18 @@ export const useChat = create<ChatState>((set, get) => {
       if (!meta) return
       set((s) => {
         const msgs = (s.byConversation[meta.convId] ?? []).map((m) => ({ ...m }))
-        const i = locateSubToolMsgIndex(msgs, d.roleId, d.parentToolId, d.toolUseId)
+        let i = locateSubToolMsgIndex(msgs, d.roleId, d.parentToolId, d.toolUseId)
+        // A sub-tool can arrive BEFORE this role's segment exists in the store: step:start and sub-tool:start
+        // cross the main→renderer IPC as separate sends in separate ticks, so their order isn't guaranteed. The
+        // flaky case is panel_examine's PanelExamine card (sentinel parent 'coordinator-gate-b' matches no card,
+        // so it can only anchor on the role's latest message) — if its event wins the race it found no message
+        // and was silently dropped (i<0), so the panel card never rendered. Don't drop it: open a streaming
+        // bubble for the role and anchor the card there. A later step:start for the same role REUSES this bubble
+        // (onStepStart matches expertId === roleId), so no duplicate segment.
+        if (i < 0 && d.roleId) {
+          msgs.push({ id: uid(), role: 'assistant', text: '', streaming: true, expertId: d.roleId })
+          i = msgs.length - 1
+        }
         if (i >= 0) msgs[i] = applySubToolStart(msgs[i], d.parentToolId, d.toolUseId, d.name, d.input)
         return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
       })
@@ -565,7 +595,14 @@ export const useChat = create<ChatState>((set, get) => {
       if (!meta) return
       set((s) => {
         const msgs = (s.byConversation[meta.convId] ?? []).map((m) => ({ ...m }))
-        const i = locateSubToolMsgIndex(msgs, d.roleId, d.parentToolId, d.toolUseId)
+        let i = locateSubToolMsgIndex(msgs, d.roleId, d.parentToolId, d.toolUseId)
+        // Same race guard as onSubToolStart: a done can be the FIRST event we see for a card whose start lost the
+        // IPC race and landed nothing (or whose role segment isn't in the store yet). Ensure a bubble so the
+        // resolved card still surfaces rather than vanishing.
+        if (i < 0 && d.roleId) {
+          msgs.push({ id: uid(), role: 'assistant', text: '', streaming: true, expertId: d.roleId })
+          i = msgs.length - 1
+        }
         if (i >= 0) msgs[i] = applySubToolDone(msgs[i], d.parentToolId, d.toolUseId, d.name, d.result, d.isError, d.input)
         return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
       })

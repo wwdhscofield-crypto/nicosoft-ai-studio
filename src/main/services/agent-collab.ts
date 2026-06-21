@@ -153,7 +153,14 @@ export async function runCollabSession(
       initialPrompt: x.initialPrompt,
       runTurn: async (messages, collab, sig) => {
         hooks.onExpertActive?.(x.roleId, true) // expert is actively working this turn → show its live readout
-        await mkdir(join(sessionDir, 'tool-results'), { recursive: true })
+        // The gen loop below has its own try/finally that clears the readout; guard the one await BEFORE it
+        // (mkdir) too, so an mkdir rejection (ENOSPC/EROFS/EACCES) can't leave the bubble stuck on "Thinking…".
+        try {
+          await mkdir(join(sessionDir, 'tool-results'), { recursive: true })
+        } catch (e) {
+          hooks.onExpertActive?.(x.roleId, false)
+          throw e
+        }
         const ctx: AgentContext = {
           cwd: x.cwd,
           signal: sig,
@@ -205,35 +212,40 @@ export async function runCollabSession(
         let turnContext = 0 // last turn's context size → display (overwrite)
         let turnCacheRead = 0 // last turn's cache-read share → display (overwrite)
         let turnOut = 0
-        for (;;) {
-          const { value, done } = await gen.next()
-          if (done) {
-            result = value
-            break
-          }
-          // Emit the same tool:pre/post audit trail as runAgentLoop, so a collaboration's tool usage is
-          // observable too (previously a gap — collab experts don't go through runAgentLoop).
-          if (value.type === 'assistant') {
-            turnIn += promptTokensFromUsage(value.usage) // total incl. cache → billing
-            turnContext = promptTokensFromUsage(value.usage) // current context size (last turn's prompt) — overwrite
-            turnCacheRead = value.usage.cacheReadTokens ?? 0 // cache-read share of last turn — overwrite
-            turnOut += value.usage.outTokens
-            for (const b of value.message.content) {
-              if (isContentBlock(b) && b.type === 'tool_use') {
-                toolNames.set(b.id, b.name)
-                agentEvents.emit({ type: 'tool:pre', convId, roleId: x.roleId, tool: b.name, ts: Date.now() })
+        try {
+          for (;;) {
+            const { value, done } = await gen.next()
+            if (done) {
+              result = value
+              break
+            }
+            // Emit the same tool:pre/post audit trail as runAgentLoop, so a collaboration's tool usage is
+            // observable too (previously a gap — collab experts don't go through runAgentLoop).
+            if (value.type === 'assistant') {
+              turnIn += promptTokensFromUsage(value.usage) // total incl. cache → billing
+              turnContext = promptTokensFromUsage(value.usage) // current context size (last turn's prompt) — overwrite
+              turnCacheRead = value.usage.cacheReadTokens ?? 0 // cache-read share of last turn — overwrite
+              turnOut += value.usage.outTokens
+              for (const b of value.message.content) {
+                if (isContentBlock(b) && b.type === 'tool_use') {
+                  toolNames.set(b.id, b.name)
+                  agentEvents.emit({ type: 'tool:pre', convId, roleId: x.roleId, tool: b.name, ts: Date.now() })
+                }
+              }
+            } else if (value.type === 'tool_results') {
+              for (const b of value.message.content) {
+                if (isContentBlock(b) && b.type === 'tool_result') {
+                  agentEvents.emit({ type: 'tool:post', convId, roleId: x.roleId, tool: toolNames.get(b.tool_use_id) ?? 'unknown', isError: b.is_error ?? false, ts: Date.now() })
+                }
               }
             }
-          } else if (value.type === 'tool_results') {
-            for (const b of value.message.content) {
-              if (isContentBlock(b) && b.type === 'tool_result') {
-                agentEvents.emit({ type: 'tool:post', convId, roleId: x.roleId, tool: toolNames.get(b.tool_use_id) ?? 'unknown', isError: b.is_error ?? false, ts: Date.now() })
-              }
-            }
+            hooks.onExpertEvent(x.roleId, value)
           }
-          hooks.onExpertEvent(x.roleId, value)
+        } finally {
+          // Clear the live readout when the turn ends — on a normal park AND on a thrown/aborted turn (gen.next()
+          // rejecting). Without the finally, an errored expert's bubble hangs on "Thinking…" until session end.
+          hooks.onExpertActive?.(x.roleId, false) // turn batch finished → the expert parks; hide its live readout
         }
-        hooks.onExpertActive?.(x.roleId, false) // turn batch finished → the expert parks; hide its live readout
         inTokensByRole.set(x.roleId, (inTokensByRole.get(x.roleId) ?? 0) + turnIn)
         contextByRole.set(x.roleId, turnContext) // overwrite with this run's last context size (not accumulated)
         cacheReadByRole.set(x.roleId, turnCacheRead) // overwrite with this run's last cache-read share

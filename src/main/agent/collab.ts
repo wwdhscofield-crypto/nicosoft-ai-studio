@@ -61,9 +61,32 @@ interface ExpertRunner {
 
 const DEFAULT_WAIT_MS = 120_000
 const MAX_ROUNDTRIPS = 12 // per ordered pair (from→to); beyond this assign_task degrades to send (§7)
+// Injected as a USER turn when a wait() times out with no mail. Keeps the next request VALID (ends in a user
+// message — not an "assistant prefill" the endpoint rejects, which would throw and drop the expert) AND gives a
+// blocked expert one chance to wrap up / report instead of hanging. One-shot per wait episode — after it, the
+// expert idle-parks until a real peer message, so there's no timeout→nudge→re-wait churn.
+const WAIT_TIMEOUT_NUDGE =
+  'No reply arrived within your wait window. If you were blocked on a peer, proceed without it or wrap up and ' +
+  'report your final status to the coordinator. You will not be prompted again on timeout, but a peer can still message you.'
 
 function userTurn(text: string): AgentMessage {
   return { role: 'user', content: [{ type: 'text', text }] }
+}
+
+// Append text as USER input WITHOUT breaking strict user/assistant alternation. A runTurn can RETURN a
+// transcript that ALREADY ends in a user message — a tool_results turn that hit max_turns / thrash_stop in the
+// agent loop (loop.ts) returns ending in role:'user'. Appending a SECOND consecutive user turn there is rejected
+// by strict Anthropic upstreams (the agent loop's own appendTodoSnapshot merges into the trailing user message
+// for exactly this reason), so it would throw and DROP the expert. Fold the text into that trailing user
+// message's content when present; otherwise push a fresh user turn.
+function pushUserText(e: ExpertRunner, text: string): void {
+  const i = e.messages.length - 1
+  const last = e.messages[i]
+  if (last && last.role === 'user' && Array.isArray(last.content)) {
+    e.messages[i] = { ...last, content: [...last.content, { type: 'text', text }] }
+  } else {
+    e.messages.push(userTurn(text))
+  }
 }
 
 function finalAssistantText(messages: AgentMessage[]): string {
@@ -147,44 +170,73 @@ export class CollabSession {
     target.mailbox.push({ from, text })
     this.onEvent({ kind: effectiveWake ? 'assign' : 'send', roleId: from, to, text })
 
-    if (effectiveWake && target.status === 'parked') {
-      target.wake?.('woken')
+    let woke = false
+    if (effectiveWake && target.status === 'parked' && target.wake) {
+      target.wake('woken') // clears target.wake + resolves its park promise → its loop resumes and drains mail
+      woke = true
       this.onEvent({ kind: 'wake', roleId: to })
     }
     const name = target.spec.name
     if (capped) {
       return `Roundtrip cap with ${name} reached — sent as a notification (no wake) to converge. Wrap up and report to the coordinator.`
     }
-    return effectiveWake ? `Assigned to ${name} (woken to act on it).` : `Sent to ${name}'s mailbox (they'll see it next turn).`
+    // The mail is enqueued either way. Only CLAIM a wake when one actually landed on a live waiter; otherwise the
+    // target is mid-turn (or mid-resume, its wake just consumed) and will splice this on its next loop pass.
+    // Reporting "woken" when target.wake was a no-op is what masked the lost-wakeup — a parked-but-already-
+    // resolved expert still reads as status:'parked', so the old unconditional success string lied.
+    if (!effectiveWake) return `Sent to ${name}'s mailbox (they'll see it next turn).`
+    return woke ? `Assigned to ${name} (woken to act on it).` : `Queued for ${name} — they'll pick it up on their next turn.`
   }
 
   private async runExpert(e: ExpertRunner, signal: AbortSignal): Promise<void> {
     const handle = this.buildHandle(e.spec.roleId)
+    let nudged = false // already gave a one-shot "your wait timed out" turn since this expert's last real input?
     try {
       while (!signal.aborted) {
-        // 1. Inject unread mail as a single user turn so the expert sees who said what.
+        // 1. Inject unread mail as a single user turn so the expert sees who said what (and the conversation
+        //    ends in a user message). Real input resets the one-shot timeout-nudge budget.
         const mail = e.mailbox.splice(0)
         if (mail.length) {
           const body = mail.map((m) => `[from ${this.experts.get(m.from)?.spec.name ?? m.from}] ${m.text}`).join('\n\n')
-          e.messages.push(userTurn(body))
+          pushUserText(e, body) // fold into a trailing tool_results user turn rather than risk two adjacent user msgs
+          nudged = false
         }
 
-        // 2. Run one agent loop turn (to end_turn). consult tools mutate mailboxes via the handle mid-turn.
-        e.status = 'running'
+        // 2. Run a turn IFF the conversation ends with a USER message — i.e. there is something to reply to: the
+        //    initial prompt, freshly-delivered mail, or the synthetic wait-timeout nudge appended in step 4.
+        //    NEVER run against a conversation ending in the expert's OWN assistant turn: that is an "assistant
+        //    prefill" the endpoint rejects ("the conversation must end with a user message"), which throws and
+        //    DROPS the expert — the real trigger of the collab deadlock (an expert dies on its wait-timeout, so
+        //    a peer's later assign lands on a dead runner).
+        const last = e.messages[e.messages.length - 1]
+        if (last && last.role === 'user') {
+          e.status = 'running'
+          e.waitRequested = false
+          this.onEvent({ kind: 'turn', roleId: e.spec.roleId })
+          e.messages = await e.spec.runTurn(e.messages, handle, signal)
+          if (signal.aborted) break
+          if (e.mailbox.length) continue // mail arrived mid-turn → process it immediately
+        }
+
+        // 3. Park. A wait() arms ONE timed park; after we've already nudged this episode (or no wait was
+        //    requested) park idle, so we never loop timeout→nudge→re-wait→timeout (API churn) — a real assign or
+        //    quiescence resolves it.
+        e.waitUntil = e.waitRequested && !nudged ? this.clock() + DEFAULT_WAIT_MS : 0
         e.waitRequested = false
-        this.onEvent({ kind: 'turn', roleId: e.spec.roleId })
-        e.messages = await e.spec.runTurn(e.messages, handle, signal)
-        if (signal.aborted) break
-
-        // 3. Decide what's next. New mail arrived mid-turn → loop immediately (don't park).
-        if (e.mailbox.length) continue
-
-        // wait() requested → park with a timeout; otherwise park idle (a peer may still assign us). Both
-        // resolve on quiescence (everyone parked + all mailboxes empty) so the session can end.
-        e.waitUntil = e.waitRequested ? this.clock() + DEFAULT_WAIT_MS : 0
         const reason = await this.park(e)
+        // Re-check the mailbox AFTER park resolves: a deliver() can enqueue mail in the window between the
+        // quiescence sweep deciding to end and this loop observing the result. Unread mail ALWAYS wins over
+        // ending — splice it on the next pass rather than exiting and stranding it (the lost-wakeup).
+        if (e.mailbox.length) continue
         if (reason === 'quiescent') break
-        // woken (assigned, or a queued send picked up by the quiescence sweep) → loop and process mail.
+
+        // 4. Woken with an empty mailbox = the wait timed out. Append ONE synthetic user turn so the expert gets
+        //    a VALID (user-ending) turn to wrap up / report instead of hanging — looped back to run via step 2.
+        //    One-shot per episode (nudged); afterwards step 3 idle-parks until a real assign arrives.
+        if (!nudged) {
+          nudged = true
+          pushUserText(e, WAIT_TIMEOUT_NUDGE) // merge if the turn ended on a tool_results user message
+        }
       }
     } catch (err) {
       // ISOLATE a single expert's failure: an upstream error in ONE expert's turn (bad key, exhausted
@@ -205,22 +257,38 @@ export class CollabSession {
     // wait() on a reply from this expert resolves via the global quiescence check (all parked → end), so a
     // mid-collaboration failure can't wedge the session.
     this.onEvent({ kind: 'done', roleId: e.spec.roleId })
-    this.settleQuiescence()
+    this.settle()
   }
 
-  // After an expert leaves the loop (done or failed), re-check global quiescence so a peer parked waiting on
-  // it isn't left hanging: if everyone is now parked, end the session (or wake anyone holding unread mail to
-  // drain it). Without this, a failed expert that a peer was waiting on could leave that peer parked until
-  // its wait timeout (or forever, if it parked idle). Mirrors the check park() runs when an expert parks.
-  private settleQuiescence(): void {
-    const runners = [...this.experts.values()]
-    if (runners.some((r) => r.status === 'running')) return // someone is still actively working
-    const withMail = runners.find((r) => r.mailbox.length > 0 && r.wake)
-    if (withMail) {
-      withMail.wake?.('woken') // drain a queued send that never triggered a turn
+  // Decide whether the collaboration can end — called whenever an expert parks (park) or leaves its loop
+  // (runExpert, done/failed). Precedence:
+  //   • someone still running → do nothing.
+  //   • a parked expert holds unread mail AND can still be woken (live wake) → wake those holders to drain it;
+  //     never end with mail a LIVE expert can still process. A DEAD/exited holder has wake===undefined and is
+  //     EXCLUDED here (it can never drain its mail — counting it would wedge the session; its mail is lost, the
+  //     same terminate-with-loss the pre-fix code had). A mid-resume holder is also wakeless at this instant but
+  //     re-drains via runExpert's post-park mailbox re-check, so excluding it is safe (no lost mail for a live one).
+  //   • a parked expert is still inside its timed wait window (waitUntil>0) → wake it NOW so it gets its one
+  //     WAIT_TIMEOUT_NUDGE wrap-up turn before the session ends, instead of being force-quiesced away by a peer
+  //     parking first (or stalling the whole run ~DEFAULT_WAIT_MS for the timer to fire).
+  //   • else → true quiescence: end every parked expert.
+  private settle(): void {
+    const all = [...this.experts.values()]
+    if (all.some((x) => x.status === 'running')) return
+    const mailHolders = all.filter((x) => x.mailbox.length > 0 && x.wake)
+    if (mailHolders.length) {
+      for (const x of mailHolders) x.wake?.('woken')
       return
     }
-    for (const r of runners) r.wake?.('quiescent') // everyone parked + no mail → end the session
+    const timedWaiters = all.filter((x) => x.waitUntil > 0 && x.wake)
+    if (timedWaiters.length) {
+      for (const x of timedWaiters) {
+        x.waitUntil = 0 // consume the wait so the next settle() doesn't re-wake it before its nudge turn runs
+        x.wake?.('woken')
+      }
+      return
+    }
+    for (const x of all) x.wake?.('quiescent')
   }
 
   // Park the expert until it's woken (assign / quiescence sweep) or its wait times out. Each time an
@@ -242,18 +310,9 @@ export class CollabSession {
       // A finite wait times out into a 'woken' (the expert resumes and finds no new mail → likely done).
       const timer = e.waitUntil > 0 ? setTimeout(() => done('woken'), Math.max(0, e.waitUntil - this.clock())) : undefined
 
-      // Quiescence check: all parked now that we joined?
-      const all = [...this.experts.values()]
-      if (all.every((x) => x.status === 'parked')) {
-        const pending = all.filter((x) => x.mailbox.length > 0)
-        if (pending.length) {
-          // Unread queued sends exist — wake those experts to drain them instead of ending prematurely.
-          for (const x of pending) x.wake?.('woken')
-        } else {
-          // True quiescence: nobody is running and no mail is in flight. End every parked expert.
-          for (const x of all) x.wake?.('quiescent')
-        }
-      }
+      // Re-evaluate global quiescence now that this expert joined the parked set — drains live mail, fires a
+      // pending timed-waiter's nudge, or ends the session. Same arbiter as the runExpert-exit path.
+      this.settle()
     })
   }
 }

@@ -19,6 +19,7 @@
     "e2e:smoke": "node e2e/smoke.mjs",
     "e2e:engineer": "node e2e/engineer-agent.mjs",
     "e2e:title-memory": "node e2e/title-memory.mjs",
+    "test:collab": "node --experimental-transform-types e2e/collab-scheduler.mts",
     "rebuild:native": "electron-rebuild --only node-pty --force",
     "postinstall": "node scripts/ensure-electron.mjs && node scripts/rebuild-native.mjs"
   },
