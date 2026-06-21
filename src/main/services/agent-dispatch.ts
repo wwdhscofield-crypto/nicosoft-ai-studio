@@ -24,7 +24,7 @@ import { lspTool } from '../agent/tools/lsp'
 import { disposeE2ESessionsOwnedBy } from '../agent/tools/e2e-browser'
 import type { Tool } from '../agent/tool'
 import type { AgentRunInput, MessageAttachmentDto } from '../ipc/contracts'
-import { persistBase64, resolveToDataUrl } from '../media/storage'
+import { persistBase64, resolveImageForLlm, MAX_REPLAY_IMAGES } from '../media/storage'
 import * as convRepo from '../repos/conversation.repo'
 import * as summaryRepo from '../repos/summary.repo'
 import type { MemoryRow } from '../repos/memory.repo'
@@ -439,6 +439,15 @@ export async function runDispatchedAgent(
 // Persisted conversation messages → agent seed. Assistant turns are prior runs' FINAL replies (plain
 // text — tool steps were never persisted); user turns carry text + any image attachments.
 export function conversationToAgentMessages(messages: convRepo.MessageRow[]): AgentMessage[] {
+  // Request-body size guard: the seed is re-sent on EVERY turn, so a long image-heavy conversation re-uploads
+  // every image each time and the body crosses the gateway's limit (400 "failed to read request body"). Replay
+  // only the MOST RECENT MAX_REPLAY_IMAGES across the whole history (older images are elided from the LLM
+  // payload — their text stays); each kept image is right-sized (resolveImageForLlm: long edge ≤2048, ≤2MB).
+  let totalImages = 0
+  for (const m of messages) if (m.author === 'user') for (const a of m.attachments as { url?: string }[]) if (typeof a.url === 'string') totalImages++
+  const keepFrom = Math.max(0, totalImages - MAX_REPLAY_IMAGES)
+  let imgIdx = 0
+  let elided = 0
   const out: AgentMessage[] = []
   for (const m of messages) {
     if (m.author === 'user') {
@@ -446,7 +455,8 @@ export function conversationToAgentMessages(messages: convRepo.MessageRow[]): Ag
       if (m.content) content.push({ type: 'text', text: m.content })
       for (const a of m.attachments as { url?: string }[]) {
         if (typeof a.url !== 'string') continue
-        const mm = /^data:([^;]+);base64,(.*)$/s.exec(resolveToDataUrl(a.url))
+        if (imgIdx++ < keepFrom) { elided++; continue } // older than the most-recent MAX_REPLAY_IMAGES → drop
+        const mm = /^data:([^;]+);base64,(.*)$/s.exec(resolveImageForLlm(a.url))
         if (mm) content.push({ type: 'image', source: { type: 'base64', media_type: mm[1], data: mm[2] } })
       }
       if (content.length === 0) content.push({ type: 'text', text: '' })
@@ -456,6 +466,7 @@ export function conversationToAgentMessages(messages: convRepo.MessageRow[]): Ag
       out.push({ role: 'assistant', content: [{ type: 'text', text: m.content }] })
     }
   }
+  if (elided > 0) console.log(`[agent-seed] elided ${elided} older image(s); kept the most recent ${MAX_REPLAY_IMAGES} (request-body size guard)`)
   return out
 }
 

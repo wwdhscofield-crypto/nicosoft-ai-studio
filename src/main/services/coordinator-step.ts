@@ -18,7 +18,7 @@ import { protocolFamily } from '@shared/thinking'
 import { countContext } from './token-count.service'
 import { pickSmallModel } from './model-select'
 import { LlmError, type ChatAttachment, type ChatMessage } from '../llm/types'
-import { resolveToDataUrl } from '../media/storage'
+import { resolveImageForLlm, MAX_REPLAY_IMAGES } from '../media/storage'
 import type { AgentContext, PermissionMode, WrittenFile } from '../agent/context'
 import type { AgentResult } from '../agent/loop'
 import type { MemoryRow } from '../repos/memory.repo'
@@ -288,9 +288,16 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
     const history = convRepo.listByConversation(convId)
     const summary = summaryRepo.getLatest(convId)
     const recent = summary?.coveredUpTo != null ? history.filter((m) => m.id > summary.coveredUpTo!) : history
+    // Request-body size guard (same as the agent seed): replay only the most-recent MAX_REPLAY_IMAGES across the
+    // whole history; older images are elided (their text stays). Index BEFORE downscale so dropped images aren't resized.
+    let totalImgs = 0
+    for (const m of recent) if (Array.isArray(m.attachments)) for (const a of m.attachments as { url?: string }[]) if (typeof a.url === 'string') totalImgs++
+    const keepFrom = Math.max(0, totalImgs - MAX_REPLAY_IMAGES)
+    let imgIdx = 0
     for (const m of recent) {
       const role = m.author === 'user' ? 'user' : 'assistant'
-      const atts = messageAttachments(m.attachments)
+      const kept = Array.isArray(m.attachments) ? (m.attachments as { url?: string; mime?: string }[]).filter((a) => typeof a.url === 'string' && imgIdx++ >= keepFrom) : []
+      const atts = messageAttachments(kept)
       messages.push({ role, content: m.content, ...(atts.length ? { attachments: atts } : {}) })
     }
     // Defensive: if for any reason the history doesn't end with the current user turn, append it. This
@@ -369,7 +376,7 @@ function messageAttachments(raw: unknown): ChatAttachment[] {
   if (!Array.isArray(raw)) return []
   const out: ChatAttachment[] = []
   for (const a of raw as { url?: string; mime?: string }[]) {
-    if (typeof a.url === 'string') out.push({ type: 'image', url: resolveToDataUrl(a.url), mime: a.mime })
+    if (typeof a.url === 'string') out.push({ type: 'image', url: resolveImageForLlm(a.url), mime: a.mime })
   }
   return out
 }

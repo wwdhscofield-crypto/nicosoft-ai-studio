@@ -11,7 +11,7 @@ import { LlmError } from '../llm/types'
 import { abortableDelay, isRetryableLlmError, retryBackoffMs } from '../agent/retry'
 import type { ChatAttachment, ChatMessage, ChatResult } from '../llm/types'
 import type { ChatSendInput } from '../ipc/contracts'
-import { resolveToDataUrl } from '../media/storage'
+import { resolveImageForLlm, MAX_REPLAY_IMAGES } from '../media/storage'
 import * as compressionService from './compression.service'
 
 // Chat send. The backend assembles the full 5-layer context from the conversation id (the renderer no
@@ -183,14 +183,18 @@ async function buildContext(input: ChatSendInput): Promise<ChatMessage[]> {
   const messages: ChatMessage[] = []
   if (parts.length) messages.push({ role: 'system', content: parts.join('\n\n') })
 
-  // Layers 4-5: recent turns.
+  // Layers 4-5: recent turns. Request-body size guard (same as the agent seed): replay only the most-recent
+  // MAX_REPLAY_IMAGES across the unfolded window; older images are elided (their text stays). Index BEFORE
+  // downscale so dropped images aren't resized.
+  let totalImgs = 0
+  for (const m of recent) if (Array.isArray(m.attachments)) for (const a of m.attachments as { url?: string }[]) if (typeof a.url === 'string') totalImgs++
+  const keepFrom = Math.max(0, totalImgs - MAX_REPLAY_IMAGES)
+  let imgIdx = 0
   for (const m of recent) {
     const role = m.author === 'user' ? 'user' : 'assistant'
-    const atts = Array.isArray(m.attachments)
-      ? (m.attachments as { url?: string; mime?: string }[])
-          .filter((a) => typeof a.url === 'string')
-          .map((a) => ({ type: 'image' as const, url: resolveToDataUrl(a.url as string), mime: a.mime }))
-      : []
+    const atts = (Array.isArray(m.attachments) ? (m.attachments as { url?: string; mime?: string }[]) : [])
+      .filter((a) => typeof a.url === 'string' && imgIdx++ >= keepFrom)
+      .map((a) => ({ type: 'image' as const, url: resolveImageForLlm(a.url as string), mime: a.mime }))
     messages.push({ role, content: m.content, ...(atts.length ? { attachments: atts } : {}) })
   }
 
