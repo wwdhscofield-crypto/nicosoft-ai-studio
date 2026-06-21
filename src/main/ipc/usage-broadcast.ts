@@ -46,8 +46,8 @@ export function broadcastConvImage(sender: WebContents, convId: string, attachme
 // Tasks panel only sees todos after the whole turn settles into the transcript — on a long turn (a 64K
 // max_tokens escalation, a big multi-file edit) that's minutes of a frozen panel while the agent has
 // already moved items to completed (dogfood round11).
-export function broadcastConvTodos(sender: WebContents, convId: string, todos: ConvTodos['todos']): void {
+export function broadcastConvTodos(sender: WebContents, convId: string, roleId: string, todos: ConvTodos['todos']): void {
   if (sender.isDestroyed()) return
-  const ev: ConvTodos = { convId, todos }
+  const ev: ConvTodos = { convId, roleId, todos }
   sender.send('conv:todos', ev)
 }

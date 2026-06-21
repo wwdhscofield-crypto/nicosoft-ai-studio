@@ -384,6 +384,7 @@
   "workspace.back": "Back",
   "workspace.resize": "Drag to resize",
   "tasks.live": "Live",
+  "tasks.panels": "Panel reviews",
   "tasks.empty": "No task list for this chat.",
   "tasks.noActive": "No active tasks.",
   "tasks.services": "Services",

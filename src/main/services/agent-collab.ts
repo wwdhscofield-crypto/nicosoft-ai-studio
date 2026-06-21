@@ -55,6 +55,12 @@ export interface CollabHooks {
   onEvent: (e: CollabEvent) => void
   onExpertStream: (roleId: string, ev: AgentLlmEvent) => void
   onExpertEvent: (roleId: string, ev: AgentEvent) => void
+  // Live TodoWrite push per expert → the Tasks panel (roleId tags the writer; the panel groups by owner).
+  // Was missing entirely → the collab Tasks panel stayed empty while experts wrote todos.
+  onTodos?: (roleId: string, todos: { content: string; status: string }[]) => void
+  // A collab expert entered/left a turn batch (active true/false) — drives the parked-readout toggle so a
+  // parked expert (done its turn, waiting) stops showing "Thinking…".
+  onExpertActive?: (roleId: string, active: boolean) => void
   requestPermission: (roleId: string, req: PermissionRequest, signal?: AbortSignal) => Promise<PermissionDecision>
   // phase 5c-C3: snapshot of the live dev services the collaboration started (empty when none / on teardown).
   onServices?: (services: ServiceInfo[]) => void
@@ -146,6 +152,7 @@ export async function runCollabSession(
       name: roster.find((r) => r.id === x.roleId)?.name ?? x.roleId,
       initialPrompt: x.initialPrompt,
       runTurn: async (messages, collab, sig) => {
+        hooks.onExpertActive?.(x.roleId, true) // expert is actively working this turn → show its live readout
         await mkdir(join(sessionDir, 'tool-results'), { recursive: true })
         const ctx: AgentContext = {
           cwd: x.cwd,
@@ -155,6 +162,9 @@ export async function runCollabSession(
           permissionMode: x.permissionMode ?? 'default',
           requestPermission: (req, s) => hooks.requestPermission(x.roleId, req, s),
           todos,
+          // Per-expert live push to the Tasks panel (was missing → empty collab panel). roleId tags the writer so
+          // the panel groups by owner; ctx.setTodos stays (todos)=>void (TodoWrite calls it with just the list).
+          setTodos: hooks.onTodos ? (next) => hooks.onTodos!(x.roleId, next) : undefined,
           sessionDir,
           collab,
           services: registry,
@@ -223,6 +233,7 @@ export async function runCollabSession(
           }
           hooks.onExpertEvent(x.roleId, value)
         }
+        hooks.onExpertActive?.(x.roleId, false) // turn batch finished → the expert parks; hide its live readout
         inTokensByRole.set(x.roleId, (inTokensByRole.get(x.roleId) ?? 0) + turnIn)
         contextByRole.set(x.roleId, turnContext) // overwrite with this run's last context size (not accumulated)
         cacheReadByRole.set(x.roleId, turnCacheRead) // overwrite with this run's last cache-read share

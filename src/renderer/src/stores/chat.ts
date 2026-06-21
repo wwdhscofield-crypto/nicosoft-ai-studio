@@ -570,6 +570,24 @@ export const useChat = create<ChatState>((set, get) => {
         return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
       })
     })
+    // A collab expert entered (active=true) / left (active=false) a turn batch. Toggle a `parked` flag on its
+    // single accumulating bubble so a PARKED expert (done its turn, waiting between turns) stops showing the
+    // live "Thinking…" readout. The bubble stays streaming:true (a resume keeps appending to it via
+    // appendDeltaToRole); only the readout visibility changes (chat-segment segStreaming excludes parked).
+    at.onExpertActive((d) => {
+      const meta = coordinatorMeta.get(d.streamId)
+      if (!meta) return
+      set((s) => {
+        const msgs = (s.byConversation[meta.convId] ?? []).map((m) => ({ ...m }))
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i].role === 'assistant' && msgs[i].expertId === d.roleId) {
+            if (!!msgs[i].parked === d.active) msgs[i] = { ...msgs[i], parked: !d.active }
+            break
+          }
+        }
+        return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
+      })
+    })
     at.onAssistant((d) => {
       const meta = coordinatorMeta.get(d.streamId)
       if (!meta) return

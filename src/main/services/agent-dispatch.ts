@@ -40,7 +40,7 @@ export interface AgentCallbacks {
   onEvent: (e: AgentEvent) => void // completed assistant turns + tool_results
   onRetry?: (info: { attempt: number; max: number; code: string; waitMs: number }) => void // transient failure → retrying status
   onUsage?: (inputTokens: number) => void // live ↑ input-token readout: initial count up front, then per turn
-  onTodos?: (todos: { content: string; status: string }[]) => void // TodoWrite executed (mid-turn) → live push to the workspace Tasks panel
+  onTodos?: (roleId: string, todos: { content: string; status: string }[]) => void // TodoWrite executed (mid-turn) → live push to the workspace Tasks panel (roleId tags the writer; collab groups by owner)
   onToolImage?: (attachment: MessageAttachmentDto) => void // a tool produced an image (persisted nsai-media:// ref) → surface it live
   requestPermission: RequestPermission // bridged to the renderer (req, optional cancel signal)
   askUser?: AskUser // AskUserQuestion: bridged to the renderer; undefined headless (the tool then errors)
@@ -71,7 +71,7 @@ export interface AgentLoopInput {
   permissionMode: AgentContext['permissionMode']
   imageModel?: string // image backend slug for ns_generate_image (designer); Gemini only
   initialTodos?: AgentContext['todos'] // seed the run's todos from the shared conv-level list (pipeline continuity)
-  onTodosChange?: AgentContext['setTodos'] // TodoWrite writes back here → the shared conv-level list
+  onTodosChange?: (roleId: string, todos: AgentContext['todos']) => void // TodoWrite writes back → shared conv-level list + per-role live push (roleId injected at ctx.setTodos)
   expectsFileChanges?: boolean // implementation-gated run: quiescing with zero file edits triggers one nudge turn (loop.ts)
 }
 
@@ -148,7 +148,9 @@ export async function runAgentLoop(
     requestPermission: cb.requestPermission,
     askUser: cb.askUser,
     todos: loop.initialTodos ? [...loop.initialTodos] : [], // seed from the shared conv-level list (pipeline); copy so the run mutates its own array, setTodos pushes back
-    setTodos: loop.onTodosChange, // TodoWrite propagates updates to the shared conv-level list (continuous across a pipeline's experts)
+    // Inject this run's roleId so the writeback + live push are attributed to the writing expert (collab groups
+    // by owner). ctx.setTodos itself stays (todos)=>void — the TodoWrite tool calls it with just the list.
+    setTodos: loop.onTodosChange ? (todos) => loop.onTodosChange!(loop.roleId, todos) : undefined,
     sessionDir,
     services: registry,
     subAgents,
@@ -354,7 +356,7 @@ export interface DispatchedAgentInput {
   // the project checks under their default kit.
   toolNames?: readonly string[]
   initialTodos?: AgentContext['todos'] // shared conv-level todos seeded into the dispatched run (pipeline continuity)
-  onTodosChange?: AgentContext['setTodos'] // TodoWrite writes back here → the shared conv-level list
+  onTodosChange?: (roleId: string, todos: AgentContext['todos']) => void // TodoWrite writes back → shared conv-level list + per-role live push (roleId injected at ctx.setTodos)
 }
 
 export async function runDispatchedAgent(

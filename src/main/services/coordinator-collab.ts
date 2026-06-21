@@ -70,11 +70,47 @@ export async function runCollaboration(
     onServices: (services) => {
       if (project) cb.onServices?.(project.projectId, services.map((s) => ({ name: s.name, port: s.port, status: s.status })))
     },
+    // Per-expert live TodoWrite push → the coordinator UI's Tasks panel (groups by owner). cb.onTodos →
+    // coordinator.handler broadcastConvTodos(convId, roleId, todos) + recordTodos.
+    onTodos: (roleId, todos) => cb.onTodos?.(roleId, todos),
+    onExpertActive: (roleId, active) => cb.onExpertActive?.(roleId, active),
+    // Forward the expert's fine-grained stream to the coordinator UI. EXHAUSTIVE over AgentLlmEvent
+    // (agent/llm.ts) on purpose: the tool/sub_tool lifecycle must reach the renderer the SAME way the
+    // solo path forwards it (agent.handler onStream), so a collab expert's panel_examine fan-out and its
+    // Task sub-agents render their sub-tool cards instead of being silently dropped at this seam. The
+    // `never` default turns a newly-added stream event type into a compile error here rather than a
+    // silent collab-only UI gap — that omission (sub_tool_* fell through the old if/else) WAS the bug.
     onExpertStream: (roleId, ev) => {
-      if (ev.type === 'text') cb.onDelta(roleId, ev.delta)
-      else if (ev.type === 'tool_use_start') cb.onToolStart?.(roleId, ev.id, ev.name)
-      else if (ev.type === 'usage') cb.onUsage?.(roleId, ev.inputTokens, ev.outputTokens, ev.cachedTokens)
-      else if (ev.type === 'turn-final') cb.onTurnFinalUsage?.(ev.usage)
+      switch (ev.type) {
+        case 'text':
+          cb.onDelta(roleId, ev.delta)
+          break
+        case 'tool_use_start':
+          cb.onToolStart?.(roleId, ev.id, ev.name)
+          break
+        case 'sub_tool_start':
+        case 'sub_tool_done':
+          // Canonical sub-tool sink: coordinator.handler onToolEvent → coordinator:sub-tool:* → renderer
+          // PanelCard (anchored by roleId) — the SAME path the coordinator's own Gate-B panel uses.
+          // onExpertEvent routes AgentEvent tool activity here; the fine-grained sub_tool lifecycle
+          // (AgentLlmEvent, from a panel_examine fan-out or a Task sub-agent) must too.
+          cb.onToolEvent?.(roleId, ev)
+          break
+        case 'usage':
+          cb.onUsage?.(roleId, ev.inputTokens, ev.outputTokens, ev.cachedTokens)
+          break
+        case 'turn-final':
+          cb.onTurnFinalUsage?.(ev.usage)
+          break
+        case 'tool_use_input':
+          // Streaming tool-call JSON — not surfaced live (matches the solo path, agent.handler onStream,
+          // which also drops it). Explicit case so it stays a decision, not a silent omission.
+          break
+        default: {
+          const _exhaustive: never = ev
+          void _exhaustive
+        }
+      }
     },
     onExpertEvent: (roleId, ev) => {
       // Tool-card timeline (doc 19): persist each expert tool call onto the project as it streams, so the

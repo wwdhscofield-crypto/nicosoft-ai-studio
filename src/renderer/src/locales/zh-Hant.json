@@ -384,6 +384,7 @@
   "workspace.back": "返回",
   "workspace.resize": "拖曳調整寬度",
   "tasks.live": "目前",
+  "tasks.panels": "面板評審",
   "tasks.empty": "此對話尚無任務清單。",
   "tasks.noActive": "目前無進行中任務。",
   "tasks.services": "服務",

@@ -209,12 +209,26 @@ ${DEFAULT_REVIEW_SUBJECTS.map((d) => `- ${d.key}: ${d.focus}`).join('\n')}
 
 Return ONLY a JSON array of {"key":"<a dimension key from the list>","why":"<one line citing the specific change — a file:hunk or concrete behavior — that risks that dimension>"}. Choose a dimension ONLY when the diff genuinely risks it; an empty array [] is the right answer for a low-risk change. NEVER invent a key outside the list. Output ONLY the JSON array — no prose, no markdown fence.`
 
+// The THOROUGH selector — used ONLY by the explicit agent-tool entry (panel_examine called on purpose), never by
+// Gate B's auto-escalation (which stays conservative). It aligns the panel's FIND stage with the workflow's broad
+// multi-lens fan-out: a review was deliberately requested, so lay out the FULL panel of perspectives the code
+// warrants and probe each risk surface independently — bias toward breadth, not the single-dimension floor. NO
+// hardcoded minimum (the cap is still |enum|, the floor is the code's own triviality judgment): the model fans out
+// to what the code actually implicates. Same CLOSED list + same JSON contract as the conservative one — only the
+// disposition flips from "pick only on genuine risk" to "enumerate every plausible risk surface".
+const THOROUGH_SUBJECT_SELECT_INSTRUCTION = `A multi-perspective review was EXPLICITLY requested on the code below. Lay out the FULL panel of independent review SUBJECTS it warrants — one reviewer per distinct risk surface, each probing an axis BEYOND the standard correctness review. Judge from the TARGET FILE CONTENT and/or DIFF (what the code does and means), NOT from file names — a risk lives in the code's behavior (a token check that can be bypassed = security; a shared write without a lock = concurrency), not in what a file is called. Pick from this CLOSED list:
+${DEFAULT_REVIEW_SUBJECTS.map((d) => `- ${d.key}: ${d.focus}`).join('\n')}
+
+Enumerate EVERY dimension this code plausibly implicates — fan out BROADLY, like a real review panel sitting down with the file. Bias toward MORE perspectives, not fewer: for real code with any input-handling, I/O, state, concurrency, or external surface, a single dimension is almost never the whole picture. Return few ONLY when the target is genuinely trivial (a lone constant, a one-line pure helper with no I/O, state, or branching). NEVER fabricate a risk the code does not actually have, and NEVER invent a key outside the list — breadth means covering every REAL surface, not padding with imaginary ones.
+
+Return ONLY a JSON array of {"key":"<a dimension key from the list>","why":"<one line citing the specific code — a concrete behavior or file:hunk — that puts that dimension in scope>"}. Output ONLY the JSON array — no prose, no markdown fence.`
+
 // The subject trigger: an LLM reads the actual DIFF and picks the risk dimensions the change implicates — purely
 // content-driven, language-agnostic, no file-name heuristic (a path-token table assumed one project's naming
 // and broke on the next; see examine/subjects.ts). Keys are validated against the closed enum in CODE
 // (REVIEW_SUBJECT_KEYS) and deduped by key — the model proposes, code constrains. Best-effort: any failure →
 // [] (the step stays floor-only). Mirrors deriveAcceptanceCriteria's binding/chatOnce/try-catch shape.
-async function deriveSubjects(changedPaths: string[], diff: string, task: string, signal?: AbortSignal, content?: string): Promise<SelectedSubject[]> {
+async function deriveSubjects(changedPaths: string[], diff: string, task: string, signal?: AbortSignal, content?: string, thorough?: boolean): Promise<SelectedSubject[]> {
   const binding = rolesService.getBinding('coordinator')
   if (!binding?.endpointId || !binding.model) return []
   const ep = endpointRepo.getById(binding.endpointId)
@@ -228,8 +242,10 @@ async function deriveSubjects(changedPaths: string[], diff: string, task: string
     // File content fed alongside the diff: when the diff is thin/absent (agent-driven review, surgical change),
     // the selector judges risk dimensions from the code as it stands rather than starving on an empty diff.
     const contentBlock = content && content.trim() ? `\n\nTarget file content (the code as it stands):\n${content}` : ''
+    // thorough = the explicit agent-tool entry: fan out broadly (workflow-aligned FIND). Gate B passes no flag → conservative.
+    const instruction = thorough ? THOROUGH_SUBJECT_SELECT_INSTRUCTION : SUBJECT_SELECT_INSTRUCTION
     const text = await chatOnce(ep, apiKey, binding.model, [
-      { role: 'user', content: `${SUBJECT_SELECT_INSTRUCTION}\n\nTask:\n${task.slice(0, 4000)}\n\nChanged files:\n${fileList}\n\n${diffBlock}${contentBlock}` }
+      { role: 'user', content: `${instruction}\n\nTask:\n${task.slice(0, 4000)}\n\nChanged files:\n${fileList}\n\n${diffBlock}${contentBlock}` }
     ], { signal })
     const start = text.indexOf('[')
     const end = text.lastIndexOf(']')
@@ -270,9 +286,9 @@ const NO_RISK_PATH = /(\.md|\.markdown|\.txt|\.rst|\.adoc)$|(^|\/)(LICENSE|CHANG
 // risk dimensions even when the diff is thin or absent (the agent-driven panel entry has no diff; a surgical
 // change has a tiny one). Without it, an empty/thin diff starved the selector → it picked nothing → the panel
 // declined to fan out even when explicitly invoked. With the code in hand it judges from what the code does.
-export async function selectSubjects(changedPaths: string[], diff: string, task: string, signal?: AbortSignal, content?: string): Promise<SelectedSubject[]> {
+export async function selectSubjects(changedPaths: string[], diff: string, task: string, signal?: AbortSignal, content?: string, thorough?: boolean): Promise<SelectedSubject[]> {
   if (changedPaths.length === 0 || changedPaths.every((p) => NO_RISK_PATH.test(p))) return []
-  return deriveSubjects(changedPaths, diff, task, signal, content)
+  return deriveSubjects(changedPaths, diff, task, signal, content, thorough)
 }
 
 // --- D1 escalation judgment (panel-examine §2 D1 / §7 Phase 3) ------------------------------------

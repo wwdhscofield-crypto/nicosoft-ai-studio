@@ -384,6 +384,7 @@
   "workspace.back": "戻る",
   "workspace.resize": "ドラッグでサイズ変更",
   "tasks.live": "現在",
+  "tasks.panels": "パネルレビュー",
   "tasks.empty": "このチャットにはタスクリストがありません。",
   "tasks.noActive": "進行中のタスクはありません。",
   "tasks.services": "サービス",

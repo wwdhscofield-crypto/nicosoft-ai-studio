@@ -8,12 +8,47 @@ import * as rolesService from '../roles.service'
 import * as settingsService from '../settings.service'
 import { runRoleStep, type RunStepOptions } from '../coordinator-step'
 import { parallelExamineLimited } from './pool'
+import { chatOnce, endpointWithKey } from '../llm-once'
 
 const READER_SYSTEM =
   'You are an expert reader building a SHARED UNDERSTANDING of a codebase / document set. You are given ONE file. ' +
   'Read it (Read / Grep / Glob) and produce a CONCISE, factual summary: what this file is, its key responsibilities ' +
   'and exported structures, any notable logic or invariants, and how it fits the larger system. This is for ' +
   'understanding only — NO judgment, NO pass/fail, NO recommendations. Keep it tight (a few short paragraphs at most).'
+
+// The SYNTHESIZE stage (workflow alignment): the workflow's understand pattern is parallel-readers → synthesize,
+// NOT parallel-readers → concatenate. Each reader saw only its own file, so a raw concat is N blind summaries
+// stapled together — it can't see the cross-file connections. This turn combines them into ONE coherent map
+// (orientation + how the pieces fit + the shared structures no single-file read could surface). One-shot on the
+// reader's own model (chatOnce, the same seam as the selector turns); best-effort → null falls back to the concat.
+const UNDERSTAND_SYNTHESIS_INSTRUCTION =
+  'You are building ONE shared understanding from independent per-file readings of a codebase / document set. ' +
+  'Each summary below was written by a reader who saw ONLY its own file. Combine them into a SINGLE coherent map: ' +
+  'open with a short orientation (what this set of files IS as a whole); then explain how the pieces FIT — the ' +
+  'cross-file connections, data/control flow, dependencies, and shared structures that no single-file summary could ' +
+  'see; preserve the important per-file specifics (key responsibilities, exports, invariants) but organize them by ' +
+  'how they relate, not as a flat list. Factual and structural only — NO judgment, NO pass/fail, NO recommendations. ' +
+  'Keep it tight and well-structured (headings / short paragraphs).'
+
+// Combine the per-file reader summaries into one cross-file map. Runs on readerRoleId's model. Best-effort: a
+// missing binding / unreadable key / LLM fault → null, and runUnderstand falls back to the plain concatenation.
+async function synthesizeUnderstanding(readerRoleId: string, parts: UnderstandPart[], signal?: AbortSignal): Promise<string | null> {
+  const rb = rolesService.getBinding(readerRoleId)
+  if (!rb?.endpointId || !rb.model) return null
+  const epk = endpointWithKey(rb.endpointId)
+  if (!epk) return null
+  const body = parts.map((p) => `## ${p.path}\n${p.summary}`).join('\n\n')
+  try {
+    const out = await chatOnce(epk.ep, epk.key, rb.model, [
+      { role: 'user', content: `${UNDERSTAND_SYNTHESIS_INSTRUCTION}\n\nPer-file summaries:\n${body}` }
+    ], { signal })
+    const t = out.trim()
+    return t.length > 0 ? t : null
+  } catch (e) {
+    console.warn('[panel-examine] understand synthesis failed (concatenating instead):', e instanceof Error ? e.message : e)
+    return null
+  }
+}
 
 export interface UnderstandPart {
   path: string
@@ -65,8 +100,20 @@ export async function runUnderstand(callerRoleId: string, opts: RunStepOptions, 
     })
 
     const parts = (await parallelExamineLimited(endpointId, tasks)).filter((p): p is UnderstandPart => p != null)
-    opts.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_done', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'PanelExamine', isError: false, result: `${parts.length}/${paths.length} file(s) read` })
-    const map = parts.map((p) => `## ${p.path}\n${p.summary}`).join('\n\n')
+
+    // SYNTHESIZE (workflow-aligned final stage): combine the per-file summaries into ONE cross-file map instead of
+    // concatenating them. Rendered as a final row under the panel card (the card is still open here). Only worth a
+    // turn with ≥2 files (one file's summary IS the map). Best-effort → falls back to the concatenation.
+    let map = parts.map((p) => `## ${p.path}\n${p.summary}`).join('\n\n')
+    if (parts.length >= 2) {
+      const synthId = `panel-synth-${stepId}`
+      opts.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_start', toolUseId: synthId, parentToolId: panelId, name: 'Subject', input: { subject: 'synthesis', mode: 'understand' } })
+      const synth = await synthesizeUnderstanding(readerRoleId, parts, signal ?? opts.signal)
+      if (synth) map = synth
+      opts.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_done', toolUseId: synthId, parentToolId: panelId, name: 'Subject', isError: false, input: { subject: 'synthesis', mode: 'understand', verdict: 'synthesized' }, result: synth ? '(combined into one cross-file map)' : '(synthesis unavailable — concatenated per-file summaries)' })
+    }
+
+    opts.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_done', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'PanelExamine', isError: false, result: `${parts.length}/${paths.length} file(s) read${parts.length >= 2 ? ' + synthesized' : ''}` })
     console.log(`[panel-examine] step ${stepId}: understand read ${parts.length}/${paths.length} file(s)`)
     return { map, parts }
   } catch (e) {

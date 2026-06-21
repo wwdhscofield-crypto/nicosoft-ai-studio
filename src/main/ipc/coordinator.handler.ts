@@ -73,6 +73,7 @@ export function registerCoordinatorHandlers(): void {
             const ev: CoordinatorStepStart = { streamId, roleId, dispatch, model, segmentKind }
             send('coordinator:step:start', ev)
           },
+          onExpertActive: (roleId, active) => send('coordinator:expert:active', { streamId, roleId, active }),
           onDelta: (roleId, text) => {
             const ev: CoordinatorStepDelta = { streamId, roleId, text }
             send('coordinator:delta', ev)
@@ -98,9 +99,9 @@ export function registerCoordinatorHandlers(): void {
               usage.cacheCreationInputTokens,
             ),
           onToolImage: (attachment) => broadcastConvImage(sender, input.convId, attachment),
-          onTodos: (todos) => {
-            broadcastConvTodos(sender, input.convId, todos)
-            workspaceTasks.recordTodos(input.convId, todos) // Tasks-history phase capture — collab seam (design §5 P30); convId is the top-level conv
+          onTodos: (roleId, todos) => {
+            broadcastConvTodos(sender, input.convId, roleId, todos)
+            workspaceTasks.recordTodos(input.convId, roleId, todos) // Tasks-history phase capture — collab seam (design §5 P30); convId is the top-level conv
           },
           // Agent-dispatched experts run a tool-using loop — forward their tool activity + approvals,
           // tagged with roleId, to the coordinator UI (doc 19 §11 phase 2). Mirrors agent.handler's bridge.

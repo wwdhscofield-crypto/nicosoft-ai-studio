@@ -217,9 +217,9 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
         // Flynn's list carries into Shuri's run and Shuri updates the SAME items — continuous team progress.
         // Also pushed live to the workspace Tasks panel (cb.onTodos) the moment TodoWrite executes.
         initialTodos: pipelineTodos.get(convId),
-        onTodosChange: (todos) => {
-          pipelineTodos.set(convId, todos)
-          cb.onTodos?.(todos)
+        onTodosChange: (roleId, todos) => {
+          pipelineTodos.set(convId, todos) // sequential cross-expert continuity: seed is by convId, display/push is by roleId
+          cb.onTodos?.(roleId, todos)
         }
       },
       agentCb,

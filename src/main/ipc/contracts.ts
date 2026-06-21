@@ -145,6 +145,7 @@ export interface ConvUsage {
 // (a 64K-escalated turn keeps the panel frozen for minutes otherwise — dogfood round11).
 export interface ConvTodos {
   convId: string
+  roleId: string // whose list — experts collaborate on one conv, so the Tasks panel groups todos by owner
   todos: { content: string; status: string }[]
 }
 // Live background services (start_service) for a conversation, pushed the moment a service starts / becomes
@@ -380,6 +381,13 @@ export interface CoordinatorStepStart {
   dispatch: string[] | null
   model: string
   segmentKind?: string // closure-loop: 'verifier' = this step streams as an independent "· Verifier" segment
+}
+// A collab expert entered (active=true) / left (active=false) a turn batch. Toggles the parked-readout flag on
+// its bubble so a PARKED expert (waiting between turns) stops showing the live "Thinking…" readout.
+export interface CoordinatorExpertActive {
+  streamId: string
+  roleId: string
+  active: boolean
 }
 export interface CoordinatorStepDelta {
   streamId: string
@@ -618,6 +626,7 @@ export interface FsReadForViewResult {
 export interface WorkspacePhaseDto {
   id: number
   createdAt: number
+  owner?: string // the role whose phase this is (collab) — used to hand a completed list off from Live → History
   items: { content: string; status: string }[]
   setHash: string
   completedAt: number
@@ -626,11 +635,21 @@ export interface WorkspaceExamineFindingDto {
   axis: string
   verdict: 'pass' | 'fail' | 'false-positive'
   feedback: string
+  why?: string // why this dimension was selected (the trigger reason) — shown in the reconstructed card
+  refuted?: boolean // a FAIL the skeptics disproved (false-positive)
+  refuteTally?: string // "k/N" skeptics that disproved — drives the rich card's nested refute line on reload
 }
+// A persisted panel_examine review. Carries the FULL panel (owner + roster + per-subject feedback/refute) so the
+// rich PanelCard can be RECONSTRUCTED from history and survive reload — the live card is a session-only sub-tool
+// stream, this is its durable home (Tasks panel, grouped by owner). `mode`/`roster`/`owner` are optional so
+// pre-existing rows (summary-only) still parse.
 export interface WorkspaceExamineDto {
   id: number
   createdAt: number
+  owner?: string | null // the expert that ran panel_examine — the card is grouped under it (per-owner, "不要串")
+  mode?: 'review' | 'understand'
   subject: string
+  roster?: string[] // the selected subject keys in order (the card's stable row roster)
   findings: WorkspaceExamineFindingDto[]
   message: string
   examinedAt: number

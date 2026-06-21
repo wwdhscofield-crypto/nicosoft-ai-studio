@@ -9,7 +9,6 @@ import { Avatar, NameChip } from '@/components/primitives'
 import type { ChatMessage, MsgBlock, ToolCall } from '@/stores/chat'
 import { ServerBubble, Sources } from '@/components/tool-bubble'
 import { ToolRun } from '@/components/tool-run'
-import { PanelCard } from '@/components/panel-card'
 import { Markdown } from '@/components/markdown'
 import { useT } from '@/stores/locale'
 import type { Expert } from '@/types'
@@ -48,7 +47,10 @@ const TOOL_ACTIVITY: Record<string, string> = {
   AskUserQuestion: 'Waiting'
 }
 function segmentActivity(tools?: ToolCall[]): string {
-  const running = tools?.find((t) => t.status === 'running')
+  // findLast, NOT find: the readout reflects the MOST RECENT activity. With find (first-running) a tool whose
+  // 'running' status lingered earlier in the turn masks the tool actually executing now (e.g. a long panel_examine
+  // still open while the agent has moved on to a Write → the readout should say "Writing", not the stale verb).
+  const running = tools?.findLast((t) => t.status === 'running')
   if (!running) return 'Thinking'
   return TOOL_ACTIVITY[running.name] ?? 'Working'
 }
@@ -176,11 +178,19 @@ function RunBody({ msgs, onOpenImage, live }: { msgs: ChatMessage[]; onOpenImage
       }
       const tool = tools.find((tl) => tl.id === b.id)
       if (!tool) return
-      // panel_examine renders as its own dedicated card (§4.4), so it BREAKS the tool fold like text does —
-      // never folded into the generic count summary. Every other tool keeps folding into the ToolRun.
-      if (tool.name === 'PanelExamine') {
-        flushFold(false)
-        out.push(<PanelCard key={`pe${tool.id}`} tool={tool} />)
+      // The PanelExamine card (subjects / verdicts / refute) now lives in the Workspace Tasks panel, grouped by
+      // its owner — NOT inline. Skip it here.
+      if (tool.name === 'PanelExamine') return
+      // panel_examine, like its review card, behaves like a todo: WHILE RUNNING show a live "Running a panel
+      // review" line (flush the done history FIRST so a minutes-long run can't keep the fold "live" and hide it —
+      // a live ToolRun renders only the running gerund, not the done tools before it). Once DONE, OMIT it: the
+      // completed review has moved to the Tasks panel → History, so a lingering "Used panel_examine" line in chat
+      // is redundant. The surrounding history folds normally around the gap.
+      if (tool.name === 'panel_examine') {
+        if (tool.status === 'running') {
+          flushFold(false)
+          out.push(<ToolRun key={`pe${tool.id}`} tools={[tool]} live={live} />)
+        }
         return
       }
       fold.push(tool)
@@ -272,7 +282,11 @@ export function ChatSegment({
   // segment can still carry a running sub-tool — Gate B's verifier/fail-handler attach to the
   // implementer's FINISHED step — and resurrecting the timer/token readout off that made two segments
   // look simultaneously live (dogfood 2026-06-11). The sub-tool card still shows its own activity.
-  const segStreaming = pendingLive || msgs.some((m) => m.streaming)
+  // A PARKED collab expert (finished its turn, waiting between turns) shows NO live readout — gate the whole
+  // thing on this segment's last message being parked, so the conv-level `pendingLive` (true while ANOTHER
+  // expert is still active) can't keep a parked expert's "Thinking…" alive. Solo/single has no parked flag →
+  // `!last.parked` is always true → behaviour unchanged.
+  const segStreaming = !last.parked && (pendingLive || msgs.some((m) => m.streaming))
   useEffect(() => {
     if (windowed && bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
   }, [last.text, last.tools?.length, last.servers?.length, last.streaming, msgs.length, windowed])

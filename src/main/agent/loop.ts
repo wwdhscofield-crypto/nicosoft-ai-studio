@@ -317,7 +317,10 @@ export async function* runAgent(
         // askUser nulled (like the headless scheduler): a sub-agent has no interactive surface — without this
         // it would inherit the parent's live askUser and could pop a blocking question dialog to the real user,
         // contradicting SUBAGENT_SYSTEM's "no interactive user to ask". Nulled → AskUserQuestion errors cleanly.
-        ctx: { ...ctx, signal, readFileState: new Map(), todos: [], spawnSubAgent: undefined, panel: undefined, askUser: undefined },
+        // setTodos nulled (alongside panel/spawnSubAgent/askUser): a sub-agent's TodoWrite is a private, run-local
+        // checklist — without this it inherits the parent's setTodos and broadcasts the child's one-shot todos into
+        // the PARENT conversation's live Tasks list (overwriting the real list / prematurely archiving a phase).
+        ctx: { ...ctx, signal, readFileState: new Map(), todos: [], setTodos: undefined, spawnSubAgent: undefined, panel: undefined, askUser: undefined },
         maxTokens,
         maxTurns,
         onStream: emitChildStream(parentToolId),
@@ -367,7 +370,9 @@ export async function* runAgent(
         tools: asyncChildTools,
         // askUser nulled (see the Task spawn above): a background sub-agent has no interactive surface, and
         // under agent_batch several run concurrently — nulling prevents a child popping a blocking user dialog.
-        ctx: { ...ctx, signal, readFileState, todos, spawnSubAgent: undefined, subAgents: undefined, panel: undefined, askUser: undefined },
+        // setTodos nulled (see the Task spawn above): a background sub-agent's TodoWrite stays run-local and must
+        // never broadcast into the parent conversation's live Tasks list.
+        ctx: { ...ctx, signal, readFileState, todos, setTodos: undefined, spawnSubAgent: undefined, subAgents: undefined, panel: undefined, askUser: undefined },
         maxTokens,
         maxTurns,
         onStream: emitChildStream(parentToolId, subAgentId),

@@ -75,7 +75,7 @@ async function readTargetContent(cwd: string | undefined, paths: readonly string
 // the caller supplies an explicit { changed, diff } target. The reviewer role is NOT overridden — chooseVerifierRole
 // is deterministic, so the bridge validates "a bound reviewer ≠ caller exists" (§4.2) and this re-picks the IDENTICAL
 // role. Gate B omits override → the git-derived target, byte-identical.
-export async function runPanelExamine(roleId: string, opts: RunStepOptions, gate: { originalPrompt: string; approvedPlan?: string; acceptance?: string[] }, implementationText: string, stepId: string, baseRef: string, baseChanged: string[], implementerFiles: readonly WrittenFile[], signal?: AbortSignal, override?: { target?: { changed: string[]; diff: string } }): Promise<SubjectFinding[]> {
+export async function runPanelExamine(roleId: string, opts: RunStepOptions, gate: { originalPrompt: string; approvedPlan?: string; acceptance?: string[] }, implementationText: string, stepId: string, baseRef: string, baseChanged: string[], implementerFiles: readonly WrittenFile[], signal?: AbortSignal, override?: { target?: { changed: string[]; diff: string }; explicit?: boolean }): Promise<SubjectFinding[]> {
   // Card id is deterministic from stepId (gate-b re-emits onto it after closure). `panelOpened` guards the
   // error path: if anything throws AFTER the parent sub_tool_start, the catch MUST close it (else the card
   // spins 'running' forever — no turn-end net flips a lingering running tool on a finished segment).
@@ -105,7 +105,9 @@ export async function runPanelExamine(roleId: string, opts: RunStepOptions, gate
     // Gate B (a surgical change has a thin diff). Without it the selector starved on an empty/thin diff and
     // declined to fan out even when the review was explicitly invoked. Read-only, capped.
     const content = await readTargetContent(opts.cwd, changed)
-    const selected = await selectSubjects(changed, diff, gate.originalPrompt, signal, content)
+    // override.explicit = the agent-tool entry asked for a real review → the THOROUGH selector (broad multi-lens
+    // fan-out, workflow-aligned FIND). Gate B passes no override → conservative selector, byte-identical.
+    const selected = await selectSubjects(changed, diff, gate.originalPrompt, signal, content, override?.explicit)
     if (selected.length === 0) return []
 
     // All subjects borrow the ONE independent reviewer role (verifierRoleId, hoisted above) for their

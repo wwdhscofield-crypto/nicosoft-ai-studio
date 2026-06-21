@@ -10,9 +10,10 @@ import * as rolesService from '../roles.service'
 import * as settingsService from '../settings.service'
 import * as workspaceTasks from '../workspace-tasks.service'
 import { chooseVerifierRole } from './verifier'
-import { runPanelExamine } from './panel'
+import { runPanelExamine, type SubjectFinding } from './panel'
 import { runUnderstand } from './understand'
 import { gitHead, diffSince } from './diff'
+import { chatOnce, endpointWithKey } from '../llm-once'
 import type { RunStepOptions } from '../coordinator-step'
 import type { CoordinatorCallbacks } from '../coordinator-types'
 import type { AgentEvent } from '../../agent/loop'
@@ -36,6 +37,40 @@ export interface PanelHandleDeps {
 const firstLine = (s: string): string => {
   const l = (s || '').split('\n').map((x) => x.trim()).find(Boolean) ?? ''
   return l.length > 160 ? l.slice(0, 158) + '…' : l
+}
+
+// Review SYNTHESIZE stage (panel-examine §7 / workflow alignment): the workflow ends find→verify with a synthesize
+// agent that dedups the confirmed findings and writes the final report. The panel's per-subject rows are the
+// raw findings; this lead-reviewer turn combines them across dimensions into ONE actionable report. One-shot on
+// the reviewer's own model (chatOnce — same seam as the selector turns), best-effort: any failure → null and the
+// caller falls back to the flat per-dimension lines. Runs AFTER runPanelExamine closed its card, so it's invisible
+// compute whose OUTPUT becomes the tool result the engineer reads (no floating card).
+const REVIEW_SYNTHESIS_INSTRUCTION = `You are the LEAD REVIEWER. An independent panel each examined the SAME code from ONE assigned risk dimension and returned a verdict. Synthesize their verdicts into ONE final, actionable review report for the engineer who wrote the code.
+
+- De-duplicate: if several dimensions flag the SAME underlying issue, state it ONCE.
+- Drop anything marked FALSE-POSITIVE (a skeptic majority already disproved it) — never resurrect it.
+- Lead with the real defects, most severe first. For each: WHAT is wrong, WHERE (file:line if a reviewer cited one), WHY it matters, and a concrete FIX.
+- If every dimension passed, say so plainly and list what was checked so the engineer knows the coverage.
+- Be tight and concrete — no preamble, no restating these instructions. This goes straight back to the engineer.`
+
+async function synthesizeReview(reviewer: string, paths: string[], produced: SubjectFinding[], signal: AbortSignal): Promise<string | null> {
+  const rb = rolesService.getBinding(reviewer)
+  if (!rb?.endpointId || !rb.model) return null
+  const epk = endpointWithKey(rb.endpointId)
+  if (!epk) return null
+  const verdicts = produced
+    .map((f) => `## ${f.key} — ${f.refuted ? 'FALSE-POSITIVE (refuted by skeptics)' : f.passed ? 'PASS' : 'FAIL'}\n${(f.feedback || '').slice(0, 2400)}`)
+    .join('\n\n')
+  try {
+    const out = await chatOnce(epk.ep, epk.key, rb.model, [
+      { role: 'user', content: `${REVIEW_SYNTHESIS_INSTRUCTION}\n\nTarget file(s): ${paths.join(', ')}\n\nThe panel's per-dimension verdicts:\n${verdicts}` }
+    ], { signal })
+    const t = out.trim()
+    return t.length > 0 ? t : null
+  } catch (e) {
+    console.warn('[panel-examine] review synthesis failed (falling back to flat findings):', e instanceof Error ? e.message : e)
+    return null
+  }
 }
 
 export function createPanelHandle(deps: PanelHandleDeps): PanelHandle {
@@ -116,7 +151,7 @@ export function createPanelHandle(deps: PanelHandleDeps): PanelHandle {
         [],
         [],
         deps.signal,
-        { target: { changed: paths, diff } }
+        { target: { changed: paths, diff }, explicit: true }
       )
 
       const produced = findings.filter((f) => f.produced)
@@ -133,17 +168,27 @@ export function createPanelHandle(deps: PanelHandleDeps): PanelHandle {
       const flagged = produced.filter((f) => !f.passed && !f.refuted)
       const refuted = produced.filter((f) => f.refuted)
       const passed = produced.filter((f) => f.passed)
+      const header = `panel_examine (review by ${reviewer}) ran ${produced.length} reviewer perspective(s): ${passed.length} pass, ${flagged.length} flagged${refuted.length ? `, ${refuted.length} refuted as false-positive` : ''}.`
+      // SYNTHESIZE (workflow-aligned final stage): one lead-reviewer turn dedups across dimensions + writes the
+      // actionable report. Best-effort — on any failure fall back to the flat per-dimension lines.
+      const report = await synthesizeReview(reviewer, paths, produced, deps.signal)
       const lines = produced.map((f) => `- ${f.key}: ${f.refuted ? 'FALSE-POSITIVE (refuted by skeptics)' : f.passed ? 'PASS' : 'FAIL'} — ${firstLine(f.feedback)}`)
-      const message = `panel_examine (review by ${reviewer}) ran ${produced.length} reviewer perspective(s): ${passed.length} pass, ${flagged.length} flagged${refuted.length ? `, ${refuted.length} refuted as false-positive` : ''}.\n${lines.join('\n')}`
+      const message = report ? `${header}\n\n${report}` : `${header}\n${lines.join('\n')}`
       // Workspace Tasks history (design §5 P13/P14): this is the single write point — convId + structured
       // findings are both in scope here. Gated to ok + non-empty findings (the early returns above never
       // reach here), so a disabled/failed/empty examine never persists a phantom all-clear.
       workspaceTasks.recordExamine(deps.convId, {
+        owner: deps.callerRoleId, // the expert that ran panel_examine → the card is grouped under it in Tasks
+        mode: 'review',
         subject: paths.join(', '),
+        roster: produced.map((f) => f.key), // stable row roster for the reconstructed card
         findings: produced.map((f) => ({
           axis: f.key,
           verdict: f.refuted ? 'false-positive' : f.passed ? 'pass' : 'fail',
-          feedback: firstLine(f.feedback)
+          feedback: f.feedback.slice(0, 4000), // FULL feedback (capped) so the rebuilt card's View-full works on reload
+          why: f.why || undefined,
+          refuted: f.refuted,
+          refuteTally: f.refuteTotal ? `${f.refuteYes ?? 0}/${f.refuteTotal}` : undefined
         })),
         message,
         examinedAt: Date.now()

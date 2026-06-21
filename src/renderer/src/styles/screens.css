@@ -1353,6 +1353,28 @@
 .ws-task { display: flex; align-items: flex-start; gap: 8px; }
 .ws-task-label { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text-2); line-height: 1.4; overflow-wrap: anywhere; word-break: break-word; }
 .ws-task-label.done { color: var(--text-4); text-decoration: line-through; }
+/* Collab per-role todo group: its OWN flex column so the rows keep the 8px gap. The .ws-tasks gap only
+   reaches its DIRECT children (the groups); these task rows are nested one level down, so without this the
+   rows in a group rendered stuck together. Owner-header margin reset → owner→row gap matches row→row. */
+.ws-todo-group { display: flex; flex-direction: column; gap: 8px; }
+.ws-todo-group .ws-svc-owner { margin: 0; }
+
+/* Panel reviews (panel_examine) moved into the Tasks panel — per-owner groups (like todos), in BOTH the live
+   "Panel reviews" section (running) and History (done). The pe-card is made adaptive for the narrow column:
+   scope on .ws-panel-group (NOT .ws-panels) so it applies in History too — otherwise a completed card's header
+   (agents · X/N · passed · failed) overflowed and got clipped by the card's overflow:hidden. The inline meta
+   WRAPS to new lines instead of clipping; the chevron flows at the end (no margin-left:auto push) so a wrap is
+   clean. The card body (subject rows / refute / View-full payload) already ellipsises + wraps on its own. */
+.ws-panels { display: flex; flex-direction: column; gap: 8px; margin-top: 22px; }
+.ws-panel-group { display: flex; flex-direction: column; gap: 6px; }
+.ws-panel-group .ws-svc-owner { margin: 0; }
+.ws-panel-group .pe-card { margin: 0; }
+.ws-panel-group .pe-head { flex-wrap: wrap; row-gap: 3px; column-gap: 5px; }
+.ws-panel-group .pe-chev { margin-left: 0; }
+/* In the live "Panel reviews" section the .ws-panels flex `gap` separates groups; History is NOT a gap container
+   (its cards stack via margin-bottom), so a done panel group needs its own bottom margin or it sticks to the
+   phase/service card below it ("卡片粘一起了"). Match the .ws-hist-card 8px so History spacing stays uniform. */
+.ws-history .ws-panel-group { margin-bottom: 8px; }
 
 .ws-empty { font-size: 12px; color: var(--text-4); line-height: 1.5; }
 

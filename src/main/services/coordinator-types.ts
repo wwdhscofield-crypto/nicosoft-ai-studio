@@ -53,7 +53,10 @@ export interface CoordinatorCallbacks {
   onToolEvent?: (roleId: string, ev: AgentEvent | AgentLlmEvent) => void
   // A dispatched expert's TodoWrite executed (mid-turn) — live push of the pipeline-shared list so the
   // workspace Tasks panel tracks progress without waiting for the step's turn to settle.
-  onTodos?: (todos: { content: string; status: string }[]) => void
+  onTodos?: (roleId: string, todos: { content: string; status: string }[]) => void
+  // A collab expert entered (active=true) / left (active=false) a turn batch — toggles its bubble's live
+  // readout so a PARKED expert (waiting between turns) stops showing "Thinking…".
+  onExpertActive?: (roleId: string, active: boolean) => void
   // A dispatched expert's tool generated an image (Georgia's ns_generate_image) — surface it live, the same
   // nsai-media:// ref the loop persisted on the step message. Only image-capable agent roles fire it.
   onToolImage?: (attachment: MessageAttachmentDto) => void

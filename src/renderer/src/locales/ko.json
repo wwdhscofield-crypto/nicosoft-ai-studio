@@ -384,6 +384,7 @@
   "workspace.back": "뒤로",
   "workspace.resize": "드래그하여 크기 조절",
   "tasks.live": "현재",
+  "tasks.panels": "패널 검토",
   "tasks.empty": "이 대화에는 작업 목록이 없습니다.",
   "tasks.noActive": "진행 중인 작업이 없습니다.",
   "tasks.services": "서비스",

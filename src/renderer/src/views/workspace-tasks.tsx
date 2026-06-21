@@ -9,13 +9,15 @@
    History = completed-phase snapshots + panel_examine verdicts + exited services, read from SQLite (never
    re-derived from the transcript) and refreshed on tasks:historyChanged. Clear hides history.
    ============================================================ */
-import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { Icons } from '@/components/icons'
 import { useChat } from '@/stores/chat'
+import { PanelCard } from '@/components/panel-card'
 import { useT } from '@/stores/locale'
 import { useConvTodos } from '@/stores/conv-todos'
 import { useConvServices } from '@/stores/conv-services'
 import { useAllExperts } from '@/lib/all-experts'
+import type { ToolCall } from '@/stores/chat'
 import type { WorkspaceTaskHistory, WorkspacePhase, WorkspaceExamine, WorkspaceService, ServiceInfo } from '@/lib/api'
 
 const TASK: Record<string, { cls: string; labelKey: string }> = {
@@ -23,7 +25,6 @@ const TASK: Record<string, { cls: string; labelKey: string }> = {
   in_progress: { cls: 'doing', labelKey: 'tasks.statusDoing' },
   completed: { cls: 'done', labelKey: 'tasks.statusDone' }
 }
-const VERDICT: Record<string, string> = { pass: 'pass', fail: 'fail', 'false-positive': 'fp' }
 interface WsTask {
   content: string
   status: string
@@ -48,6 +49,48 @@ function fmtDur(ms: number): string {
   return `${Math.round(m / 60)}h`
 }
 
+// Rebuild a PanelExamine ToolCall from a PERSISTED examine row so the SAME rich PanelCard renders a completed
+// review after reload — the live card is a session-only sub-tool stream, this is its durable form. The verdict is
+// mapped back to what PanelCard.subjectState reads: pass / false-positive ride input.verdict; a FAIL rides
+// status:'error' (subjectState falls to status when input.verdict isn't one of its enum values). refuteTally
+// drives the nested skeptic line. Synthetic, stable ids ('hist-pe-…') so React keys don't collide with live tools.
+function examineToPanelTool(ex: WorkspaceExamine): ToolCall {
+  const findings = ex.findings ?? []
+  const roster = ex.roster?.length ? ex.roster : findings.map((f) => f.axis)
+  return {
+    id: 'hist-pe-' + ex.id,
+    name: 'PanelExamine',
+    status: 'done',
+    input: { mode: ex.mode ?? 'review', subjects: roster },
+    subTools: findings.map((f, i) => ({
+      id: `hist-pe-${ex.id}-${i}`,
+      name: 'Subject',
+      status: f.verdict === 'fail' ? 'error' : 'done',
+      input: { subject: f.axis, verdict: f.verdict, refuted: f.refuted, refuteTally: f.refuteTally, why: f.why },
+      result: f.feedback
+    }))
+  }
+}
+
+// One owner's panel_examine cards (shared by the live "Panel reviews" section and the History section). Owner
+// header shown whenever a real expert owns it — even a single owner in a collab — so attribution is never lost
+// ("不要串"); solo (no expertId) renders headerless.
+function PanelGroup({ owner, panelTools, expertsById }: { owner: string; panelTools: ToolCall[]; expertsById: ReturnType<typeof useAllExperts>['byId'] }): ReactElement {
+  return (
+    <div className="ws-panel-group">
+      {owner ? (
+        <div className="ws-svc-owner">
+          <span className="ws-svc-owner-dot" style={{ background: expertsById[owner]?.color ?? 'var(--text-3)' }} />
+          <span className="ws-svc-owner-name">{expertsById[owner]?.name ?? owner}</span>
+        </div>
+      ) : null}
+      {panelTools.map((tl) => (
+        <PanelCard key={tl.id} tool={tl} />
+      ))}
+    </div>
+  )
+}
+
 export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): ReactElement {
   const t = useT()
   // — Live tasks — read from the app-lifetime conv:todos subscription (stores/conv-todos), which keeps
@@ -57,16 +100,34 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
   // fallback couldn't recover in-flight state (the transcript hasn't settled mid-turn). Reading the cache
   // shows current items (completed / in-progress / pending) immediately. Only a conversation with no live
   // push this session (e.g. reopening an old chat) falls back to the transcript-derived list below.
-  const liveTodos = useConvTodos((s) => (activeConv ? s.byConv[activeConv] : undefined))
+  const liveByRole = useConvTodos((s) => (activeConv ? s.byConv[activeConv] : undefined))
+  const flatLive = liveByRole ? Object.values(liveByRole).flat() : undefined
   const [fallbackTasks, setFallbackTasks] = useState<WsTask[]>([])
+  // Reset the transcript fallback SYNCHRONOUSLY when the conversation switches, so a frame of the previous
+  // conv's list never paints (the post-paint effect below would clear it one frame late — cross-conv dirty
+  // frame). The guarded set-during-render is the React-sanctioned "adjust state on prop change" pattern.
+  const prevConvRef = useRef(activeConv)
+  if (prevConvRef.current !== activeConv) {
+    prevConvRef.current = activeConv
+    if (fallbackTasks.length) setFallbackTasks([])
+  }
   const [history, setHistory] = useState<WorkspaceTaskHistory>(EMPTY)
   const msgCount = useChat((s) => (activeConv ? (s.byConversation[activeConv]?.length ?? 0) : 0))
   const streaming = useChat((s) => (activeConv ? !!s.streaming[activeConv] : false))
-  const tasks: WsTask[] = liveTodos ?? fallbackTasks
-  // Once every item is completed the run is finished and the same list is archived into History below, so
-  // collapse the Live section to an empty state rather than duplicating the finished checklist against the
-  // History card. Any mixed list (a pending / in-progress item remains) still renders in full.
-  const allDone = tasks.length > 0 && tasks.every((tk) => tk.status === 'completed')
+  const tasks: WsTask[] = flatLive ?? fallbackTasks
+  // A completed list leaves Live ONLY once its phase has been archived to History — so the Live→History handoff is
+  // ATOMIC (it leaves Live in the SAME render that History gains it). Without this, the 1.5s real-time-archive
+  // debounce left a window where a finished list was in NEITHER section and the panel flashed ("消失闪一下"). Match
+  // a live list to its archived phase by owner + item contents.
+  const inHistory = (roleId: string, ts: WsTask[]): boolean =>
+    history.phases.some((p) => (p.owner ?? '') === (roleId ?? '') && p.items.length === ts.length && p.items.every((it, i) => it.content === ts[i].content))
+  // Collapse the Live section only when there is nothing active to show: every (non-empty) list is complete AND
+  // already archived. A just-completed list keeps showing until its phase lands in History (no flash); a mixed
+  // list (a pending / in-progress item remains) always renders in full. Fallback (transcript-derived solo list,
+  // no role) collapses on plain all-complete.
+  const allDone = tasks.length > 0 && (liveByRole
+    ? Object.entries(liveByRole).filter(([, ts]) => ts.length > 0).every(([roleId, ts]) => ts.every((tk) => tk.status === 'completed') && inHistory(roleId, ts))
+    : tasks.every((tk) => tk.status === 'completed'))
 
   // — Live background services — same app-lifetime cache pattern as todos (stores/conv-services), so the
   // panel shows the current set the moment it opens. Only active (starting/ready) services are here.
@@ -76,12 +137,71 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
   const isGroup = useChat((s) => s.conversations.find((c) => c.id === activeConv)?.kind === 'multi')
   const { byId: expertsById } = useAllExperts()
   const groups = groupByOwner(liveServices)
+  // Collab: per-role todo groups for the ACTIVE roles. A role whose list is all-complete has moved to History
+  // (real-time archival), so it's filtered out of Live. isCollab = more than one role ever wrote todos here.
+  const isCollab = liveByRole ? Object.keys(liveByRole).length > 1 : false
+  const todoGroups: [string, WsTask[]][] = liveByRole
+    ? Object.entries(liveByRole).filter(([roleId, ts]) => ts.length > 0 && (!ts.every((tk) => tk.status === 'completed') || !inHistory(roleId, ts)))
+    : []
+
+  // — Panel reviews (panel_examine) — moved OUT of the chat segment (its tall body overflowed the folded 160px
+  // window and swallowed the expert's history) into here, grouped by the expert that OWNS it — like the per-role
+  // todos, never mixed across experts ("不要串"). TWO sources, handed off at completion exactly like todos
+  // (live → history):
+  //   • RUNNING: the live sub-tool stream from the chat store (real-time subjects/verdicts). Keyed on a STABLE
+  //     SIGNATURE (panel id + per-subtool status) so the Tasks panel re-renders only when a panel actually
+  //     appears / advances / finishes, NOT on every text token of the turn (perf).
+  //   • DONE: rebuilt from the PERSISTED history examine rows (examineToPanelTool) so the rich card SURVIVES
+  //     RELOAD — its durable home. A completed panel leaves RUNNING and reappears from history → no double-show.
+  const panelSig = useChat((s) => {
+    const ms = activeConv ? s.byConversation[activeConv] : undefined
+    let sig = ''
+    for (const m of ms ?? []) {
+      if (m.role !== 'assistant' || !m.tools) continue
+      for (const tl of m.tools) {
+        if (tl.name === 'PanelExamine') sig += `${m.expertId ?? ''}~${tl.id}~${tl.status}~${(tl.subTools ?? []).map((st) => st.status).join('')};`
+      }
+    }
+    return sig
+  })
+  // panel_examine behaves EXACTLY like todos: a RUNNING review shows in the live "Panel reviews" section; once it
+  // COMPLETES it moves to History. Both per-owner ("不要串").
+  //   • RUNNING (live "Panel reviews"): chat-store PanelExamine tools with status:'running'.
+  //   • DONE (History): in-session, the chat-store tool flips to status:'done' → it moves from one Map to the other
+  //     in the SAME re-render (atomic, no flicker — no IPC round-trip). On RELOAD the chat store has no synthetic
+  //     PanelExamine, so done panels are rebuilt from the PERSISTED examines instead (live XOR reloaded → never
+  //     shown twice).
+  const { runningPanels, donePanels } = useMemo<{ runningPanels: [string, ToolCall[]][]; donePanels: [string, ToolCall[]][] }>(() => {
+    const running = new Map<string, ToolCall[]>()
+    const done = new Map<string, ToolCall[]>()
+    const push = (map: Map<string, ToolCall[]>, owner: string, tl: ToolCall): void => {
+      const arr = map.get(owner)
+      if (arr) arr.push(tl)
+      else map.set(owner, [tl])
+    }
+    const ms = activeConv ? useChat.getState().byConversation[activeConv] : undefined
+    let live = 0
+    for (const m of ms ?? []) {
+      if (m.role !== 'assistant' || !m.tools) continue
+      for (const tl of m.tools) {
+        if (tl.name !== 'PanelExamine') continue
+        live++
+        push(tl.status === 'running' ? running : done, m.expertId ?? '', tl)
+      }
+    }
+    if (live === 0) {
+      for (const ex of [...history.examines].sort((a, b) => (b.examinedAt || b.createdAt) - (a.examinedAt || a.createdAt))) {
+        push(done, ex.owner ?? '', examineToPanelTool(ex))
+      }
+    }
+    return { runningPanels: [...running], donePanels: [...done] }
+  }, [panelSig, activeConv, history.examines])
 
   // Transcript-derived fallback — only when this session has no live push for the conv (liveTodos
   // undefined). Keyed on msgCount / streaming edges so reopening an old chat restores its last list. Once
   // a live push exists the effect clears the fallback and the cached live list wins.
   useEffect(() => {
-    if (!activeConv || liveTodos) {
+    if (!activeConv || liveByRole) {
       setFallbackTasks([])
       return
     }
@@ -103,7 +223,7 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
     return () => {
       cancelled = true
     }
-  }, [activeConv, msgCount, streaming, liveTodos])
+  }, [activeConv, msgCount, streaming, liveByRole])
 
   // — History (SQLite; refreshed when a phase/examine/service is archived) —
   const loadHistory = useRef<(() => void) | null>(null)
@@ -134,14 +254,14 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
     void window.api.tasks.clearHistory(activeConv).then(() => setHistory(EMPTY))
   }
 
-  // Merge phases + examines + exited services into one newest-first timeline.
+  // Merge phases + exited services into one newest-first timeline. panel_examine reviews are NOT here — they
+  // render as their own rich PanelCard in the "Panel reviews" section above (rebuilt from these same persisted
+  // examine rows), so a completed review shows ONCE (not also as a summary card here).
   const timeline: (
     | { kind: 'phase'; row: WorkspacePhase }
-    | { kind: 'examine'; row: WorkspaceExamine }
     | { kind: 'service'; row: WorkspaceService }
   )[] = [
     ...history.phases.map((p) => ({ kind: 'phase' as const, row: p })),
-    ...history.examines.map((e) => ({ kind: 'examine' as const, row: e })),
     ...history.services.map((s) => ({ kind: 'service' as const, row: s }))
   ].sort((a, b) => b.row.createdAt - a.row.createdAt)
 
@@ -153,17 +273,38 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
           <div className="ws-empty">{t('tasks.empty')}</div>
         ) : allDone ? (
           <div className="ws-empty">{t('tasks.noActive')}</div>
+        ) : isCollab && todoGroups.length > 0 ? (
+          // Collab (more than one role wrote todos) → group the ACTIVE roles by owner so concurrent lists are
+          // attributed to whoever wrote them instead of merged into one anonymous pile (a completed role has
+          // moved to History and is filtered out). Keyed on role-COUNT, NOT conversation.kind: a coordinator
+          // collab runs in a kind:'single' conv (isGroup=false), so the kind check missed it (verified by e2e).
+          <div className="ws-tasks">
+            {todoGroups.map(([owner, ts]) => (
+              <div className="ws-todo-group" key={owner || 'unknown'}>
+                <div className="ws-svc-owner">
+                  <span className="ws-svc-owner-dot" style={{ background: expertsById[owner]?.color ?? 'var(--text-3)' }} />
+                  <span className="ws-svc-owner-name">{expertsById[owner]?.name ?? owner ?? t('tasks.svcUnknownOwner')}</span>
+                </div>
+                {ts.map((tk, i) => (
+                  <TaskRow key={i} tk={tk} t={t} />
+                ))}
+              </div>
+            ))}
+          </div>
         ) : (
           <div className="ws-tasks">
-            {tasks.map((tk, i) => {
-              const meta = TASK[tk.status] ?? TASK.pending
-              return (
-                <div className="ws-task" key={i}>
-                  <span className={'ws-task-label' + (meta.cls === 'done' ? ' done' : '')}>{tk.content}</span>
-                  <span className={'task-status ' + meta.cls}>{t(meta.labelKey)}</span>
-                </div>
-              )
-            })}
+            {tasks.map((tk, i) => (
+              <TaskRow key={i} tk={tk} t={t} />
+            ))}
+          </div>
+        )}
+
+        {runningPanels.length > 0 && (
+          <div className="ws-panels">
+            <div className="ws-sub-head">{t('tasks.panels')}</div>
+            {runningPanels.map(([owner, panelTools]) => (
+              <PanelGroup key={'rp' + (owner || 'solo')} owner={owner} panelTools={panelTools} expertsById={expertsById} />
+            ))}
           </div>
         )}
 
@@ -186,7 +327,7 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
           </div>
         )}
 
-        {timeline.length > 0 && (
+        {(timeline.length > 0 || donePanels.length > 0) && (
           <div className="ws-history">
             <div className="ws-sub-head ws-history-head">
               <span>{t('tasks.history')}</span>
@@ -194,11 +335,14 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
                 <Icons.refresh size={12} /> {t('tasks.clear')}
               </button>
             </div>
+            {/* Completed panel_examine reviews — the rich card moved here from the live "Panel reviews" section the
+                moment it finished (like a todo phase), still grouped by owner. */}
+            {donePanels.map(([owner, panelTools]) => (
+              <PanelGroup key={'dp' + (owner || 'solo')} owner={owner} panelTools={panelTools} expertsById={expertsById} />
+            ))}
             {timeline.map((it) =>
               it.kind === 'phase' ? (
                 <PhaseCard key={'p' + it.row.id} phase={it.row} t={t} />
-              ) : it.kind === 'examine' ? (
-                <ExamineCard key={'e' + it.row.id} examine={it.row} t={t} />
               ) : (
                 <ServiceHistCard key={'s' + it.row.id} svc={it.row} t={t} />
               )
@@ -220,6 +364,17 @@ function groupByOwner(services: ServiceInfo[]): [string, ServiceInfo[]][] {
     else map.set(key, [s])
   }
   return [...map]
+}
+
+// One todo row (content + status pill). Shared by the flat (solo) and per-role grouped (collab) renders.
+function TaskRow({ tk, t }: { tk: WsTask; t: ReturnType<typeof useT> }): ReactElement {
+  const meta = TASK[tk.status] ?? TASK.pending
+  return (
+    <div className="ws-task">
+      <span className={'ws-task-label' + (meta.cls === 'done' ? ' done' : '')}>{tk.content}</span>
+      <span className={'task-status ' + meta.cls}>{t(meta.labelKey)}</span>
+    </div>
+  )
 }
 
 // A live (active) background service. Logs expand inline into a fixed-height, scrollable pane that scrolls
@@ -328,23 +483,3 @@ function PhaseCard({ phase, t }: { phase: WorkspacePhase; t: ReturnType<typeof u
   )
 }
 
-function ExamineCard({ examine, t }: { examine: WorkspaceExamine; t: ReturnType<typeof useT> }): ReactElement {
-  return (
-    <div className="ws-hist-card">
-      <div className="ws-hist-head">
-        <Icons.eye size={13} />
-        <span className="ws-hist-title">{t('tasks.examineSummary')}</span>
-        <span className="ws-hist-time">{fmtTime(examine.examinedAt || examine.createdAt)}</span>
-      </div>
-      {examine.subject && <div className="ws-hist-subject">{examine.subject}</div>}
-      <div className="ws-hist-items">
-        {examine.findings.map((f, idx) => (
-          <div className="ws-hist-item" key={idx}>
-            <span className={'ws-verdict ' + (VERDICT[f.verdict] ?? 'fp')}>{t('tasks.verdict.' + f.verdict)}</span>
-            <span className="ws-hist-axis">{f.axis}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
