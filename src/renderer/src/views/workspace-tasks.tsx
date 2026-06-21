@@ -56,17 +56,20 @@ function fmtDur(ms: number): string {
 // drives the nested skeptic line. Synthetic, stable ids ('hist-pe-…') so React keys don't collide with live tools.
 function examineToPanelTool(ex: WorkspaceExamine): ToolCall {
   const findings = ex.findings ?? []
-  const roster = ex.roster?.length ? ex.roster : findings.map((f) => f.axis)
+  // ONE row per persisted finding (per-candidate, workflow-faithful). Multiple candidates share a lens (axis),
+  // so the roster key must be UNIQUE per row (`${axis}#${i}`) or PanelCard's subjectsByKey would collapse them
+  // into one; the row itself shows the candidate's title + severity + lens. (No findings → an empty card.)
+  const rowKey = (f: WorkspaceExamine['findings'][number], i: number): string => `${f.axis}#${i}`
   return {
     id: 'hist-pe-' + ex.id,
     name: 'PanelExamine',
     status: 'done',
-    input: { mode: ex.mode ?? 'review', subjects: roster },
+    input: { mode: ex.mode ?? 'review', subjects: findings.map((f, i) => rowKey(f, i)), findingsCard: true },
     subTools: findings.map((f, i) => ({
       id: `hist-pe-${ex.id}-${i}`,
       name: 'Subject',
       status: f.verdict === 'fail' ? 'error' : 'done',
-      input: { subject: f.axis, verdict: f.verdict, refuted: f.refuted, refuteTally: f.refuteTally, why: f.why },
+      input: { subject: rowKey(f, i), lens: f.axis, title: f.title, severity: f.severity, file: f.file, verdict: f.verdict, refuted: f.refuted, refuteTally: f.refuteTally, why: f.why },
       result: f.feedback
     }))
   }
@@ -91,7 +94,7 @@ function PanelGroup({ owner, panelTools, expertsById }: { owner: string; panelTo
   )
 }
 
-export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): ReactElement {
+export function WorkspaceTasks({ activeConv, onHasHistory }: { activeConv: string | null; onHasHistory?: (has: boolean) => void }): ReactElement {
   const t = useT()
   // — Live tasks — read from the app-lifetime conv:todos subscription (stores/conv-todos), which keeps
   // caching every conversation's latest TodoWrite list even while this panel is closed. That's the fix
@@ -253,6 +256,11 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
     if (!activeConv) return
     void window.api.tasks.clearHistory(activeConv).then(() => setHistory(EMPTY))
   }
+
+  // Report History presence up to the drawer so it can relax the narrow fixed window when there's nothing
+  // archived yet (current-todos-only view → show them in full, not cramped). Phases / examines / exited services.
+  const hasHistory = history.phases.length > 0 || history.examines.length > 0 || history.services.length > 0
+  useEffect(() => onHasHistory?.(hasHistory), [hasHistory, onHasHistory])
 
   // Merge phases + exited services into one newest-first timeline. panel_examine reviews are NOT here — they
   // render as their own rich PanelCard in the "Panel reviews" section above (rebuilt from these same persisted

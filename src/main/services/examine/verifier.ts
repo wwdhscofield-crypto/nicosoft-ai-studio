@@ -6,18 +6,21 @@
 
 import * as rolesService from '../roles.service'
 import * as agentService from '../agent-dispatch'
-import { COORDINATOR_VERIFIER_PROMPT, subjectExaminePrompt } from '../../agent/roles/prompts'
+import { COORDINATOR_VERIFIER_PROMPT, subjectExaminePrompt, reverifyPrompt } from '../../agent/roles/prompts'
 import { runRoleStep, type RunStepOptions } from '../coordinator-step'
 import type { SharedBuild } from './build'
-import type { ReviewSubject } from './subjects'
 
-export function chooseVerifierRole(implementerRoleId: string): string {
+export function chooseVerifierRole(implementer: string | string[]): string {
   // The verifier runs the agent loop with an overridden read-only kit (Read/Grep/Glob/Bash) + the Gate B
   // verifier persona, so we only need an independent, BOUND agent role for its model/endpoint. It must be an
-  // AGENT_ROLE (the coordinator has no agent-loop path — picking it would throw) and never the implementer.
+  // AGENT_ROLE (the coordinator has no agent-loop path — picking it would throw) and never an implementer.
+  // `implementer` is a SET in collaborate (multiple builders) so the reviewer is independent of ALL of them
+  // (else Flynn+Turing would pick Turing to "independently" review its own work). A single string → set of one,
+  // byte-identical to the prior single-implementer behavior (floor/panel callers unchanged).
+  const exclude = new Set(Array.isArray(implementer) ? implementer : [implementer])
   const order = ['analyst', 'engineer', 'shuri', 'generalist', 'scheduler', 'translator', 'editor', 'designer']
   return (
-    order.find((r) => r !== implementerRoleId && agentService.AGENT_ROLE_IDS.has(r) && Boolean(rolesService.getBinding(r)?.endpointId)) ??
+    order.find((r) => !exclude.has(r) && agentService.AGENT_ROLE_IDS.has(r) && Boolean(rolesService.getBinding(r)?.endpointId)) ??
     'generalist'
   )
 }
@@ -27,7 +30,7 @@ export function chooseVerifierRole(implementerRoleId: string): string {
 // PRESENT → an ADDITIVE per-dimension subject: derived persona, read-only kit (NO Bash), reasons over the shared
 // build, distinct per-(subject,step) stream identity.
 export interface SubjectContext {
-  key: ReviewSubject
+  key: string // an enum ReviewSubject key, OR an agent-derived custom lens key (THOROUGH/explicit path)
   focus: string
   sharedBuild: SharedBuild
   stepId: string
@@ -39,14 +42,19 @@ export interface SubjectContext {
   // The subject integrator's re-verify: confirm the claimed fix WITHOUT emitting a duplicate subject bubble (it
   // reuses the subject's stable toolUseId, so an event would clobber the original FAIL row the card needs to keep).
   quiet?: boolean
+  // Closure re-verify: use the narrow BINARY fix-confirmation persona (reverifyPrompt), NOT the aggressive FIND
+  // persona — re-checking a fix must not surface a fresh weak candidate and flip a resolved finding to unresolved.
+  reverify?: boolean
 }
 
-export async function runVerifierStep(implementerRoleId: string, opts: RunStepOptions, gate: { originalPrompt: string; approvedPlan?: string; acceptance?: string[] }, implementationText: string, signal?: AbortSignal, subject?: SubjectContext): Promise<{ passed: boolean; feedback: string; inputTokens: number; outputTokens: number; infraFailure?: boolean; skipped?: boolean; contracted?: boolean }> {
+export async function runVerifierStep(implementerRoleId: string | string[], opts: RunStepOptions, gate: { originalPrompt: string; approvedPlan?: string; acceptance?: string[] }, implementationText: string, signal?: AbortSignal, subject?: SubjectContext): Promise<{ passed: boolean; feedback: string; inputTokens: number; outputTokens: number; infraFailure?: boolean; skipped?: boolean; contracted?: boolean }> {
+  // Implementer(s): a single string for floor/panel (byte-identical), a SET in collaborate (exclude every builder).
+  const implementers = Array.isArray(implementerRoleId) ? implementerRoleId : [implementerRoleId]
   const verifierRoleId = chooseVerifierRole(implementerRoleId)
-  // No independent agent role is bound besides the implementer → there's no one to verify. Don't FAIL/throw
+  // No independent agent role is bound besides the implementer(s) → there's no one to verify. Don't FAIL/throw
   // the turn over a config gap; deliver the result with an explicit skipped marker so the caller labels
   // the outcome 'unverified' (never a silent pass).
-  if (verifierRoleId === implementerRoleId) return { passed: true, skipped: true, feedback: 'Independent verification skipped: no independent verifier role bound (only the implementer is available); result delivered unverified.', inputTokens: 0, outputTokens: 0 }
+  if (implementers.includes(verifierRoleId)) return { passed: true, skipped: true, feedback: 'Independent verification skipped: no independent verifier role bound (only the implementer is available); result delivered unverified.', inputTokens: 0, outputTokens: 0 }
   // closure-loop §3.2: presentation split by role.
   //   FLOOR (no subject) → renders as the independent "<verifier> · Verifier" SEGMENT (its verdict prose IS the
   //     body). It emits NO sub_tool card — the segment is the presentation, eliminating the old double (a card on
@@ -70,7 +78,7 @@ export async function runVerifierStep(implementerRoleId: string, opts: RunStepOp
         gate.acceptance?.length ? `Acceptance criteria the change must satisfy:\n${gate.acceptance.map((c) => `- ${c}`).join('\n')}` : '',
         subject.sharedBuild.diff ? `Diff under review (this step's changes):\n\`\`\`diff\n${subject.sharedBuild.diff}\n\`\`\`` : '',
         subject.sharedBuild.ran ? `Build / typecheck output (already run for all subjects — do NOT re-run it):\n\`\`\`\n${subject.sharedBuild.output}\n\`\`\`` : 'No build output is available — judge from the diff plus your own read-only code inspection.',
-        `Implementer role (do NOT defer to them): ${implementerRoleId}`,
+        `Implementer role (do NOT defer to them): ${implementers.join(', ')}`,
         `Implementer's own summary (a claim to verify, not ground truth):\n${implementationText}`
       ].filter(Boolean).join('\n\n')
     : [
@@ -78,7 +86,7 @@ export async function runVerifierStep(implementerRoleId: string, opts: RunStepOp
         `Original task:\n${gate.originalPrompt}`,
         gate.acceptance?.length ? `Acceptance criteria — check each of these FIRST (they were given to the implementer as the definition of done), then run the toolchain checks:\n${gate.acceptance.map((c) => `- ${c}`).join('\n')}` : '',
         gate.approvedPlan ? `Approved plan the change must match:\n${gate.approvedPlan}` : '',
-        `Implementer role (do NOT defer to them): ${implementerRoleId}`,
+        `Implementer role (do NOT defer to them): ${implementers.join(', ')}`,
         `Implementer's own summary (a claim to verify, not ground truth):\n${implementationText}`
       ].filter(Boolean).join('\n\n')
   let verifier: Awaited<ReturnType<typeof runRoleStep>>
@@ -99,7 +107,7 @@ export async function runVerifierStep(implementerRoleId: string, opts: RunStepOp
       // enforces "a subject never re-builds / never starts a service" (§3.4 / §4-D), stronger than a prompt ask.
       // Both use the adversarial verifier persona, not the borrowed role's "don't touch code" system prompt.
       toolNames: subject ? ['Read', 'Grep', 'Glob'] : ['Read', 'Grep', 'Glob', 'Bash'],
-      systemPromptOverride: subject ? subjectExaminePrompt(subject.focus) : COORDINATOR_VERIFIER_PROMPT,
+      systemPromptOverride: subject ? (subject.reverify ? reverifyPrompt(subject.focus) : subjectExaminePrompt(subject.focus)) : COORDINATOR_VERIFIER_PROMPT,
       // closure-loop: FLOOR streams as its own "· Verifier" segment; SUBJECT runs card-only (quiet) and folds
       // into that segment as a PanelCard row (via the sub_tool card above), never a separate prose segment.
       segmentKind: subject ? undefined : 'verifier',

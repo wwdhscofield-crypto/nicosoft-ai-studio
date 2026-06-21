@@ -632,12 +632,16 @@ export interface WorkspacePhaseDto {
   completedAt: number
 }
 export interface WorkspaceExamineFindingDto {
-  axis: string
+  axis: string // the lens/dimension this finding came from (enum key or agent-derived custom lens)
   verdict: 'pass' | 'fail' | 'false-positive'
   feedback: string
   why?: string // why this dimension was selected (the trigger reason) — shown in the reconstructed card
-  refuted?: boolean // a FAIL the skeptics disproved (false-positive)
+  refuted?: boolean // a finding the skeptics disproved (false-positive)
   refuteTally?: string // "k/N" skeptics that disproved — drives the rich card's nested refute line on reload
+  // Per-candidate fields (workflow-faithful find→refute): one row = one candidate defect, not one lens.
+  title?: string // the candidate's one-line defect title (the primary row label when present)
+  severity?: 'high' | 'med' | 'low'
+  file?: string // "path" or "path:line" the defect lives at
 }
 // A persisted panel_examine review. Carries the FULL panel (owner + roster + per-subject feedback/refute) so the
 // rich PanelCard can be RECONSTRUCTED from history and survive reload — the live card is a session-only sub-tool

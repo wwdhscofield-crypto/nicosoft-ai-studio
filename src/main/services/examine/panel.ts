@@ -13,7 +13,7 @@ import { runRoleStep, type RunStepOptions } from '../coordinator-step'
 import type { WrittenFile } from '../../agent/context'
 import { confineReal } from '../../agent/confine'
 import { buildChangedSet } from './diff'
-import { subjectMeta, type ReviewSubject } from './subjects'
+import { subjectMeta } from './subjects'
 import { runBuildOnce, type SharedBuild } from './build'
 import { parallelExamineLimited } from './pool'
 import { runVerifierStep, chooseVerifierRole, type SubjectContext } from './verifier'
@@ -24,18 +24,39 @@ import { runVerifierStep, chooseVerifierRole, type SubjectContext } from './veri
 // Each subject emits a hard PASS/FAIL on a pointable defect in ITS dimension; the verdicts feed the pre-closure
 // gate (floor-FAIL OR any-subject-FAIL) in runGatedRoleStep. Subject rows now carry real pass/fail outcomes (not
 // M2's 'shadow'). Fully best-effort: any failure → [] so the floor verdict always stands alone.
+export type Severity = 'high' | 'med' | 'low'
+
+// ONE candidate defect a lens finder surfaced (workflow FIND stage). The finder emits a list of these; the
+// REFUTE stage then judges EACH one independently (not the lens as a whole), so a weak candidate riding a
+// strong one's coattails is dropped on its own merits. `refuted` is set by the per-candidate refute below.
+export interface Finding {
+  lens: string // the lens/dimension key this candidate came from (enum key or agent-derived custom lens)
+  id: string // stable per-(lens,index) id — keys the per-candidate refute toolUseId + render row
+  focus?: string // the lens's resolved focus (enum focus or the custom lens's agent-authored one) — for the refute persona
+  title: string // one-line defect title
+  file?: string // file the defect lives in
+  line?: number // line within the file
+  severity: Severity
+  mechanism: string // the concrete failure path (the finder's evidence for this candidate)
+  refuted?: boolean // per-candidate refute: a majority of skeptics could not confirm it → dropped as a false alarm
+  refuteYes?: number // skeptics who could NOT confirm the candidate (→ refute)
+  refuteTotal?: number // total skeptic votes that landed for this candidate
+}
+
 export interface SubjectFinding {
-  key: ReviewSubject
+  key: string // an enum ReviewSubject key, OR an agent-derived custom lens key (THOROUGH/explicit path)
+  focus?: string // the custom lens's agent-authored focus (absent for enum keys → subjectMeta supplies it)
   why: string // why the trigger selected this dimension — recorded so the selected-subject set is reconstructable
   produced: boolean // did the subject verifier yield a usable PASS/FAIL? false = dropped (infra fail / no VERDICT)
-  passed: boolean // meaningful only when produced; false placeholder when dropped
-  feedback: string
+  passed: boolean // DERIVED (after refute): true when no candidate in this lens SURVIVED refute (lens is clean / all false alarms)
+  feedback: string // the SURVIVING candidates rendered as text (what Gate-B's fix step + synth read); raw finder text if none parsed
+  candidates?: Finding[] // the per-candidate findings this lens surfaced (workflow FIND output) — each refuted independently
   inputTokens: number
   outputTokens: number
-  refuted?: boolean // adversarial refute: a FAILED subject that a majority of skeptics PROVED was a false alarm
-  refuteEvidence?: string // the refute tally (N/M skeptics) — kept in the subject row for reconstructability
-  refuteYes?: number // structured tally: skeptics who PROVED a false alarm (for the panel card's "k/N disproved")
-  refuteTotal?: number // structured tally: total skeptic votes that landed
+  refuted?: boolean // lens had candidates but ALL were refuted (false-positive) — kept out of closure, shown as such
+  refuteEvidence?: string // the lens-level tally (k/N candidates survived) — kept in the subject row for reconstructability
+  refuteYes?: number // structured tally for the card: candidates refuted in this lens
+  refuteTotal?: number // structured tally: candidates examined in this lens
 }
 
 // Subject-row evidence = the selection reason (why this dimension fired) + the verifier's verdict text (+ the
@@ -44,6 +65,55 @@ export interface SubjectFinding {
 export function subjectEvidence(lv: SubjectFinding): string {
   const base = `[selected: ${lv.why || 'semantic trigger'}] ${lv.feedback}`
   return lv.refuteEvidence ? `${base}\n[${lv.refuteEvidence}]` : base
+}
+
+const SEV_ORDER: Record<Severity, number> = { high: 0, med: 1, low: 2 }
+function normSeverity(s: unknown): Severity {
+  const v = String(s ?? '').toLowerCase()
+  if (v === 'high' || v === 'critical' || v === 'crit') return 'high'
+  if (v === 'low' || v === 'minor' || v === 'nit') return 'low'
+  return 'med'
+}
+
+// Parse the finder's machine contract: a fenced ```findings JSON array of candidate defects. Returns null when
+// no parseable block is present (the caller then DEGRADES to the binary VERDICT — one finding from the prose, or
+// none — so a non-compliant finder never loses signal). Caps the list + each field so a runaway reply can't bloat.
+export function parseFindings(text: string, lens: string): Finding[] | null {
+  const m = /```findings\s*([\s\S]*?)```/i.exec(text)
+  if (!m) return null
+  let arr: unknown
+  try {
+    arr = JSON.parse(m[1].trim())
+  } catch {
+    return null
+  }
+  if (!Array.isArray(arr)) return null
+  const out: Finding[] = []
+  for (let i = 0; i < arr.length && out.length < 24; i++) {
+    const x = arr[i] as Record<string, unknown>
+    const title = String(x?.title ?? '').trim().slice(0, 240)
+    if (!title) continue
+    out.push({
+      lens,
+      id: `${lens}-${out.length}`,
+      title,
+      file: typeof x?.file === 'string' ? x.file.trim().slice(0, 240) : undefined,
+      line: typeof x?.line === 'number' && Number.isFinite(x.line) ? x.line : undefined,
+      severity: normSeverity(x?.severity),
+      mechanism: String(x?.mechanism ?? '').trim().slice(0, 1600)
+    })
+  }
+  return out
+}
+
+// One candidate rendered as a compact text block — what feeds Gate-B's fix step + the synthesis (the human/agent
+// readable form of a structured Finding). Confirmed (surviving) candidates only, severity-first.
+export function renderFindings(findings: Finding[]): string {
+  return findings
+    .slice()
+    .sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity])
+    .map((f) => `- [${f.severity}] ${f.title}${f.file ? ` (${f.file}${f.line ? `:${f.line}` : ''})` : ''}\n  ${f.mechanism}`)
+    .join('\n')
 }
 
 // Read the target files' content (capped) so selectSubjects can pick risk dimensions from the CODE itself, not
@@ -134,10 +204,12 @@ export async function runPanelExamine(roleId: string, opts: RunStepOptions, gate
     // its `why`) so the selected-subject set is fully reconstructable from gate_outcomes — a dropped subject still
     // gets a row (unverified) downstream, so a green step can never be confused with a never-triggered one.
     const tasks = selected.map((sel) => async (): Promise<SubjectFinding> => {
-      const base = { key: sel.key, why: sel.why }
-      const meta = subjectMeta(sel.key)
-      if (!meta) return { ...base, produced: false, passed: false, feedback: 'unknown dimension (dropped)', inputTokens: 0, outputTokens: 0 }
-      const subjectCtx: SubjectContext = { key: sel.key, focus: meta.focus, sharedBuild, stepId, panelId, why: sel.why }
+      // Focus = the enum dimension's focus, OR the agent-derived custom lens's own focus (THOROUGH path). A
+      // key with neither (a malformed custom lens missing its focus) is dropped, like an unknown enum key was.
+      const focus = subjectMeta(sel.key)?.focus ?? sel.focus
+      const base = { key: sel.key, focus: sel.focus, why: sel.why }
+      if (!focus) return { ...base, produced: false, passed: false, feedback: 'unknown dimension (dropped)', inputTokens: 0, outputTokens: 0 }
+      const subjectCtx: SubjectContext = { key: sel.key, focus, sharedBuild, stepId, panelId, why: sel.why }
       let inTok = 0
       let outTok = 0
       // Up to 2 attempts: a non-contracted reply (no parseable VERDICT line) is retried ONCE, then dropped.
@@ -150,7 +222,23 @@ export async function runPanelExamine(roleId: string, opts: RunStepOptions, gate
         inTok += v.inputTokens
         outTok += v.outputTokens
         if (v.infraFailure) return { ...base, produced: false, passed: false, feedback: `subject verifier infra failure: ${v.feedback}`, inputTokens: inTok, outputTokens: outTok }
-        if (v.contracted) return { ...base, produced: true, passed: v.passed, feedback: v.feedback, inputTokens: inTok, outputTokens: outTok }
+        if (v.contracted) {
+          // Workflow FIND output: parse the structured candidate list. An ABSENT or EMPTY/malformed block (a
+          // non-compliant finder — null parse, or [] after every object was dropped for a blank title) must NOT
+          // be trusted as "no defect" when the verdict said FAIL: an empty array is honored ONLY on PASS;
+          // otherwise we DEGRADE to one candidate from the prose so a real FAIL is never silently swallowed.
+          // passed is provisional here (no candidate yet refuted) — DERIVED below after refute.
+          const parsed = parseFindings(v.feedback, sel.key)
+          const firstLine = (v.feedback.split('\n').map((s) => s.trim()).find(Boolean) ?? '').slice(0, 160)
+          const candidates: Finding[] =
+            parsed && parsed.length
+              ? parsed
+              : v.passed
+                ? []
+                : [{ lens: sel.key, id: `${sel.key}-0`, title: firstLine || `${sel.key} concern`, severity: 'med', mechanism: v.feedback.slice(0, 1600) }]
+          for (const c of candidates) c.focus = focus // carry the lens's resolved focus so the per-candidate refute persona keeps it (esp. custom lenses)
+          return { ...base, produced: true, passed: candidates.length === 0, feedback: v.feedback, candidates, inputTokens: inTok, outputTokens: outTok }
+        }
       }
       return { ...base, produced: false, passed: false, feedback: 'subject produced no parseable VERDICT after 2 attempts (dropped)', inputTokens: inTok, outputTokens: outTok }
     })
@@ -163,22 +251,45 @@ export async function runPanelExamine(roleId: string, opts: RunStepOptions, gate
       v ?? { key: selected[i].key, why: selected[i].why, produced: false, passed: false, feedback: 'subject task aborted (concurrency backstop or unexpected error)', inputTokens: 0, outputTokens: 0 }
     )
 
-    // Adversarial refute (the adversarial-verify pattern): each FAILED subject faces N independent skeptics
-    // (read-only, sharing this same build) that try to disprove the finding. A majority "proven false alarm"
-    // marks the subject refuted → it never enters closure and is recorded false-positive (lowers B-cost / false
-    // reds). Burden is on the skeptics: uncertain → NOT refuted, so a real defect is never lightly dropped.
-    const failed = verdicts.filter((v) => v.produced && !v.passed)
-    if (failed.length > 0) {
-      const refutes = await refuteSubjectFailures(opts, gate, implementationText, failed, sharedBuild, verifierRoleId, verifierEndpointId, stepId, panelId, signal)
-      for (const v of failed) {
-        const r = refutes.get(v.key)
-        if (!r) continue
-        v.refuted = r.refuted
-        v.refuteEvidence = r.evidence
-        v.refuteYes = r.yes
-        v.refuteTotal = r.total
-        v.inputTokens += r.inputTokens
-        v.outputTokens += r.outputTokens
+    // Adversarial REFUTE — per-CANDIDATE (workflow-faithful): the aggressive FIND stage flags candidates
+    // liberally, so EVERY candidate the finders surfaced — across ALL lenses — faces N independent skeptics
+    // that try to REFUTE it INDIVIDUALLY. A candidate survives ONLY if the skeptics cannot break it
+    // (demonstrably real); a weak candidate riding a strong one's coattails is dropped on its OWN merits
+    // (the per-lens refute used to keep the whole lens if ANY part held). Precision lives in refute, not a
+    // conservative finder.
+    // Refute EVERY candidate — the concurrency limiter (pool.ts) QUEUES the fan-out (excess runs as slots free,
+    // never dropped), like the Workflow tool. Refuting all of them is also what keeps the derive below sound: an
+    // un-refuted candidate has refuted=undefined and would auto-"survive", so a candidate must never be skipped.
+    const allCandidates = verdicts.flatMap((v) => v.candidates ?? [])
+    if (allCandidates.length > 0) {
+      const tokByLens = await refuteEachCandidate(opts, gate, implementationText, allCandidates, sharedBuild, verifierRoleId, verifierEndpointId, stepId, panelId, signal)
+      for (const v of verdicts) {
+        const tk = tokByLens.get(v.key)
+        if (tk) { v.inputTokens += tk.inputTokens; v.outputTokens += tk.outputTokens }
+      }
+    }
+    // DERIVE each lens's binary from its candidates' survival — this is what Gate-B's closure reads, so its
+    // conservative enum path is behaviorally unchanged (surviving candidate → confirmed FAIL; all-refuted →
+    // false-positive; none → clean). feedback becomes the SURVIVING candidates so the fix step + synth see the
+    // real, confirmed defects — not the raw finder dump or the dropped false alarms.
+    for (const v of verdicts) {
+      if (!v.produced) continue
+      const cands = v.candidates ?? []
+      const survived = cands.filter((c) => !c.refuted)
+      v.refuteYes = cands.length - survived.length // candidates dropped as false alarms in this lens
+      v.refuteTotal = cands.length
+      if (cands.length === 0) {
+        v.passed = true
+        v.refuted = false
+      } else if (survived.length === 0) {
+        v.passed = false
+        v.refuted = true // every candidate was a false alarm → lens recorded false-positive, kept out of closure
+        v.refuteEvidence = `adversarial refute: all ${cands.length} candidate(s) disproved → false positive`
+      } else {
+        v.passed = false
+        v.refuted = false // ≥1 confirmed defect stands → enters closure
+        v.feedback = renderFindings(survived)
+        v.refuteEvidence = `adversarial refute: ${survived.length}/${cands.length} candidate(s) survived`
       }
     }
 
@@ -204,66 +315,63 @@ export async function runPanelExamine(roleId: string, opts: RunStepOptions, gate
   }
 }
 
-// Adversarial refute — the adversarial-verify pattern adapted to subject findings. Each FAILED subject
-// gets REFUTE_VOTERS independent skeptics that try to PROVE its finding is a false alarm; ≥ REFUTE_MAJORITY
-// "proven false alarm" votes refute it (recorded false-positive, kept out of closure → lower B-cost). The
-// burden is on the skeptics (a non-contracted / uncertain / infra-failed vote does NOT refute), so a real
-// defect is never dropped on a maybe — A-signal is preserved. All skeptics are read-only and share the one
-// build, so they run together under the same concurrency limiter as the subject fan-out (no new resource class).
+// Adversarial REFUTE — per-CANDIDATE filter stage of find→refute→synth (workflow-faithful). EVERY candidate
+// gets REFUTE_VOTERS independent skeptics that try to REFUTE it on its own; ≥ REFUTE_MAJORITY "could not
+// confirm" votes drop THAT candidate (recorded false-positive, kept out of closure). The PROMPT puts the
+// burden on the finding (default-refute unless the skeptic can SEE it is demonstrably real). CODE-level
+// fallback is deliberately the opposite: an infra-failed or non-parseable vote does NOT count as a refute (the
+// candidate stands), so a real defect is never dropped by a vote that simply failed to land. All skeptics are
+// read-only and share the one build, so they run together under the same concurrency limiter as the fan-out.
+// Sets `refuted`/`refuteYes`/`refuteTotal` on each Finding IN PLACE; returns per-lens token cost for attribution.
 const REFUTE_VOTERS = 3
-const REFUTE_MAJORITY = 2 // ≥ 2 of 3 must concretely disprove the finding to overturn it
+const REFUTE_MAJORITY = 2 // ≥ 2 of 3 must fail to confirm the candidate to drop it
 
-async function refuteSubjectFailures(
+async function refuteEachCandidate(
   opts: RunStepOptions,
   gate: { originalPrompt: string; approvedPlan?: string; acceptance?: string[] },
   implementationText: string,
-  failed: SubjectFinding[],
+  candidates: Finding[],
   sharedBuild: SharedBuild,
   verifierRoleId: string,
   verifierEndpointId: string,
   stepId: string,
   panelId: string,
   signal?: AbortSignal
-): Promise<Map<ReviewSubject, { refuted: boolean; evidence: string; yes: number; total: number; inputTokens: number; outputTokens: number }>> {
-  // One read-only skeptic job per (failed subject × voter); all run together under the limiter (read-only, no
-  // working-tree write, so parallel is safe — unlike closure). Each job is tagged with its subject key to tally.
-  const jobs: Array<() => Promise<{ key: ReviewSubject; refuted: boolean; inputTokens: number; outputTokens: number }>> = []
-  for (const lv of failed) {
-    const focus = subjectMeta(lv.key)?.focus ?? lv.key
+): Promise<Map<string, { inputTokens: number; outputTokens: number }>> {
+  // One read-only skeptic job per (candidate × voter); all run together under the limiter. Tagged with the
+  // candidate id (to tally that candidate) + its lens (to attribute token cost back to the owning SubjectFinding).
+  const jobs: Array<() => Promise<{ findingId: string; lens: string; refuted: boolean; inputTokens: number; outputTokens: number }>> = []
+  for (const cand of candidates) {
     for (let i = 0; i < REFUTE_VOTERS; i++) {
-      jobs.push(() => runRefuteVote(opts, gate, implementationText, lv, focus, sharedBuild, verifierRoleId, i, stepId, panelId, signal).then((r) => ({ key: lv.key, ...r })))
+      jobs.push(() => runCandidateRefuteVote(opts, gate, implementationText, cand, sharedBuild, verifierRoleId, i, stepId, panelId, signal).then((r) => ({ findingId: cand.id, lens: cand.lens, ...r })))
     }
   }
-  const votes = (await parallelExamineLimited(verifierEndpointId, jobs)).filter((v): v is { key: ReviewSubject; refuted: boolean; inputTokens: number; outputTokens: number } => v != null)
-  const out = new Map<ReviewSubject, { refuted: boolean; evidence: string; yes: number; total: number; inputTokens: number; outputTokens: number }>()
-  for (const lv of failed) {
-    const lvVotes = votes.filter((v) => v.key === lv.key)
-    const yes = lvVotes.filter((v) => v.refuted).length
-    const refuted = yes >= REFUTE_MAJORITY // burden on skeptics: need a clear majority of PROVEN false-alarm votes
-    const evidence = `adversarial refute: ${yes}/${lvVotes.length} skeptic(s) disproved the finding → ${refuted ? 'REFUTED (false positive)' : 'defect stands'}`
-    out.set(lv.key, {
-      refuted,
-      evidence,
-      yes,
-      total: lvVotes.length,
-      inputTokens: lvVotes.reduce((s, v) => s + v.inputTokens, 0),
-      outputTokens: lvVotes.reduce((s, v) => s + v.outputTokens, 0)
-    })
-    console.log(`[panel-examine refute] step ${stepId} subject ${lv.key}: ${yes}/${lvVotes.length} refute → ${refuted ? 'FALSE-POSITIVE' : 'CONFIRMED'}`)
+  const votes = (await parallelExamineLimited(verifierEndpointId, jobs)).filter((v): v is { findingId: string; lens: string; refuted: boolean; inputTokens: number; outputTokens: number } => v != null)
+  const tokByLens = new Map<string, { inputTokens: number; outputTokens: number }>()
+  for (const cand of candidates) {
+    const cv = votes.filter((v) => v.findingId === cand.id)
+    const yes = cv.filter((v) => v.refuted).length // skeptics who could NOT confirm this candidate
+    cand.refuted = yes >= REFUTE_MAJORITY
+    cand.refuteYes = yes
+    cand.refuteTotal = cv.length
+    const tk = tokByLens.get(cand.lens) ?? { inputTokens: 0, outputTokens: 0 }
+    tk.inputTokens += cv.reduce((s, v) => s + v.inputTokens, 0)
+    tk.outputTokens += cv.reduce((s, v) => s + v.outputTokens, 0)
+    tokByLens.set(cand.lens, tk)
+    console.log(`[panel-examine refute] step ${stepId} ${cand.lens} "${cand.title.slice(0, 60)}": ${yes}/${cv.length} refute → ${cand.refuted ? 'FALSE-POSITIVE' : 'CONFIRMED'}`)
   }
-  return out
+  return tokByLens
 }
 
-// One skeptic vote on one subject finding. Read-only kit (no Bash — the build is provided), the refute persona,
-// a distinct per-(subject,voter,step) toolUseId so concurrent skeptics don't collide in the event stream. A
-// non-contracted reply (no REFUTE: line) or an infra failure → refuted:false (the finding stands; the burden
-// is on the skeptic to disprove it).
-async function runRefuteVote(
+// One skeptic vote on ONE candidate finding. Read-only kit (no Bash — the build is provided), the refute
+// persona, a distinct per-(candidate,voter,step) toolUseId so concurrent skeptics don't collide in the event
+// stream. A non-contracted reply (no REFUTE: line) or an infra failure → refuted:false (the candidate stands;
+// the burden is on the finding to be demonstrably real, but a FAILED vote must not silently drop a real defect).
+async function runCandidateRefuteVote(
   opts: RunStepOptions,
   gate: { originalPrompt: string; approvedPlan?: string; acceptance?: string[] },
   implementationText: string,
-  lv: SubjectFinding,
-  focus: string,
+  cand: Finding,
   sharedBuild: SharedBuild,
   verifierRoleId: string,
   voterIdx: number,
@@ -271,14 +379,18 @@ async function runRefuteVote(
   panelId: string,
   signal?: AbortSignal
 ): Promise<{ refuted: boolean; inputTokens: number; outputTokens: number }> {
-  const toolId = `gate-b-refute-${lv.key}-${voterIdx}-${stepId}`
+  const toolId = `gate-b-refute-${cand.id}-${voterIdx}-${stepId}`
   // Refute votes nest under the panel card (parentToolId=panelId), attributed to verifierRoleId so they fold
-  // into the Verifier segment alongside the subjects (closure-loop §3.2), tagged with their target subject so
-  // the card groups them as that subject's skeptics (the structured k/N tally rides on the subject's final row).
-  opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_start', toolUseId: toolId, parentToolId: panelId, name: 'SubjectRefute', input: { subject: lv.key, voter: voterIdx } })
+  // into the Verifier segment alongside the subjects, tagged with their target lens + candidate so the card
+  // groups them under that specific candidate (the k/N tally rides on the candidate's row).
+  opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_start', toolUseId: toolId, parentToolId: panelId, name: 'SubjectRefute', input: { subject: cand.lens, finding: cand.title.slice(0, 120), voter: voterIdx } })
+  // Persona focus = the candidate's carried lens focus (custom lenses keep their agent-authored one), else the
+  // enum focus, else the bare key. The user message carries the SPECIFIC candidate (title + file:line + mechanism).
+  const focus = cand.focus ?? subjectMeta(cand.lens)?.focus ?? cand.lens
+  const where = cand.file ? ` (${cand.file}${cand.line ? `:${cand.line}` : ''})` : ''
   const refuteUserPrompt = [
-    `An independent "${lv.key}" subject flagged a defect in the change below. As a SKEPTIC, try to REFUTE it — prove it is a false alarm, or concede the defect stands.`,
-    `The subject's claim (the finding to refute):\n${lv.feedback}`,
+    `An independent "${cand.lens}" finder flagged ONE candidate defect in the change below. As a SKEPTIC, try to REFUTE this single candidate — prove it is a false alarm, or concede it stands.`,
+    `Candidate to refute:\n[${cand.severity}] ${cand.title}${where}\nMechanism: ${cand.mechanism}`,
     `Original task:\n${gate.originalPrompt}`,
     sharedBuild.diff ? `Diff under review:\n\`\`\`diff\n${sharedBuild.diff}\n\`\`\`` : '',
     sharedBuild.ran ? `Build / typecheck output (already run — do NOT re-run it):\n\`\`\`\n${sharedBuild.output}\n\`\`\`` : '',
@@ -300,11 +412,11 @@ async function runRefuteVote(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: panelId, name: 'SubjectRefute', isError: true, result: `refute vote failed: ${msg}` })
-    return { refuted: false, inputTokens: 0, outputTokens: 0 } // infra failure → cannot disprove → defect stands
+    return { refuted: false, inputTokens: 0, outputTokens: 0 } // infra failure → cannot disprove → candidate stands
   }
   const text = res.text.trim()
   const contracted = [...text.matchAll(/^\s*[#*>•-]*\s*REFUTE:\s*(YES|NO)\b/gim)].pop()?.[1]
-  const refuted = contracted ? contracted.toUpperCase() === 'YES' : false // no contract → don't refute (burden on skeptic)
+  const refuted = contracted ? contracted.toUpperCase() === 'YES' : false // no parseable vote → candidate stands
   opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: panelId, name: 'SubjectRefute', isError: false, result: text || 'no vote' })
   return { refuted, inputTokens: res.inputTokens, outputTokens: res.outputTokens }
 }

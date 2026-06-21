@@ -26,6 +26,11 @@ interface SubjectInput {
   refuted?: boolean
   refuteTally?: string // "k/N" skeptics who disproved
   handlerName?: string // the expert who closed a confirmed FAIL
+  // Per-candidate fields (workflow-faithful find→refute): a persisted row = ONE candidate defect, not a lens.
+  title?: string // the candidate's one-line defect title (the row's primary label when present)
+  severity?: string // high | med | low
+  lens?: string // the lens/dimension the candidate came from (shown alongside the title)
+  file?: string // "path:line" the defect lives at (shown on the row)
 }
 const subjInput = (t: ToolCall | undefined): SubjectInput => ((t?.input ?? {}) as SubjectInput)
 
@@ -93,7 +98,8 @@ function PanelRow({ subjectKey, tool, refutes, understand }: { subjectKey: strin
     <div className="pe-row-wrap">
       <div className={'pe-row' + (flagged ? ' flagged' : '') + (queued ? ' queued' : '')}>
         {examining ? <span className="tr-dot pe-row-dot" /> : null}
-        <span className="pe-subject">{subjectKey}</span>
+        {/* Per-candidate row (persisted): "[sev] title · lens — file:line". Live lens-row (no title): the lens key. */}
+        <span className="pe-subject">{inp.title ? `${inp.severity ? `[${inp.severity}] ` : ''}${inp.title}${inp.lens ? ` · ${inp.lens}` : ''}${inp.file ? ` — ${inp.file}` : ''}` : subjectKey}</span>
         <span className="pe-summary">{examining ? (understand ? 'reading…' : 'examining…') : queued ? 'queued' : firstLine(tool?.result)}</span>
         {done && !understand ? <span className={'pe-verdict ' + verdictClass(state)}>{VERDICT_LABEL[state]}</span> : null}
         {done && tool?.result ? (
@@ -118,7 +124,7 @@ function PanelRow({ subjectKey, tool, refutes, understand }: { subjectKey: strin
 
 export function PanelCard({ tool }: { tool: ToolCall }): ReactElement {
   const [open, setOpen] = useState(false)
-  const input = (tool.input ?? {}) as { mode?: string; subjects?: string[] }
+  const input = (tool.input ?? {}) as { mode?: string; subjects?: string[]; findingsCard?: boolean }
   const mode = input.mode ?? 'review'
   const roster = Array.isArray(input.subjects) ? input.subjects : []
   const subs = tool.subTools ?? []
@@ -164,7 +170,8 @@ export function PanelCard({ tool }: { tool: ToolCall }): ReactElement {
         <span className="pe-sep">·</span>
         <span className="pe-mode">{mode}</span>
         <span className="pe-sep">·</span>
-        <span className="pe-meta">{N} {N === 1 ? 'agent' : 'agents'}</span>
+        {/* Reconstructed per-candidate card: rows ARE findings, not reviewer agents — don't mislabel the count. */}
+        <span className="pe-meta">{N} {input.findingsCard ? (N === 1 ? 'finding' : 'findings') : N === 1 ? 'agent' : 'agents'}</span>
         <span className="pe-sep">·</span>
         <span className="pe-meta">{X}/{N}</span>
         {isUnderstand ? (

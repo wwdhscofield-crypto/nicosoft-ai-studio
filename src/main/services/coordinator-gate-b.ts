@@ -10,7 +10,7 @@ import { displayName } from '../agent/roles/prompts'
 import { deriveAcceptanceCriteria, decideEscalation } from './coordinator-route'
 import { gitHead, changedPathsSince, buildChangedSet } from './examine/diff'
 import type { WrittenFile } from '../agent/context'
-import { subjectMeta, type ReviewSubject } from './examine/subjects'
+import { subjectMeta } from './examine/subjects'
 import { runBuildOnce } from './examine/build'
 import { describeSnapshot, snapshotWorkspace } from './git-snapshot'
 import { runRoleStep, type RunStepOptions } from './coordinator-step'
@@ -99,7 +99,7 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
   // M4 (panel-examine §6): a subject row carries that dimension's FINAL outcome (pass / fixed / false-positive
   // / unresolved); the aggregate row carries the step's worst-of fold. Both are EXCLUDED from the floor
   // pass-rate by the readers' WHERE row_kind='floor', so floor stats stay byte-identical.
-  const recordSubjectOutcome = (subject: ReviewSubject, outcome: string, evidence: string): void => {
+  const recordSubjectOutcome = (subject: string, outcome: string, evidence: string): void => {
     try {
       gateOutcomeRepo.record({ convId: opts.convId, gate: 'B', roleId, outcome, rounds: 1, evidence, rowKind: 'subject', stepId, subject })
     } catch {
@@ -455,8 +455,8 @@ async function integrateSubjectClosures(
   baseChanged: string[],
   implementerFiles: readonly WrittenFile[],
   signal?: AbortSignal
-): Promise<{ outcomes: Map<ReviewSubject, SubjectClosure>; inputTokens: number; outputTokens: number }> {
-  const outcomes = new Map<ReviewSubject, SubjectClosure>()
+): Promise<{ outcomes: Map<string, SubjectClosure>; inputTokens: number; outputTokens: number }> {
+  const outcomes = new Map<string, SubjectClosure>()
   let inputTokens = 0
   let outputTokens = 0
 
@@ -493,10 +493,11 @@ async function integrateSubjectClosures(
     const { changed: reChanged, diff: reDiff } = await buildChangedSet(opts.cwd, baseRef, baseChanged, [...implementerFiles, ...followUp.writtenFiles])
     const freshBuild = await runBuildOnce(opts.cwd, baseRef, reChanged, reDiff)
     for (const lv of lvs) {
-      const focus = subjectMeta(lv.key)?.focus ?? lv.key
+      const focus = lv.focus ?? subjectMeta(lv.key)?.focus ?? lv.key // custom lens carries its own focus; enum via subjectMeta
       // quiet: reuses the subject's stable toolUseId; an event would clobber the original FAIL row the panel
-      // card keeps (the resolved outcome is re-emitted via emitSubjectFinal).
-      const reVerdict = await runVerifierStep(implementerRoleId, opts, gate, followUp.text, signal, { key: lv.key, focus, sharedBuild: freshBuild, stepId, quiet: true })
+      // card keeps (the resolved outcome is re-emitted via emitSubjectFinal). reverify: narrow binary fix-confirm
+      // persona (NOT the aggressive FIND prompt) so a fresh weak candidate can't flip a real fix to 'unresolved'.
+      const reVerdict = await runVerifierStep(implementerRoleId, opts, gate, followUp.text, signal, { key: lv.key, focus, sharedBuild: freshBuild, stepId, quiet: true, reverify: true })
       inputTokens += reVerdict.inputTokens
       outputTokens += reVerdict.outputTokens
       outcomes.set(lv.key, { outcome: reVerdict.passed ? 'fixed' : 'unresolved', evidence: reVerdict.feedback, handlerRoleId })

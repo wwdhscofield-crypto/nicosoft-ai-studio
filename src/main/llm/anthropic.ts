@@ -9,6 +9,12 @@ import { streamIdleGuard, LLM_STREAM_IDLE_MS, streamEnvelopeGuard, LLM_EMPTY_ENV
 
 const PROVIDER = 'anthropic'
 const MAX_TOKENS = 4096
+// Reasoning headroom for adaptive/effort thinking (Opus 4.x), which carries NO explicit budget to add onto.
+// On the Anthropic wire, reasoning tokens count against max_tokens; with the bare MAX_TOKENS a deep ('max')
+// thinking turn spends the entire 4096 on reasoning and streams ZERO visible text. Sized so deep reasoning AND
+// a full visible answer both fit under the effort-capable models' output cap (Opus 4.5+/Sonnet 4.6+/Fable, all
+// ≥32K). Mirrors the agent loop's working ceiling (llm.ts: req.maxTokens ≈ 16384) with extra answer room.
+const THINKING_MAX_TOKENS = 24000
 
 interface CacheControl {
   type: 'ephemeral'
@@ -91,15 +97,21 @@ function buildBody(req: ChatRequest): MessagesBody {
   }
   const system = toSystem(req.messages)
   if (system) body.system = system
-  // Extended thinking (shared directive). Chat policy: always lift max_tokens above the budget so the
-  // visible answer keeps MAX_TOKENS of room on top of the thinking allowance (legacy budget path only —
-  // effort rides output_config and needs no lift).
+  // Extended thinking (shared directive) + max_tokens lift. Reasoning tokens — legacy budget, adaptive, OR
+  // effort — all count against max_tokens on the Anthropic wire, so the visible answer must keep room ON TOP
+  // of the reasoning allowance. Legacy budget has an explicit budget to add MAX_TOKENS over; adaptive/effort
+  // (Opus 4.x: thinking{type:adaptive} + output_config.effort) carries no explicit budget, so use a fixed
+  // ceiling that fits deep reasoning + a full answer. WITHOUT this lift the adaptive/effort path keeps the
+  // hardcoded 4096 and a deep-thinking turn streams zero text — the empty coordinator synthesis bug
+  // (outputTokens==4096 exactly); the agent loop never hit it because its ceiling is already ~16384.
   const directive = anthropicThinkingDirective(req.thinking)
-  if (directive) {
-    body.thinking = directive
-    if (directive.type === 'enabled') body.max_tokens = directive.budget_tokens + MAX_TOKENS
-  }
+  if (directive) body.thinking = directive
   if (req.thinking?.effort) body.output_config = { effort: req.thinking.effort }
+  if (directive?.type === 'enabled') {
+    body.max_tokens = directive.budget_tokens + MAX_TOKENS
+  } else if (directive || req.thinking?.effort) {
+    body.max_tokens = THINKING_MAX_TOKENS
+  }
   if (req.cacheEnabled) applyAnthropicCacheControls(body)
   return body
 }

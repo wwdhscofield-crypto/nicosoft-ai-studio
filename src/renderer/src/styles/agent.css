@@ -191,7 +191,10 @@
 }
 .pe-row.queued { opacity: 0.5; }
 .pe-row-dot { width: 6px; height: 6px; }
-.pe-subject { font-family: var(--mono); color: var(--text-2); flex: none; }
+/* flex:0 1 auto + min-width:0 → shows full when there's room, tail-ellipsis only when the row can't fit it
+   (the title+file:line label can run long). The flex:1 summary holds basis 0, so it yields to 0 before the
+   subject truncates — the defect title is the primary label and survives longest. */
+.pe-subject { font-family: var(--mono); color: var(--text-2); flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pe-row.flagged .pe-subject { color: var(--error); }
 .pe-summary {
   color: var(--text-4);

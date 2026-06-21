@@ -200,8 +200,12 @@ export async function deriveAcceptanceCriteria(task: string, signal?: AbortSigna
 // --- Panel Gate B content trigger (panel-examine §3.2 / M2) --------------------------------------
 
 export interface SelectedSubject {
-  key: ReviewSubject
+  // A closed-enum ReviewSubject key, OR — on the THOROUGH (explicit-review) path only — an agent-derived
+  // CUSTOM lens key the model proposed for this specific code (string, not capped to the 8 seeds).
+  key: string
   why: string
+  // Agent-authored focus for a custom lens (the enum keys leave this absent → subjectMeta supplies the focus).
+  focus?: string
 }
 
 const SUBJECT_SELECT_INSTRUCTION = `You decide which independent review SUBJECTS a body of code needs, BEYOND the standard correctness review that already runs. Judge from the DIFF and/or the TARGET FILE CONTENT below (what the change does, and the code as it stands), NOT from file names — a risk lives in the code's meaning (a token check that can be bypassed = security; a shared write without a lock = concurrency), not in what a file is called. When a review is explicitly requested with little or no diff, judge the FILE CONTENT directly. Pick ONE OR MORE dimensions from this CLOSED list — every dimension a real, pointable risk in this code justifies:
@@ -216,12 +220,16 @@ Return ONLY a JSON array of {"key":"<a dimension key from the list>","why":"<one
 // hardcoded minimum (the cap is still |enum|, the floor is the code's own triviality judgment): the model fans out
 // to what the code actually implicates. Same CLOSED list + same JSON contract as the conservative one — only the
 // disposition flips from "pick only on genuine risk" to "enumerate every plausible risk surface".
-const THOROUGH_SUBJECT_SELECT_INSTRUCTION = `A multi-perspective review was EXPLICITLY requested on the code below. Lay out the FULL panel of independent review SUBJECTS it warrants — one reviewer per distinct risk surface, each probing an axis BEYOND the standard correctness review. Judge from the TARGET FILE CONTENT and/or DIFF (what the code does and means), NOT from file names — a risk lives in the code's behavior (a token check that can be bypassed = security; a shared write without a lock = concurrency), not in what a file is called. Pick from this CLOSED list:
+const THOROUGH_SUBJECT_SELECT_INSTRUCTION = `A multi-perspective review was EXPLICITLY requested on the code below. You DRIVE this review — lay out the FULL panel of independent review LENSES it warrants — one reviewer per distinct risk surface, each probing an axis BEYOND the standard correctness review. Judge from the TARGET FILE CONTENT and/or DIFF (what the code does and means), NOT from file names — a risk lives in the code's behavior (a token check that can be bypassed = security; a shared write without a lock = concurrency), not in what a file is called.
+
+These are the STANDARD lenses — seeds, not a cap:
 ${DEFAULT_REVIEW_SUBJECTS.map((d) => `- ${d.key}: ${d.focus}`).join('\n')}
 
-Enumerate EVERY dimension this code plausibly implicates — fan out BROADLY, like a real review panel sitting down with the file. Bias toward MORE perspectives, not fewer: for real code with any input-handling, I/O, state, concurrency, or external surface, a single dimension is almost never the whole picture. Return few ONLY when the target is genuinely trivial (a lone constant, a one-line pure helper with no I/O, state, or branching). NEVER fabricate a risk the code does not actually have, and NEVER invent a key outside the list — breadth means covering every REAL surface, not padding with imaginary ones.
+You are NOT limited to these eight. When THIS code warrants a sharper, more SPECIFIC lens than a standard one — a risk targeted to what the code actually does (e.g. "state-machine-transitions: an event arriving in a state it isn't handled in drops it", "cache-invalidation: a stale entry is served after the source changed", "prompt-injection: untrusted text reaches the model as instructions") — PROPOSE it as a custom lens with your OWN focus. Self-derive the perspectives that fit this code; the refute stage that follows drops any lens that yields no real defect, so over-proposing a lens is cheap and under-covering a real risk is the costly mistake.
 
-Return ONLY a JSON array of {"key":"<a dimension key from the list>","why":"<one line citing the specific code — a concrete behavior or file:hunk — that puts that dimension in scope>"}. Output ONLY the JSON array — no prose, no markdown fence.`
+Enumerate EVERY dimension this code plausibly implicates — fan out BROADLY, like a real review panel sitting down with the file. Bias toward MORE perspectives, not fewer. Return few ONLY when the target is genuinely trivial (a lone constant, a one-line pure helper with no I/O, state, or branching). NEVER fabricate a risk the code does not actually have — breadth means covering every REAL surface, not padding with imaginary ones.
+
+Return ONLY a JSON array of items. For a STANDARD lens: {"key":"<one of the eight keys>","why":"<one line citing the specific code that puts it in scope>"}. For a CUSTOM lens: {"key":"<short-kebab-case-name>","focus":"<one sentence: exactly what this lens hunts and the failure it looks for>","why":"<one line citing the specific code>"}. Output ONLY the JSON array — no prose, no markdown fence.`
 
 // The subject trigger: an LLM reads the actual DIFF and picks the risk dimensions the change implicates — purely
 // content-driven, language-agnostic, no file-name heuristic (a path-token table assumed one project's naming
@@ -252,14 +260,33 @@ async function deriveSubjects(changedPaths: string[], diff: string, task: string
     if (start < 0 || end <= start) return []
     const arr = JSON.parse(text.slice(start, end + 1)) as unknown
     if (!Array.isArray(arr)) return []
-    const seen = new Set<ReviewSubject>()
+    const seen = new Set<string>()
     const out: SelectedSubject[] = []
     for (const item of arr) {
+      // No count cap: extra lenses are QUEUED by the concurrency limiter (pool.ts — excess runs as slots free,
+      // never dropped), like the Workflow tool. The list is whatever the model returns (finite, deduped below);
+      // the pool's GLOBAL_MAX + per-endpoint gates throttle load, and its absolute backstop catches a runaway.
       const key = (item as { key?: unknown })?.key
       const why = (item as { why?: unknown })?.why
-      if (typeof key === 'string' && REVIEW_SUBJECT_KEYS.has(key as ReviewSubject) && !seen.has(key as ReviewSubject)) {
-        seen.add(key as ReviewSubject)
-        out.push({ key: key as ReviewSubject, why: typeof why === 'string' ? why.trim().slice(0, 200) : '' })
+      const focus = (item as { focus?: unknown })?.focus
+      if (typeof key !== 'string' || !key.trim()) continue
+      const why1 = typeof why === 'string' ? why.trim().slice(0, 200) : ''
+      if (REVIEW_SUBJECT_KEYS.has(key as ReviewSubject)) {
+        if (seen.has(key)) continue
+        seen.add(key)
+        out.push({ key, why: why1 }) // enum lens — subjectMeta supplies its focus downstream
+        continue
+      }
+      // Custom (agent-derived) lens — accepted ONLY on the THOROUGH/explicit path, and ONLY with its own focus.
+      // The conservative Gate-B path keeps the closed enum (fox-guarding-henhouse guard for the unattended path);
+      // here the refute stage is the backstop — a fabricated lens surfaces no defect the skeptics confirm.
+      if (thorough && typeof focus === 'string' && focus.trim()) {
+        // Dedup on the FINAL stored key (trim+slice), not the raw key, so two keys that collapse to the same
+        // stored value (trailing whitespace / differ only past char 60) can't collide downstream (token tally + ids).
+        const k = key.trim().slice(0, 60)
+        if (seen.has(k)) continue
+        seen.add(k)
+        out.push({ key: k, why: why1, focus: focus.trim().slice(0, 400) })
       }
     }
     return out

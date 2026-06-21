@@ -5,7 +5,7 @@
    user-draggable + persisted; the active panel is persisted too (App.tsx
    PersistedState), so reopening the drawer returns to where you were.
    ============================================================ */
-import { useState, type ReactElement } from 'react'
+import { useRef, useState, type ReactElement } from 'react'
 import { Icons } from '@/components/icons'
 import { useChat } from '@/stores/chat'
 import { useT } from '@/stores/locale'
@@ -16,6 +16,10 @@ import { WorkspaceTerminal } from '@/views/workspace-terminal'
 export type WorkspacePanel = 'menu' | 'tasks' | 'files' | 'terminal'
 
 const MIN_W = 290
+// No-history Tasks: a comfortable floor so the current per-role todos show in full instead of wrapping in
+// the narrow 290–360 column. Still draggable WIDER; only the small lower bound is relaxed. (.ws-panel-body is
+// a scroll container, so true content-fit width can't propagate — a width floor is the robust equivalent.)
+const COMFORT_W = 480
 // max 60vw so the drawer can never crush the main chat area on a small window.
 const maxW = (): number => Math.round(window.innerWidth * 0.6)
 
@@ -42,6 +46,22 @@ export function WorkspaceDrawer({
   // store (App) on mouseup only — avoids a saveState write per mousemove frame.
   const [dragW, setDragW] = useState<number | null>(null)
   const w = dragW ?? width
+  // Whether the active conversation's Tasks panel has any History (phases / examines / exited services).
+  // null = not yet known (Tasks not mounted / still loading) — treated as "has history" so a history
+  // conversation never flashes wide-then-narrow on open; only an explicit `false` relaxes the small window.
+  // Reset to null on conversation switch so the previous conv's value never leaks into the new one's layout.
+  const [hasHistory, setHasHistory] = useState<boolean | null>(null)
+  // Reset SYNCHRONOUSLY on conversation switch (React-sanctioned set-during-render) so the previous conv's
+  // `false` can't leak one frame and flash the drawer wide before a post-paint effect would clear it.
+  const prevConvRef = useRef(activeConv)
+  if (prevConvRef.current !== activeConv) {
+    prevConvRef.current = activeConv
+    setHasHistory(null)
+  }
+  // No-history Tasks → don't lock the narrow window: floor the width to COMFORT_W (still draggable wider,
+  // still capped at 60vw). Files / Terminal and history-bearing Tasks keep the compact draggable width.
+  const expandNoHistory = panel === 'tasks' && hasHistory === false
+  const effW = expandNoHistory ? Math.min(maxW(), Math.max(w, COMFORT_W)) : w
 
   const startDrag = (e: React.MouseEvent): void => {
     e.preventDefault()
@@ -73,7 +93,7 @@ export function WorkspaceDrawer({
   }
 
   return (
-    <div className="workspace-drawer" style={{ flex: `0 0 ${w}px`, width: w }}>
+    <div className="workspace-drawer" style={{ flex: `0 0 ${effW}px`, width: effW }}>
       <div className="ws-resize" onMouseDown={startDrag} title={t('workspace.resize')} />
       <div className="ws-header">
         {panel !== 'menu' && (
@@ -89,7 +109,7 @@ export function WorkspaceDrawer({
       {panel === 'menu' ? (
         <Launcher onPick={onPanel} />
       ) : panel === 'tasks' ? (
-        <WorkspaceTasks activeConv={activeConv} />
+        <WorkspaceTasks activeConv={activeConv} onHasHistory={setHasHistory} />
       ) : panel === 'files' ? (
         <WorkspaceFiles conv={conv} activeExpert={activeExpert} />
       ) : (

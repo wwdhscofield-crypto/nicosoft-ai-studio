@@ -28,9 +28,13 @@ export function buildPanelPrompt(question: string, roleId: string): string {
   return `${question}\n\n---\nYou are one of several experts answering this independently. Give YOUR own substantive take from your specialty as ${displayName(roleId)} — don't route it, don't defer to other experts, don't ask who should handle it. Coordinator compares everyone's answers afterward.`
 }
 
-export function buildParallelSynthesisInput(originalQuery: string, outputs: { role: string; text: string }[]): string {
+export function buildParallelSynthesisInput(originalQuery: string, outputs: { role: string; text: string }[], reviewNote?: string): string {
   const sections = [`Original user question:\n${originalQuery}`, '', 'Each expert answered INDEPENDENTLY (a panel, not a pipeline):']
   for (const o of outputs) sections.push('', `## ${displayName(o.role)}`, o.text)
+  // Collaborate closeout: an independent reviewer verified the combined build (Gate-B doesn't run in collaborate,
+  // so this is the one verification gate). Surface its verdict so the synthesis CLOSES on the real state — never
+  // round an unverified or FAILED result up to "done"; if it failed, say so plainly and what remains.
+  if (reviewNote) sections.push('', '## Independent verification (factor this into your closeout — do NOT present failed/unverified work as done)', reviewNote)
   sections.push('', 'Now synthesize the panel for the user. Follow the rules in your system prompt — lead with your recommendation, surface agreement vs divergence, attribute distinct points.')
   return sections.join('\n')
 }

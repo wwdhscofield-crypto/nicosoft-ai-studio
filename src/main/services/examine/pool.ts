@@ -1,8 +1,8 @@
 // Panel Gate B — the cross-loop concurrency limiter (panel-examine §3.5 / §4-C, M3). The repo has
 // NO p-limit / semaphore / os.cpus today: existing parallelism (parallel/council) is a bare Promise.all with
 // no cap (coordinator.service.ts). A panel fan-out spawns N independent verifier loops, so it needs a
-// real limiter. This is NEW code with its own concurrency model (min(16, cores−2) + queue, thunk-throw→null,
-// an absolute runaway backstop); it does not reuse repo infrastructure.
+// real limiter. This is NEW code with its own concurrency model (min(16, cores−2) + queue, thunk-throw→null);
+// it does not reuse repo infrastructure. QUEUE, never drop — excess tasks wait for a slot, like the Workflow tool.
 //
 // Two layers, both necessary:
 //   - GLOBAL semaphore min(16, cores−2): caps instantaneous CPU/process pressure across ALL subject + closure
@@ -26,11 +26,6 @@ function globalConcurrency(): number {
 const GLOBAL_MAX = globalConcurrency()
 // Per-upstream-account cap: the global gate bounds total CPU; this bounds how hard one shared endpoint is hit.
 const PER_ENDPOINT_MAX = Math.max(1, Math.min(4, GLOBAL_MAX))
-// Absolute runaway backstop (a total-agent 1000 cap): a trigger-logic bug can never spawn unbounded
-// subject loops. Real fan-outs are ≤ |enum| (8) per step × concurrent steps — this is a safety net, never hit
-// in practice.
-const ABSOLUTE_BACKSTOP = 1000
-
 // Minimal async semaphore. acquire() takes a slot or queues a resolver; release() hands the freed slot
 // DIRECTLY to the next waiter (active count unchanged across the handoff) or frees it when none wait.
 class Semaphore {
@@ -73,24 +68,17 @@ function endpointSem(endpointId: string): Semaphore {
   return s
 }
 
-let liveCount = 0 // process-wide concurrent-subject count, for the runaway backstop
-
-// Run ONE subject task under the two-layer cap: global slot first, then the per-endpoint slot. A task that
-// throws resolves to null (degrade to floor-only, never reject the whole fan-out — the thunk-throw→null
-// pattern), so one broken subject can't void the others or the floor verdict.
+// Run ONE subject task under the two-layer cap: global slot first, then the per-endpoint slot. QUEUE, never drop
+// (like the Workflow tool): the semaphores cap CONCURRENCY and run excess as slots free — no task is ever
+// dropped for being "too many" (the fan-out size is whatever the model's lens/candidate selection produced, and
+// the limiter just paces it). A task that THROWS resolves to null (degrade to floor-only, never reject the whole
+// fan-out — the thunk-throw→null pattern), so one broken subject can't void the others or the floor verdict.
 export async function runExamineLimited<T>(endpointId: string, fn: () => Promise<T>): Promise<T | null> {
-  if (liveCount >= ABSOLUTE_BACKSTOP) {
-    console.warn(`[panel-examine] runaway backstop hit (${ABSOLUTE_BACKSTOP} concurrent) — subject dropped`)
-    return null
-  }
-  liveCount++
   try {
     return await globalSem.run(() => endpointSem(endpointId).run(fn))
   } catch (e) {
     console.warn('[panel-examine] subject task threw, degrading (floor stands):', e instanceof Error ? e.message : e)
     return null
-  } finally {
-    liveCount--
   }
 }
 

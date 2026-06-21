@@ -26,8 +26,9 @@ import { resolveDepth } from '../llm/thinking'
 import { LlmError, type ChatMessage } from '../llm/types'
 import { COORDINATOR_FACILITATOR_PROMPT, DISPATCHABLE_ROLE_IDS, displayName, roleIdFromName } from '../agent/roles/prompts'
 import { detectE2EIntent, disabledRoleIds, route, routeNeedsPlan } from './coordinator-route'
-import { emitCoordinatorIntro, resetPipelineTodos, runRoleStep } from './coordinator-step'
+import { emitCoordinatorIntro, resetPipelineTodos, runRoleStep, type RunStepOptions } from './coordinator-step'
 import { runGatedRoleStep } from './coordinator-gate-b'
+import { chooseVerifierRole, runVerifierStep } from './examine/verifier'
 import { submitGateC } from './coordinator-gate-c'
 import { runCollaboration } from './coordinator-collab'
 import {
@@ -45,6 +46,49 @@ import type { AgentResult } from '../agent/loop'
 // Re-exported for the IPC boundary + any future consumer — the contracts live in coordinator-types.
 export type { CoordinatorCallbacks, CoordinatorRunInput, RouteDecision } from './coordinator-types'
 export { route, parseRouteDecision } from './coordinator-route'
+
+// Collaborate independent review (closure-loop §1.1): the one verification gate collaborate has (Gate-B is
+// single/pipeline only). Dispatch the bound verifier role — independent of EVERY collaborator — to adversarially
+// run the project's own build/checks on the real diff the experts produced, surfaced as a "<verifier> · Verifier"
+// segment. Returns a verdict note for Danny's closeout, or null when it can't run (no independent role bound, no
+// project cwd, or an infra fault) — never throws into the turn.
+async function runCollabReview(
+  input: CoordinatorRunInput,
+  roles: string[],
+  fullChain: string[],
+  outputs: { role: string; text: string }[],
+  cb: CoordinatorCallbacks,
+  signal: AbortSignal
+): Promise<string> {
+  // When verification can't run, we still return a note — an UNVERIFIED marker — so the synthesis closes HONESTLY
+  // instead of presenting unchecked work as done (matching single/pipeline's explicit unverified beat). Returning
+  // null here was the bug: synthesis got no note and Danny rounded it up to a normal done.
+  const UNVERIFIED = 'Independent verification did NOT run for this collaboration (no independent reviewer is bound besides the collaborators, or the verifier could not run). The combined result is UNVERIFIED — do not present it as verified/done; say plainly it was not independently checked.'
+  const reviewer = chooseVerifierRole(roles) // independent of ALL collaborators
+  if (roles.includes(reviewer)) return UNVERIFIED // only the collaborators themselves are bound → no independent reviewer
+  const cwd = input.cwdByRole?.[roles[0]] // collaborators share the project dir; the verifier git-diffs + builds it
+  if (!cwd) return UNVERIFIED // no project boundary → the floor verifier can't run git diff / the build
+  const implementationText = outputs.map((o) => `### ${displayName(o.role)}\n${o.text}`).join('\n\n')
+  const opts: RunStepOptions = {
+    convId: input.convId,
+    roleId: roles[0], // attribution only — runVerifierStep picks the verifier role independently
+    prompt: '',
+    dispatch: fullChain,
+    includeHistory: false,
+    cwd,
+    permissionMode: input.modeByRole?.[roles[0]],
+    cb,
+    signal
+  }
+  try {
+    const v = await runVerifierStep(roles, opts, { originalPrompt: input.prompt, acceptance: [] }, implementationText, signal)
+    if (v.skipped || v.infraFailure) return UNVERIFIED // ran but produced no verdict → still UNVERIFIED, never a silent done
+    return `Independent reviewer ${displayName(reviewer)} ran the project's own checks on the combined result — VERDICT: ${v.passed ? 'PASS' : 'FAIL'}.\n${v.feedback.slice(0, 2000)}`
+  } catch (e) {
+    console.warn('[coordinator] collab independent review failed (synthesis flagged UNVERIFIED):', e instanceof Error ? e.message : e)
+    return UNVERIFIED
+  }
+}
 
 // Top-level entrypoint. Always called from coordinator.handler; the user turn is already persisted by the
 // renderer (chat-path style — see chat store `send`). Throws on configuration errors so the handler
@@ -280,7 +324,14 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
     if (signal.aborted) throw new LlmError('network', 'aborted mid-collaboration')
     if (outputs.length === 0) throw new LlmError('upstream', 'collaboration produced no output')
     collabProject.completeCollabTasks(project, outputs.map((o) => o.role))
-    const synthInput = buildParallelSynthesisInput(input.prompt, outputs)
+    // Independent review (closure-loop §1.1): collaborate skips Gate-B, so the experts' combined build would
+    // ship UNVERIFIED. Restore the independent reviewer — dispatch the bound verifier role (independent of EVERY
+    // collaborator → analyst/Turing by default) to adversarially run the project's own checks on the real diff
+    // the experts produced. It streams as its own "<verifier> · Verifier" segment; Danny then closes WITH the
+    // verdict in hand (honest closeout — a FAIL is reported, never silently reworked; no auto-fix loop, lighter
+    // than full Gate-B). Best-effort: no independent role bound / no project cwd / infra fault → skip cleanly.
+    const reviewNote = await runCollabReview(input, decision.roles, fullChain, outputs, cb, signal)
+    const synthInput = buildParallelSynthesisInput(input.prompt, outputs, reviewNote ?? undefined)
     const synth = await runRoleStep({
       convId: input.convId,
       roleId: 'coordinator',

@@ -10,7 +10,7 @@ import * as rolesService from '../roles.service'
 import * as settingsService from '../settings.service'
 import * as workspaceTasks from '../workspace-tasks.service'
 import { chooseVerifierRole } from './verifier'
-import { runPanelExamine, type SubjectFinding } from './panel'
+import { runPanelExamine, renderFindings, type SubjectFinding, type Finding } from './panel'
 import { runUnderstand } from './understand'
 import { gitHead, diffSince } from './diff'
 import { chatOnce, endpointWithKey } from '../llm-once'
@@ -19,7 +19,7 @@ import type { CoordinatorCallbacks } from '../coordinator-types'
 import type { AgentEvent } from '../../agent/loop'
 import type { AgentLlmEvent } from '../../agent/llm'
 import type { PermissionMode, PermissionDecision, PermissionRequest, PanelHandle, PanelExamineResult } from '../../agent/context'
-import type { MessageAttachmentDto } from '../../ipc/contracts'
+import type { MessageAttachmentDto, WorkspaceExamineFindingDto } from '../../ipc/contracts'
 
 // What the bridge captures from the outer agent run (set by runAgentLoop). The callbacks are the agent run's own
 // AgentCallbacks pieces — the shim below routes the reviewer fan-out's CoordinatorCallbacks onto them.
@@ -45,12 +45,11 @@ const firstLine = (s: string): string => {
 // the reviewer's own model (chatOnce — same seam as the selector turns), best-effort: any failure → null and the
 // caller falls back to the flat per-dimension lines. Runs AFTER runPanelExamine closed its card, so it's invisible
 // compute whose OUTPUT becomes the tool result the engineer reads (no floating card).
-const REVIEW_SYNTHESIS_INSTRUCTION = `You are the LEAD REVIEWER. An independent panel each examined the SAME code from ONE assigned risk dimension and returned a verdict. Synthesize their verdicts into ONE final, actionable review report for the engineer who wrote the code.
+const REVIEW_SYNTHESIS_INSTRUCTION = `You are the LEAD REVIEWER. An independent panel hunted the SAME code across multiple risk lenses; every candidate they surfaced then survived adversarial refutation (the false alarms were already dropped). Synthesize the CONFIRMED findings into ONE final, actionable review report for the engineer who wrote the code.
 
-- De-duplicate: if several dimensions flag the SAME underlying issue, state it ONCE.
-- Drop anything marked FALSE-POSITIVE (a skeptic majority already disproved it) — never resurrect it.
-- Lead with the real defects, most severe first. For each: WHAT is wrong, WHERE (file:line if a reviewer cited one), WHY it matters, and a concrete FIX.
-- If every dimension passed, say so plainly and list what was checked so the engineer knows the coverage.
+- De-duplicate: if several lenses confirmed the SAME underlying issue, state it ONCE.
+- Lead with the real defects, most severe first. For each: WHAT is wrong, WHERE (file:line when cited), WHY it matters, and a concrete FIX.
+- If nothing was confirmed, say so plainly and list the lenses that were checked so the engineer knows the coverage.
 - Be tight and concrete — no preamble, no restating these instructions. This goes straight back to the engineer.`
 
 async function synthesizeReview(reviewer: string, paths: string[], produced: SubjectFinding[], signal: AbortSignal): Promise<string | null> {
@@ -58,12 +57,15 @@ async function synthesizeReview(reviewer: string, paths: string[], produced: Sub
   if (!rb?.endpointId || !rb.model) return null
   const epk = endpointWithKey(rb.endpointId)
   if (!epk) return null
-  const verdicts = produced
-    .map((f) => `## ${f.key} — ${f.refuted ? 'FALSE-POSITIVE (refuted by skeptics)' : f.passed ? 'PASS' : 'FAIL'}\n${(f.feedback || '').slice(0, 2400)}`)
-    .join('\n\n')
+  // Feed the CONFIRMED candidates (survived per-candidate refute), severity-first — the workflow SYNTHESIZE stage.
+  const confirmed = produced.flatMap((f) => (f.candidates ?? []).filter((c) => !c.refuted))
+  const refutedN = produced.reduce((s, f) => s + (f.candidates ?? []).filter((c) => c.refuted).length, 0)
+  const body = confirmed.length
+    ? renderFindings(confirmed)
+    : `No candidate defect survived refutation${refutedN ? ` (${refutedN} dropped as false-positive)` : ''}. Lenses checked: ${produced.map((f) => f.key).join(', ')}.`
   try {
     const out = await chatOnce(epk.ep, epk.key, rb.model, [
-      { role: 'user', content: `${REVIEW_SYNTHESIS_INSTRUCTION}\n\nTarget file(s): ${paths.join(', ')}\n\nThe panel's per-dimension verdicts:\n${verdicts}` }
+      { role: 'user', content: `${REVIEW_SYNTHESIS_INSTRUCTION}\n\nTarget file(s): ${paths.join(', ')}\n\nConfirmed findings (survived adversarial refutation), severity-first:\n${body}` }
     ], { signal })
     const t = out.trim()
     return t.length > 0 ? t : null
@@ -165,31 +167,40 @@ export function createPanelHandle(deps: PanelHandleDeps): PanelHandle {
         }
         return { ok: false, message: `panel_examine could not complete: all ${findings.length} selected reviewer(s) failed to return a usable verdict (likely a reviewer-endpoint fault). Retry, or review the target manually — this is NOT an all-clear.`, findings: [] }
       }
-      const flagged = produced.filter((f) => !f.passed && !f.refuted)
-      const refuted = produced.filter((f) => f.refuted)
-      const passed = produced.filter((f) => f.passed)
-      const header = `panel_examine (review by ${reviewer}) ran ${produced.length} reviewer perspective(s): ${passed.length} pass, ${flagged.length} flagged${refuted.length ? `, ${refuted.length} refuted as false-positive` : ''}.`
-      // SYNTHESIZE (workflow-aligned final stage): one lead-reviewer turn dedups across dimensions + writes the
-      // actionable report. Best-effort — on any failure fall back to the flat per-dimension lines.
+      // Per-candidate accounting (workflow-faithful): confirmed = candidates that SURVIVED refute; refuted = dropped.
+      const confirmed: Finding[] = produced.flatMap((f) => (f.candidates ?? []).filter((c) => !c.refuted))
+      const refutedCands: Finding[] = produced.flatMap((f) => (f.candidates ?? []).filter((c) => c.refuted))
+      const header = `panel_examine (review by ${reviewer}) hunted ${produced.length} lens(es): ${confirmed.length} confirmed defect(s)${refutedCands.length ? `, ${refutedCands.length} dropped as false-positive` : ''}.`
+      // SYNTHESIZE (workflow-aligned final stage): one lead-reviewer turn dedups the CONFIRMED findings + writes the
+      // actionable report. Best-effort — on any failure fall back to the flat per-candidate lines.
       const report = await synthesizeReview(reviewer, paths, produced, deps.signal)
-      const lines = produced.map((f) => `- ${f.key}: ${f.refuted ? 'FALSE-POSITIVE (refuted by skeptics)' : f.passed ? 'PASS' : 'FAIL'} — ${firstLine(f.feedback)}`)
+      const lines = confirmed.length
+        ? confirmed.map((c) => `- [${c.severity}] ${c.title}${c.file ? ` (${c.file}${c.line ? `:${c.line}` : ''})` : ''} — ${c.lens}`)
+        : ['- no candidate defect survived refutation']
       const message = report ? `${header}\n\n${report}` : `${header}\n${lines.join('\n')}`
-      // Workspace Tasks history (design §5 P13/P14): this is the single write point — convId + structured
-      // findings are both in scope here. Gated to ok + non-empty findings (the early returns above never
-      // reach here), so a disabled/failed/empty examine never persists a phantom all-clear.
+      // Workspace Tasks history (design §5 P13/P14): single write point. ONE row per CANDIDATE (confirmed +
+      // refuted) so the reconstructed card shows the real findings — each with its severity / location / refute
+      // tally. An all-clean review (lenses fired but zero candidates) falls back to per-lens 'pass' rows so the
+      // history still records that the review ran + its coverage (recordExamine drops a truly empty findings set).
+      const candidateRows: WorkspaceExamineFindingDto[] = [...confirmed, ...refutedCands].map((c) => ({
+        axis: c.lens,
+        title: c.title,
+        severity: c.severity,
+        file: c.file ? `${c.file}${c.line ? `:${c.line}` : ''}` : undefined,
+        verdict: c.refuted ? 'false-positive' : 'fail',
+        feedback: c.mechanism.slice(0, 4000),
+        refuted: c.refuted,
+        refuteTally: c.refuteTotal ? `${c.refuteYes ?? 0}/${c.refuteTotal}` : undefined
+      }))
+      const persistRows: WorkspaceExamineFindingDto[] = candidateRows.length
+        ? candidateRows
+        : produced.map((f) => ({ axis: f.key, verdict: 'pass' as const, feedback: 'no candidate defect found', why: f.why || undefined }))
       workspaceTasks.recordExamine(deps.convId, {
         owner: deps.callerRoleId, // the expert that ran panel_examine → the card is grouped under it in Tasks
         mode: 'review',
         subject: paths.join(', '),
         roster: produced.map((f) => f.key), // stable row roster for the reconstructed card
-        findings: produced.map((f) => ({
-          axis: f.key,
-          verdict: f.refuted ? 'false-positive' : f.passed ? 'pass' : 'fail',
-          feedback: f.feedback.slice(0, 4000), // FULL feedback (capped) so the rebuilt card's View-full works on reload
-          why: f.why || undefined,
-          refuted: f.refuted,
-          refuteTally: f.refuteTotal ? `${f.refuteYes ?? 0}/${f.refuteTotal}` : undefined
-        })),
+        findings: persistRows,
         message,
         examinedAt: Date.now()
       })
