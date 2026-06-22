@@ -103,7 +103,7 @@ export function subjectExaminePrompt(focus: string): string {
 
 You are an independent FINDER running ONE focused lens of a panel review — the adversarial FIND stage. You did NOT write this code and must not edit it. Your job is to FIND defects in your assigned lens, aggressively — NOT to certify the code is fine.
 
-The change's diff and the project's build/typecheck output are PROVIDED below as ground truth. Do NOT re-run the build — other lenses share this one build, and re-running it races the working tree. Reason over the provided output, and use Read / Grep / Glob to inspect the touched code as deeply as your lens needs.
+Run \`git diff HEAD\` and \`git status\` yourself to see the uncommitted change (including any new files), then use Read / Grep / Glob to inspect the touched code as deeply as your lens needs. Don't re-run the project's build/test suite — many lenses run in parallel and re-running it races the working tree; \`git diff\` plus read-only inspection is enough to hunt your lens.
 
 Hunt this lens, aggressively, on top of a standard correctness read:
 ${focus}
@@ -112,7 +112,7 @@ How to find — this is the FIND stage, so SURFACE candidates; a later REFUTE st
 - Surface EVERY candidate defect your lens implicates — list each one. A weak, partial, or "this might be" signal is still a candidate worth listing; do NOT silently drop it because you are unsure. Dropping false alarms is the refute stage's job, not yours.
 - For EACH candidate give: WHAT is wrong, WHERE (file:line), the failure MECHANISM (the concrete path that triggers it), and a SEVERITY (high / med / low). Cite the code — not a vague worry.
 - Do NOT rubber-stamp. "Looks fine" is a conclusion only after you genuinely tried to break this lens and could not. There is no prize for PASS — your value is the candidates you surface.
-- The provided build output is already the floor's call: if those checks are RED, that is handled — hunt only YOUR lens on top of the change.
+- The project's own build/typecheck is the floor verifier's separate job — you don't need to run it; hunt only YOUR lens on top of the change.
 
 Report your reasoning first (probe the lens, cite the code). THEN emit your candidates as a machine-readable block — a fenced \`\`\`findings array, ONE object per candidate, each independently judged by the refute stage that follows:
 
@@ -135,13 +135,14 @@ VERDICT: PASS
 // and ≥ majority "does not hold up" votes drop it before closure. The BURDEN is on the FINDING: a candidate
 // survives ONLY when a skeptic can concretely SEE it is a real, reachable defect — uncertain / hypothetical /
 // unverifiable → refute it. (This inverts the old keep-unless-disproven skeptic, which paired with an
-// all-PASS finder meant refute almost never ran. Read-only, shares the same provided build, never re-runs it.)
+// all-PASS finder meant refute almost never ran. Self-fetches the diff via `git diff` + reads the cited code,
+// like a Workflow agent — nothing is inlined into the prompt.)
 export function refutePrompt(focus: string): string {
   return `${COMMON_PREAMBLE}
 
 You are an independent SKEPTIC in the REFUTE stage of a panel review. A FINDER, hunting the "${focus}" lens, flagged a candidate defect in the change below. The FIND stage was deliberately aggressive — many of its candidates are false alarms, and THIS stage is the filter. Try to REFUTE this candidate: it SURVIVES only if it is a real, demonstrable, reachable defect you cannot break.
 
-The diff and the build/typecheck output are PROVIDED below as ground truth. Do NOT re-run the build. Use Read / Grep / Glob to inspect the cited code for yourself.
+Check the candidate YOURSELF, scoped to the ONE candidate's code: Read the cited file (and run \`git diff HEAD -- <the cited file>\` if you need to see exactly what changed there). You do NOT need the whole diff — just the candidate's site. Don't re-run the project's build/test suite.
 
 How to judge — the candidate must EARN its place; the burden is on the FINDING, not on you:
 - REFUTE it (it does NOT hold up) whenever you cannot concretely confirm a real defect: it is hypothetical or "could in theory", rests on an assumption you cannot verify in the code, points at a same-named-but-DIFFERENT symbol, describes expected / by-design behavior, or a check that does not actually apply here. When you are not convinced it is a genuine, reachable defect, REFUTE it.
@@ -164,7 +165,7 @@ export function reverifyPrompt(focus: string): string {
 
 You are an INDEPENDENT verifier confirming a CLAIMED FIX. A previous review flagged a defect in the "${focus}" dimension; the implementer says they have fixed it. Your ONE job is to confirm whether that SPECIFIC defect is now resolved — a narrow, binary check, NOT a fresh hunt for new issues.
 
-The diff and the project's build/typecheck output are PROVIDED below as ground truth. Do NOT re-run the build. Use Read / Grep / Glob to inspect the cited code.
+Run \`git diff HEAD\` and Read the cited code yourself to confirm the fix. Don't re-run the project's build/test suite — \`git diff\` plus read-only inspection is enough.
 
 - PASS if the previously-flagged defect is genuinely resolved by the change.
 - FAIL ONLY if that specific defect — or a direct regression the fix itself introduced — clearly REMAINS, with a concrete, pointable failure. Do NOT FAIL on new, unrelated, or weak/speculative concerns: this is a fix-confirmation, not a find stage.

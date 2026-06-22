@@ -8,10 +8,9 @@ import * as settingsService from './settings.service'
 import * as gateOutcomeRepo from '../repos/gate-outcome.repo'
 import { displayName } from '../agent/roles/prompts'
 import { deriveAcceptanceCriteria, decideEscalation } from './coordinator-route'
-import { gitHead, changedPathsSince, buildChangedSet } from './examine/diff'
+import { gitHead, changedPathsSince } from './examine/diff'
 import type { WrittenFile } from '../agent/context'
 import { subjectMeta } from './examine/subjects'
-import { runBuildOnce } from './examine/build'
 import { describeSnapshot, snapshotWorkspace } from './git-snapshot'
 import { runRoleStep, type RunStepOptions } from './coordinator-step'
 import { ulid } from '../db/id'
@@ -241,7 +240,7 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
     outputTokens += floorClosure.outputTokens
   }
   const subjectRoundsBudget = MAX_FIX_ROUNDS - (floorFailed ? 1 : 0)
-  const integrated = await integrateSubjectClosures(roleId, opts, gate, result.text, failedSubjects, subjectRoundsBudget, stepId, baseRef, baseChanged, result.writtenFiles, signal)
+  const integrated = await integrateSubjectClosures(roleId, opts, gate, result.text, failedSubjects, subjectRoundsBudget, stepId, signal)
   inputTokens += integrated.inputTokens
   outputTokens += integrated.outputTokens
   const subjectClosures = integrated.outcomes
@@ -451,9 +450,6 @@ async function integrateSubjectClosures(
   failedSubjects: SubjectFinding[],
   roundsBudget: number,
   stepId: string,
-  baseRef: string,
-  baseChanged: string[],
-  implementerFiles: readonly WrittenFile[],
   signal?: AbortSignal
 ): Promise<{ outcomes: Map<string, SubjectClosure>; inputTokens: number; outputTokens: number }> {
   const outcomes = new Map<string, SubjectClosure>()
@@ -488,16 +484,13 @@ async function integrateSubjectClosures(
     const followUp = await runGateBFailFollowUp(implementerRoleId, opts, gate, implementationText, merged, signal, handlerRoleId)
     inputTokens += followUp.inputTokens
     outputTokens += followUp.outputTokens
-    // ONE fresh build after this expert's fix (P1a de-contamination: scope to THIS step's delta incl. the
-    // handler's writes), shared across its per-subject re-verifies.
-    const { changed: reChanged, diff: reDiff } = await buildChangedSet(opts.cwd, baseRef, baseChanged, [...implementerFiles, ...followUp.writtenFiles])
-    const freshBuild = await runBuildOnce(opts.cwd, baseRef, reChanged, reDiff)
+    // Each re-verify subject self-fetches the diff (`git diff`) like a Workflow agent — no shared build to inject.
     for (const lv of lvs) {
       const focus = lv.focus ?? subjectMeta(lv.key)?.focus ?? lv.key // custom lens carries its own focus; enum via subjectMeta
       // quiet: reuses the subject's stable toolUseId; an event would clobber the original FAIL row the panel
       // card keeps (the resolved outcome is re-emitted via emitSubjectFinal). reverify: narrow binary fix-confirm
       // persona (NOT the aggressive FIND prompt) so a fresh weak candidate can't flip a real fix to 'unresolved'.
-      const reVerdict = await runVerifierStep(implementerRoleId, opts, gate, followUp.text, signal, { key: lv.key, focus, sharedBuild: freshBuild, stepId, quiet: true, reverify: true })
+      const reVerdict = await runVerifierStep(implementerRoleId, opts, gate, followUp.text, signal, { key: lv.key, focus, stepId, quiet: true, reverify: true })
       inputTokens += reVerdict.inputTokens
       outputTokens += reVerdict.outputTokens
       outcomes.set(lv.key, { outcome: reVerdict.passed ? 'fixed' : 'unresolved', evidence: reVerdict.feedback, handlerRoleId })

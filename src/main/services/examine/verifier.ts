@@ -8,7 +8,6 @@ import * as rolesService from '../roles.service'
 import * as agentService from '../agent-dispatch'
 import { COORDINATOR_VERIFIER_PROMPT, subjectExaminePrompt, reverifyPrompt } from '../../agent/roles/prompts'
 import { runRoleStep, type RunStepOptions } from '../coordinator-step'
-import type { SharedBuild } from './build'
 
 export function chooseVerifierRole(implementer: string | string[]): string {
   // The verifier runs the agent loop with an overridden read-only kit (Read/Grep/Glob/Bash) + the Gate B
@@ -25,14 +24,13 @@ export function chooseVerifierRole(implementer: string | string[]): string {
   )
 }
 
-// Subject context for a panel verifier call (panel-examine §3.3/§3.4). ABSENT → the FLOOR verifier,
-// byte-identical to before: full COORDINATOR_VERIFIER_PROMPT, Read/Grep/Glob/Bash kit, runs the build itself.
-// PRESENT → an ADDITIVE per-dimension subject: derived persona, read-only kit (NO Bash), reasons over the shared
-// build, distinct per-(subject,step) stream identity.
+// Subject context for a panel verifier call (panel-examine §3.3/§3.4). ABSENT → the FLOOR verifier:
+// full COORDINATOR_VERIFIER_PROMPT, Read/Grep/Glob/Bash kit, fetches the diff + runs the build itself.
+// PRESENT → an ADDITIVE per-dimension subject: derived persona, SAME Read/Grep/Glob/Bash kit — it SELF-FETCHES
+// the diff (`git diff`) like a Workflow agent (nothing is inlined into its prompt), distinct per-(subject,step) id.
 export interface SubjectContext {
   key: string // an enum ReviewSubject key, OR an agent-derived custom lens key (THOROUGH/explicit path)
   focus: string
-  sharedBuild: SharedBuild
   stepId: string
   // UI (panel-examine §4.4): when set, this subject's sub_tool event nests under the panel card (id=panelId)
   // instead of surfacing top-level; `why` is the selection reason shown on the row. Absent → top-level (the
@@ -73,11 +71,9 @@ export async function runVerifierStep(implementerRoleId: string | string[], opts
   // racing the same tree → phantom red); it reasons over the provided output + read-only code inspection.
   const verifierPrompt = subject
     ? [
-        `Run your "${subject.key}" subject on the change below. The diff and the project's build output are PROVIDED — do NOT re-run the build; reason over them and use Read / Grep / Glob to inspect the touched code for your dimension. End your message with exactly one final line \`VERDICT: PASS\` or \`VERDICT: FAIL\`.`,
+        `Run your "${subject.key}" subject on the uncommitted change. Inspect it YOURSELF per your instructions (\`git diff HEAD\` + \`git status\`, then Read the touched files for your dimension) — nothing is provided inline. End your message with exactly one final line \`VERDICT: PASS\` or \`VERDICT: FAIL\`.`,
         `Original task:\n${gate.originalPrompt}`,
         gate.acceptance?.length ? `Acceptance criteria the change must satisfy:\n${gate.acceptance.map((c) => `- ${c}`).join('\n')}` : '',
-        subject.sharedBuild.diff ? `Diff under review (this step's changes):\n\`\`\`diff\n${subject.sharedBuild.diff}\n\`\`\`` : '',
-        subject.sharedBuild.ran ? `Build / typecheck output (already run for all subjects — do NOT re-run it):\n\`\`\`\n${subject.sharedBuild.output}\n\`\`\`` : 'No build output is available — judge from the diff plus your own read-only code inspection.',
         `Implementer role (do NOT defer to them): ${implementers.join(', ')}`,
         `Implementer's own summary (a claim to verify, not ground truth):\n${implementationText}`
       ].filter(Boolean).join('\n\n')
@@ -102,11 +98,11 @@ export async function runVerifierStep(implementerRoleId: string | string[], opts
       // classifier — which hard-denied harmless verification commands (e.g. `go test … >/dev/null`). The kit is
       // already read-only (toolNames below: no Write/Edit), so inheriting bypass adds no write capability.
       includeHistory: false,
-      // FLOOR kit = Read/Grep/Glob + Bash so it can ACTUALLY run the checks (most non-dev roles lack Bash).
-      // SUBJECT kit = Read/Grep/Glob, NO Bash — the build already ran (shared), and dropping Bash PHYSICALLY
-      // enforces "a subject never re-builds / never starts a service" (§3.4 / §4-D), stronger than a prompt ask.
-      // Both use the adversarial verifier persona, not the borrowed role's "don't touch code" system prompt.
-      toolNames: subject ? ['Read', 'Grep', 'Glob'] : ['Read', 'Grep', 'Glob', 'Bash'],
+      // FLOOR + SUBJECT both get Read/Grep/Glob + Bash and SELF-FETCH the diff (`git diff`) like a Workflow
+      // agent — nothing is inlined (inlining the full diff into every subject blew the gateway's per-channel TPM).
+      // The persona tells subjects NOT to re-run the heavy build (many lenses run in parallel) — `git diff` +
+      // read-only inspection is enough. Both use the adversarial verifier persona, not the borrowed role's prompt.
+      toolNames: ['Read', 'Grep', 'Glob', 'Bash'],
       systemPromptOverride: subject ? (subject.reverify ? reverifyPrompt(subject.focus) : subjectExaminePrompt(subject.focus)) : COORDINATOR_VERIFIER_PROMPT,
       // closure-loop: FLOOR streams as its own "· Verifier" segment; SUBJECT runs card-only (quiet) and folds
       // into that segment as a PanelCard row (via the sub_tool card above), never a separate prose segment.

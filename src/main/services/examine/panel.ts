@@ -14,7 +14,6 @@ import type { WrittenFile } from '../../agent/context'
 import { confineReal } from '../../agent/confine'
 import { buildChangedSet } from './diff'
 import { subjectMeta } from './subjects'
-import { runBuildOnce, type SharedBuild } from './build'
 import { parallelExamineLimited } from './pool'
 import { runVerifierStep, chooseVerifierRole, type SubjectContext } from './verifier'
 
@@ -192,12 +191,6 @@ export async function runPanelExamine(roleId: string, opts: RunStepOptions, gate
     opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_start', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'PanelExamine', input: { mode: 'review', subjects: selected.map((s) => s.key) } })
     panelOpened = true
 
-    // Shared build prefix — run ONCE for all subjects (§3.4); injected as ground truth so no subject re-builds
-    // (their kit also omits Bash, enforcing read-only physically). The diff is the git+event hybrid computed
-    // above (passed as override) so subjects see the SAME content the trigger did — new/untracked files included;
-    // the build itself stays whole-project.
-    const sharedBuild = await runBuildOnce(opts.cwd, baseRef, changed, diff)
-
     // Fan out under the two-layer limiter (global min(16,cores−2) + per-endpoint). Each subject emits a hard
     // verdict; a non-contracted reply is retried ONCE (schema-equivalent, §4.F), then marked produced:false
     // (dropped, degrade — never block the others or the floor). EVERY selected subject returns a record (carrying
@@ -209,7 +202,7 @@ export async function runPanelExamine(roleId: string, opts: RunStepOptions, gate
       const focus = subjectMeta(sel.key)?.focus ?? sel.focus
       const base = { key: sel.key, focus: sel.focus, why: sel.why }
       if (!focus) return { ...base, produced: false, passed: false, feedback: 'unknown dimension (dropped)', inputTokens: 0, outputTokens: 0 }
-      const subjectCtx: SubjectContext = { key: sel.key, focus, sharedBuild, stepId, panelId, why: sel.why }
+      const subjectCtx: SubjectContext = { key: sel.key, focus, stepId, panelId, why: sel.why }
       let inTok = 0
       let outTok = 0
       // Up to 2 attempts: a non-contracted reply (no parseable VERDICT line) is retried ONCE, then dropped.
@@ -262,7 +255,7 @@ export async function runPanelExamine(roleId: string, opts: RunStepOptions, gate
     // un-refuted candidate has refuted=undefined and would auto-"survive", so a candidate must never be skipped.
     const allCandidates = verdicts.flatMap((v) => v.candidates ?? [])
     if (allCandidates.length > 0) {
-      const tokByLens = await refuteEachCandidate(opts, gate, implementationText, allCandidates, sharedBuild, verifierRoleId, verifierEndpointId, stepId, panelId, signal)
+      const tokByLens = await refuteEachCandidate(opts, gate, implementationText, allCandidates, verifierRoleId, verifierEndpointId, stepId, panelId, signal)
       for (const v of verdicts) {
         const tk = tokByLens.get(v.key)
         if (tk) { v.inputTokens += tk.inputTokens; v.outputTokens += tk.outputTokens }
@@ -331,7 +324,6 @@ async function refuteEachCandidate(
   gate: { originalPrompt: string; approvedPlan?: string; acceptance?: string[] },
   implementationText: string,
   candidates: Finding[],
-  sharedBuild: SharedBuild,
   verifierRoleId: string,
   verifierEndpointId: string,
   stepId: string,
@@ -343,7 +335,7 @@ async function refuteEachCandidate(
   const jobs: Array<() => Promise<{ findingId: string; lens: string; refuted: boolean; inputTokens: number; outputTokens: number }>> = []
   for (const cand of candidates) {
     for (let i = 0; i < REFUTE_VOTERS; i++) {
-      jobs.push(() => runCandidateRefuteVote(opts, gate, implementationText, cand, sharedBuild, verifierRoleId, i, stepId, panelId, signal).then((r) => ({ findingId: cand.id, lens: cand.lens, ...r })))
+      jobs.push(() => runCandidateRefuteVote(opts, gate, implementationText, cand, verifierRoleId, i, stepId, panelId, signal).then((r) => ({ findingId: cand.id, lens: cand.lens, ...r })))
     }
   }
   const votes = (await parallelExamineLimited(verifierEndpointId, jobs)).filter((v): v is { findingId: string; lens: string; refuted: boolean; inputTokens: number; outputTokens: number } => v != null)
@@ -363,16 +355,15 @@ async function refuteEachCandidate(
   return tokByLens
 }
 
-// One skeptic vote on ONE candidate finding. Read-only kit (no Bash — the build is provided), the refute
-// persona, a distinct per-(candidate,voter,step) toolUseId so concurrent skeptics don't collide in the event
-// stream. A non-contracted reply (no REFUTE: line) or an infra failure → refuted:false (the candidate stands;
+// One skeptic vote on ONE candidate finding. Read/Grep/Glob/Bash kit — it SELF-FETCHES the diff (`git diff`)
+// like a Workflow agent (nothing inlined), the refute persona, a distinct per-(candidate,voter,step) toolUseId so
+// concurrent skeptics don't collide in the event stream. A non-contracted reply (no REFUTE: line) or an infra failure → refuted:false (the candidate stands;
 // the burden is on the finding to be demonstrably real, but a FAILED vote must not silently drop a real defect).
 async function runCandidateRefuteVote(
   opts: RunStepOptions,
   gate: { originalPrompt: string; approvedPlan?: string; acceptance?: string[] },
   implementationText: string,
   cand: Finding,
-  sharedBuild: SharedBuild,
   verifierRoleId: string,
   voterIdx: number,
   stepId: string,
@@ -389,11 +380,9 @@ async function runCandidateRefuteVote(
   const focus = cand.focus ?? subjectMeta(cand.lens)?.focus ?? cand.lens
   const where = cand.file ? ` (${cand.file}${cand.line ? `:${cand.line}` : ''})` : ''
   const refuteUserPrompt = [
-    `An independent "${cand.lens}" finder flagged ONE candidate defect in the change below. As a SKEPTIC, try to REFUTE this single candidate — prove it is a false alarm, or concede it stands.`,
+    `An independent "${cand.lens}" finder flagged ONE candidate defect in the uncommitted change. As a SKEPTIC, try to REFUTE this single candidate — prove it is a false alarm, or concede it stands. Inspect it YOURSELF per your instructions (\`git diff HEAD\` + Read the cited file) — nothing is provided inline.`,
     `Candidate to refute:\n[${cand.severity}] ${cand.title}${where}\nMechanism: ${cand.mechanism}`,
     `Original task:\n${gate.originalPrompt}`,
-    sharedBuild.diff ? `Diff under review:\n\`\`\`diff\n${sharedBuild.diff}\n\`\`\`` : '',
-    sharedBuild.ran ? `Build / typecheck output (already run — do NOT re-run it):\n\`\`\`\n${sharedBuild.output}\n\`\`\`` : '',
     `Implementer's own summary:\n${implementationText}`
   ].filter(Boolean).join('\n\n')
   let res: Awaited<ReturnType<typeof runRoleStep>>
@@ -404,7 +393,7 @@ async function runCandidateRefuteVote(
       prompt: refuteUserPrompt,
       dispatch: [...(opts.dispatch ?? []), verifierRoleId],
       includeHistory: false,
-      toolNames: ['Read', 'Grep', 'Glob'], // read-only — the build is provided, never re-run
+      toolNames: ['Read', 'Grep', 'Glob', 'Bash'], // self-fetches the diff (git diff) like a Workflow agent; persona says don't re-run the heavy build
       systemPromptOverride: refutePrompt(focus),
       quiet: true, // card-only: the skeptic vote folds into the Verifier segment's panel card, not its own segment
       signal: signal ?? opts.signal
