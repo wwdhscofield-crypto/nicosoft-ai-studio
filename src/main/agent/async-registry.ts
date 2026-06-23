@@ -73,6 +73,13 @@ export class AsyncRegistry {
 export function formatAsyncHandle(h: AsyncHandle): string {
   if (h.status === 'running') return `- ${h.id} (${h.kind}): still running${h.info ? ` — ${h.info}` : ''}`
   if (h.status === 'failed') return `- ${h.id} (${h.kind}): FAILED — ${h.error ?? 'unknown error'}`
+  // A 'panel' handle's result is a PanelExamineResult OBJECT — surface its readable .message (the verdict summary
+  // the agent acts on), not a raw JSON dump. The full structured result stays on the handle for the coordinator
+  // (批D/E reads asyncRegistry to thread the panel verdict into runCollabReview).
+  if (h.kind === 'panel' && h.result && typeof h.result === 'object' && 'message' in h.result) {
+    const msg = (h.result as { message?: unknown }).message
+    return `- ${h.id} (panel): done — ${typeof msg === 'string' ? msg : '(panel produced no message)'}`
+  }
   const r = typeof h.result === 'string' ? h.result : h.result != null ? JSON.stringify(h.result) : '(no result)'
   return `- ${h.id} (${h.kind}): done — ${r}`
 }

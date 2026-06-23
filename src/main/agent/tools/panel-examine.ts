@@ -52,7 +52,27 @@ export const panelExamineTool = buildTool<typeof inputSchema, PanelExamineResult
     if (!ctx.panel) {
       return { data: { ok: false, message: 'panel_examine is not available here — it cannot be run from inside a sub-agent or a panel reviewer.' } }
     }
-    return { data: await ctx.panel.examine({ paths: input.paths, mode: input.mode === 'understand' ? 'understand' : 'review' }) }
+    const mode = input.mode === 'understand' ? 'understand' : 'review'
+    // ASYNC drive (dogfood2 P1/P3/P5 + C3): when an async registry is present (a collaboration today; a solo run
+    // once 批C2 wires it), launch the panel as a BACKGROUND handle instead of blocking this tool call. The agent
+    // reports it started, MAY keep working, and calls await_async with the handle to pick up the verdict — deciding
+    // for ITSELF when to suspend (await_async parks the turn in a collaboration). This is what surfaces the panel in
+    // chat as the driver's own tool call (P3) and lets the driver suspend instead of showing "Working…" (P5). The
+    // panel runs detached; 批A's delta-stall watchdog bounds it so the handle always settles (no indefinite park, N1).
+    if (ctx.async) {
+      const label = `${mode} panel over ${input.paths.length} path(s): ${input.paths.slice(0, 3).join(', ')}${input.paths.length > 3 ? ' …' : ''}`
+      const handle = ctx.async.launch('panel', label, () => ctx.panel!.examine({ paths: input.paths, mode }))
+      return {
+        data: {
+          ok: true,
+          message:
+            `Launched a ${label} as async handle ${handle.id}. It runs in the background — report that it started ` +
+            `(name the handle + what it covers), then call await_async with ["${handle.id}"] to pick up the verdict. ` +
+            `You MAY keep working first; awaiting suspends you until the panel lands (recommended for a long review).`
+        }
+      }
+    }
+    return { data: await ctx.panel.examine({ paths: input.paths, mode }) }
   },
   mapResult(out, toolUseId): ToolResultBlock {
     // is_error only when the panel could not RUN (disabled / no reviewer / bad target) — a successful review that

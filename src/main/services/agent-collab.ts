@@ -73,7 +73,7 @@ export interface CollabHooks {
 // expert knows who to consult and to stay in its own area. Memories/summary are skipped — a collaboration
 // is a fresh shared task, not a continuation of the role's chat history.
 function buildCollabSystem(roleId: string, teammates: { id: string; name: string }[], cwd?: string): string {
-  const base = buildAgentSystem(roleId, [], null, skillManager.listingForRole(roleId), cwd, true) // collab=true: skip the solo panel self-review discipline (collab implementers have no panel_examine — 批3)
+  const base = buildAgentSystem(roleId, [], null, skillManager.listingForRole(roleId), cwd, true) // collab=true: skip the SOLO "every agent self-runs panel_examine before done" discipline — in a collab only the ELECTED driver runs the ONE consolidated panel (批C), not each expert (the per-expert flood was P1)
   const roster = teammates.map((t) => `- ${t.name} (roleId: ${t.id})`).join('\n')
   return (
     base +
@@ -99,14 +99,17 @@ function buildCollabSystem(roleId: string, teammates: { id: string; name: string
     'services; frontend owns the renderer / UI) — and split your todos so they do NOT collide. Build only ' +
     "within your agreed scope; never edit a teammate's files. This opening alignment is what prevents two of " +
     'you touching the same files and duplicating or conflicting work.\n\n' +
-    // §4.2/§4.5: collab implementers self-check per batch; the ONE deep panel runs post-completion by the reviewer.
-    '## Review in a collaboration — you do NOT self-run a panel\n' +
-    'You have NO panel_examine tool here, and that is deliberate: in a collaboration you do NOT run your own ' +
-    'multi-perspective panel review. Instead, self-check + fix after EACH batch (your own type-check / build + a ' +
-    'careful re-read of your batch), and finish your COMPLETE part clean. After everyone finishes, the ' +
-    'coordinator runs ONE consolidated independent review — an elected reviewer, independent of all of you — ' +
-    'over the whole combined change. That single post-completion review is the deep second set of eyes; your ' +
-    'job is to make your part genuinely done and self-checked so it has little left to catch.' +
+    // dogfood2 P1/§4.5: collab implementers KEEP panel_examine but do NOT each self-run it — they ELECT one driver.
+    '## Review in a collaboration — elect ONE of you to drive it\n' +
+    'You DO have panel_examine here — but you do NOT each run your own (N overlapping panels flood the work; that ' +
+    'was the bug). Instead, during your opening alignment (or as the work finishes), ELECT ONE of you — agree via ' +
+    'send_message, e.g. whoever owns the larger / riskier surface — to drive the team\'s ONE consolidated review. ' +
+    'Everyone else: self-check + fix after EACH batch (your own type-check / build + a careful re-read) and finish ' +
+    'your COMPLETE part clean, so the review has little left to catch. The ELECTED driver, AFTER every teammate has ' +
+    'finished, runs panel_examine ONCE over the WHOLE combined change (all of your files, review mode): it launches ' +
+    'as an async handle — REPORT that it started (name the handle + what it covers, like driving a workflow), then ' +
+    'await_async it to SUSPEND until the verdict lands, and report the result. The panel\'s own internal reviewers ' +
+    'are independent of all of you, so a single elected driver does not compromise the review\'s independence.' +
     // C3 §6.7: tell the collab expert it can launch long ops async and suspend instead of blocking the turn.
     '\n\n## Long ops — launch async and suspend, don\'t block\n' +
     'Any long / event-driven op (a long check / analysis / probe script, a background task) you can run in the ' +
