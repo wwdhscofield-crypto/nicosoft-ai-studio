@@ -17,6 +17,10 @@ export interface AsyncHandle {
 export class AsyncRegistry {
   private handles = new Map<string, AsyncHandle>()
   private counter = 0
+  // 批C2a: each launch's settle promise, so a SOLO caller can AWAIT one handle within its turn (await_async's solo
+  // path). Collab instead wakes a parked expert via onComplete. The promise never rejects (the IIFE captures the
+  // runner's throw as status:'failed'), so settle() always resolves to the settled handle.
+  private settlers = new Map<string, Promise<void>>()
   // Internal kill switch, chained to the owning session's signal. Both a real parentSignal abort AND dispose()
   // (called on a NORMAL quiescent session end, which does NOT abort parentSignal) fire it → every launch runner
   // sees its signal abort and tree-kills its background work (launch-async.ts onAbort). This MUST be independent
@@ -38,7 +42,7 @@ export class AsyncRegistry {
     const id = `async-${kind}-${++this.counter}`
     const handle: AsyncHandle = { id, kind, status: 'running', info }
     this.handles.set(id, handle)
-    void (async (): Promise<void> => {
+    const settler = (async (): Promise<void> => {
       try {
         handle.result = await runner(this.ac.signal)
         handle.status = 'done'
@@ -48,10 +52,19 @@ export class AsyncRegistry {
       }
       this.onComplete?.(handle)
     })()
+    this.settlers.set(id, settler)
     return handle
   }
 
   get(id: string): AsyncHandle | undefined {
+    return this.handles.get(id)
+  }
+
+  // Await ONE handle's completion (SOLO within-turn await_async). Resolves to the settled handle (done/failed),
+  // or undefined for an unknown id. Collab uses onComplete + the scheduler's park instead; solo has no scheduler,
+  // so it awaits the settle promise directly inside the turn (the model is idle meanwhile — no token cost).
+  async settle(id: string): Promise<AsyncHandle | undefined> {
+    await this.settlers.get(id)
     return this.handles.get(id)
   }
 

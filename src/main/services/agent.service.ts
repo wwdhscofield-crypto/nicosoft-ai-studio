@@ -17,6 +17,8 @@ import { ulid } from '../db/id'
 import { buildToolsParam } from '../agent/loop'
 import type { ServerToolSchema } from '../agent/types'
 import { lspTool } from '../agent/tools/lsp'
+import { awaitAsyncTool } from '../agent/tools/await-async'
+import { launchAsyncTool } from '../agent/tools/launch-async'
 import type { Tool } from '../agent/tool'
 import type { AgentRunInput, RunTranscript } from '../ipc/contracts'
 import { requireApiKey } from './credentials'
@@ -53,7 +55,7 @@ export async function run(
   const runId = ulid()
   // Tools scoped to this agent role: a CORE subset (doc 16 §5) + MCP + Skill, by roleId + scope.
   const roleId = input.roleId ?? ENGINEER_ROLE_ID
-  let tools = toolsForAgentRole(roleId)
+  let tools = [...toolsForAgentRole(roleId), launchAsyncTool, awaitAsyncTool] // 批C2a: solo direct chat can launch/await async ops (panel_examine launches through ctx.async too)
   if (DEV_ROLES.has(roleId)) tools = [...tools, ...SERVICE_TOOLS, ...E2E_TOOLS, ...SUBAGENT_TOOLS, lspTool as unknown as Tool]
   // Read needs a folder boundary; without a cwd, drop it for non-dev roles so the model can't read the
   // process working dir. Dev roles (Flynn/Shuri) always have a cwd (required in the composer).

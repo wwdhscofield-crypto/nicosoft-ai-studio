@@ -1,9 +1,8 @@
 // await_async tool (C3 §6.4) — wait for one or more agent-launched async ops (AsyncRegistry handles) and return
-// their results. COLLAB-ONLY this round: ctx.async is wired by agent-collab; a solo run has none, so the tool
-// errors with a clear pointer to the op's own wait (e.g. agent_wait) — solo long ops stay synchronous (§6.6 B2).
-//
-// 批6 wires the SYNCHRONOUS form (await the registry inside the call). 批8 upgrades collab to a TRUE suspend
-// (the expert parks and is woken by the completion event) — the tool surface and result shape stay the same.
+// their results. COLLAB: a TRUE suspend (the expert parks; the completion event wakes it — 批8). SOLO (dogfood2
+// 批C2a): no scheduler to yield to, so it AWAITS each in-flight handle WITHIN the turn — the model is idle
+// meanwhile (no token cost), and launch_async already returned immediately so there was no block-from-start.
+// 批C2b upgrades solo to a TRUE cross-turn park (end the turn, resume on completion) via the solo session shell.
 
 import { z } from 'zod'
 import { buildTool } from '../tool'
@@ -24,15 +23,10 @@ export const awaitAsyncTool = buildTool({
   isReadOnly: () => true, // it only waits — the launched op carries its own permissions
   isConcurrencySafe: () => true,
   async call(input, ctx) {
-    if (!ctx.async || !ctx.collab?.awaitHandles) {
-      throw new Error('await_async is only available in a collaboration. In a solo run, wait on the operation’s own tool (e.g. agent_wait).')
+    if (!ctx.async) {
+      throw new Error('await_async is not available here — there is no async registry (you are inside a sub-agent or a fixed-kit reviewer).')
     }
-    // Split into already-settled vs still-running. All settled → return synchronously (no suspend). Any still
-    // running → TRUE SUSPEND: park until they complete; the completion event wakes the expert and injects the
-    // results (collab.ts notifyHandleComplete + runExpert T1), with the already-settled results riding along.
-    // The collab suspend waits for ALL in-flight handles; a session abort (or asyncRegistry.dispose on session
-    // end) is the backstop. mode/timeoutMs were REMOVED from the schema so the tool contract matches the wired
-    // behavior (the earlier schema advertised early-return / timeout that the collab suspend never honored).
+    // Split into already-settled vs still-running.
     const inflight: string[] = []
     const settled: string[] = []
     let known = 0
@@ -47,9 +41,17 @@ export const awaitAsyncTool = buildTool({
       return { data: `No matching async handles for: ${input.handles.join(', ')}. Check the ids (a launched op returns its handle id).` }
     }
     if (inflight.length === 0) {
-      return { data: settled.join('\n') } // every handle already done → no need to park
+      return { data: settled.join('\n') } // every handle already done → no suspend needed
     }
-    return { data: ctx.collab.awaitHandles(inflight, settled) }
+    // COLLAB: TRUE SUSPEND — park the expert; the completion event wakes it + injects the results (collab.ts
+    // notifyHandleComplete + runExpert T1), already-settled results riding along. A session abort / dispose backstops it.
+    if (ctx.collab?.awaitHandles) {
+      return { data: ctx.collab.awaitHandles(inflight, settled) }
+    }
+    // SOLO (批C2a): no scheduler — AWAIT each in-flight handle within the turn (model idle, no token cost). 批C2b
+    // turns this into a true cross-turn park (end the turn, resume on completion) once the solo session shell lands.
+    const resolved = await Promise.all(inflight.map((id) => ctx.async!.settle(id)))
+    return { data: [...settled, ...resolved.map((h) => (h ? formatAsyncHandle(h) : '(handle vanished)'))].join('\n') }
   },
   mapResult: stringResult,
 })

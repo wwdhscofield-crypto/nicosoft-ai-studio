@@ -31,6 +31,9 @@ import type { MemoryRow } from '../repos/memory.repo'
 import { agentEvents } from './event-bus'
 import { manager as skillManager } from './skill.service'
 import { DEV_ROLES, E2E_TOOLS, SERVICE_TOOLS, SUBAGENT_TOOLS, toolsForAgentRole } from './agent-tools'
+import { AsyncRegistry } from '../agent/async-registry'
+import { awaitAsyncTool } from '../agent/tools/await-async'
+import { launchAsyncTool } from '../agent/tools/launch-async'
 import { buildAgentSystem } from './agent-system'
 import { setActiveServices, clearActiveServices, broadcastConvServices } from './active-services'
 import * as workspaceTasks from './workspace-tasks.service'
@@ -134,6 +137,10 @@ export async function runAgentLoop(
   // Per-run async sub-agent pool (batch 3): runAgent injects the child runner into it; tree-killed in the
   // same finally as the registry so no background child outlives the run.
   const subAgents = new AsyncSubAgentPool(signal)
+  // 批C2a: per-run async-op registry so a SOLO dispatched expert can launch_async a long op / panel and await it
+  // within the turn (the model is idle meanwhile). Tree-killed in the same finally as the others. (批C2b will make
+  // this session-level so a solo expert can also TRULY park across turns — UI-free for multi-hour ops.)
+  const asyncReg = new AsyncRegistry(signal)
   // Per-run language server (batch 4) — only dev roles (they have a project cwd + the lsp tool). Lazily
   // spawns typescript-language-server on the first query; tree-killed in the finally so none lingers.
   const lsp = DEV_ROLES.has(loop.roleId) ? new LSPManager(cwd) : undefined
@@ -154,6 +161,7 @@ export async function runAgentLoop(
     sessionDir,
     services: registry,
     subAgents,
+    async: asyncReg, // 批C2a: solo launch_async/await_async (+ panel_examine launches through it when present)
     lsp,
     // panel_examine bridge (panel-examine §4.1 / closure-loop decision ⑤) — inject the handle iff this run's kit
     // actually carries the panel_examine tool (every agent role now does; a fixed-kit verifier / sub-agent does
@@ -261,6 +269,7 @@ export async function runAgentLoop(
     broadcastConvServices(loop.convId, []) // clear the Tasks panel's Services section on teardown
     registry.dispose() // tree-kill any dev servers this run started — no zombies, no resource pile-up
     subAgents.disposeAll() // tree-kill any background sub-agents — none outlive the parent run
+    asyncReg.dispose() // 批C2a: tree-kill any still-running launch_async op (within-turn await already settled the ones the agent collected)
     lsp?.dispose() // tree-kill the language server if one was spawned
     // Reclaim e2e_browser sessions this run launched and never closed — without this, a run that ends,
     // aborts, or errors mid-verification leaks a live Chromium/Electron process per forgotten session.
@@ -372,7 +381,7 @@ export async function runDispatchedAgent(
     const allow = new Set(d.toolNames)
     tools = [...CORE_TOOLS, ...E2E_TOOLS].filter((t) => allow.has(t.name))
   } else {
-    tools = toolsForAgentRole(d.roleId)
+    tools = [...toolsForAgentRole(d.roleId), launchAsyncTool, awaitAsyncTool] // 批C2a: solo can launch/await async ops (panel_examine launches through ctx.async too)
     if (DEV_ROLES.has(d.roleId)) tools = [...tools, ...SERVICE_TOOLS, ...E2E_TOOLS, ...SUBAGENT_TOOLS, lspTool as unknown as Tool]
     if (!d.cwd && !DEV_ROLES.has(d.roleId)) tools = tools.filter((t) => t.name !== 'Read' && t.name !== 'Glob')
   }
