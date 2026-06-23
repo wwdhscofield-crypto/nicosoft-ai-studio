@@ -7,6 +7,7 @@
 import type { CollabHandle } from './collab'
 import type { ServiceHandle } from './service-registry'
 import type { LspHandle } from './lsp/manager'
+import type { AsyncRegistry } from './async-registry'
 
 // panel_examine agent tool (panel-examine §4.1): the agent drives a multi-perspective review on an EXPLICIT
 // target (file paths). The handle (impl in services/examine/agent-panel.ts) captures the run's convId/cwd/signal
@@ -152,6 +153,10 @@ export interface AgentContext {
   // Async sub-agent pool (batch 3): agent_spawn / agent_send / agent_wait / agent_close reach it here. Set
   // by runAgent on the top-level run; undefined inside a sub-agent so children can't spawn (depth 1).
   subAgents?: SubAgentPool
+  // Async operation registry (C3 §6.2): agent-launched long ops (e2e / wait-for-service-exit / scripts / custom)
+  // run as background handles awaited via await_async, instead of blocking the launch call. Set by agent-collab on
+  // the collaboration session; undefined for solo this round (solo long ops stay synchronous — await_async collab-only).
+  async?: AsyncRegistry
   // Language server (batch 4): the lsp tool reaches it here for definition / references / hover /
   // diagnostics on TS/JS. Set by runAgentLoop (lazily spawns typescript-language-server on first query);
   // undefined where there's no project to analyze. Shared with sub-agents so they can use it too.

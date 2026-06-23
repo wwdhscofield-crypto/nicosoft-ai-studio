@@ -15,6 +15,8 @@ import type { ServerToolSchema } from '../agent/types'
 import { displayName } from '../agent/roles/prompts'
 import { sendMessageTool, assignTaskTool, waitTool } from '../agent/tools/consult'
 import { CollabSession, type ExpertSpec, type CollabEvent } from '../agent/collab'
+import { AsyncRegistry } from '../agent/async-registry'
+import { awaitAsyncTool } from '../agent/tools/await-async'
 import { ServiceRegistry, type ServiceInfo } from '../agent/service-registry'
 import { LSPManager } from '../agent/lsp/manager'
 import { startServiceTool, stopServiceTool, serviceLogsTool, listServicesTool } from '../agent/tools/service'
@@ -119,6 +121,9 @@ export async function runCollabSession(
   // One service registry per collaboration, shared by all its experts (Flynn starts a backend, Shuri
   // lists + connects). Tree-killed in the finally below when the session ends — no zombie ports survive.
   const registry = new ServiceRegistry()
+  // One async-op registry per collaboration (C3 §6.2): experts launch long ops as background handles and
+  // await_async them. Threaded the session signal so an aborted session cancels any in-flight handle (T3).
+  const asyncRegistry = new AsyncRegistry(signal)
   // Live Tasks-panel wiring: push the active service set on every change; archive each one to history as it
   // exits; register the handle so the renderer can stop / read logs of a running service on demand.
   registry.setHooks({
@@ -152,6 +157,7 @@ export async function runCollabSession(
       sendMessageTool,
       assignTaskTool,
       waitTool,
+      awaitAsyncTool,
       startServiceTool,
       stopServiceTool,
       serviceLogsTool,
@@ -193,6 +199,7 @@ export async function runCollabSession(
           sessionDir,
           collab,
           services: registry,
+          async: asyncRegistry,
           lsp,
           // B3 (collab-review §4.2): collab implementers do NOT self-run the expensive multi-agent panel — the ONE
           // consolidated review runs post-completion by the independent reviewer in runCollabReview (coordinator).
