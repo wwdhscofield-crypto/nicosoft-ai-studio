@@ -105,7 +105,14 @@ function buildCollabSystem(roleId: string, teammates: { id: string; name: string
     'careful re-read of your batch), and finish your COMPLETE part clean. After everyone finishes, the ' +
     'coordinator runs ONE consolidated independent review — an elected reviewer, independent of all of you — ' +
     'over the whole combined change. That single post-completion review is the deep second set of eyes; your ' +
-    'job is to make your part genuinely done and self-checked so it has little left to catch.'
+    'job is to make your part genuinely done and self-checked so it has little left to catch.' +
+    // C3 §6.7: tell the collab expert it can launch long ops async and suspend instead of blocking the turn.
+    '\n\n## Long ops — launch async and suspend, don\'t block\n' +
+    'Any long / event-driven op (a long check / analysis / probe script, a background task) you can run in the ' +
+    'BACKGROUND instead of blocking your turn: launch_async starts a READ-ONLY command and returns a handle id ' +
+    'immediately; report it started, keep coordinating, then await_async the handle — your turn ENDS and resumes ' +
+    'when the op completes (a teammate can still message you meanwhile). Short ops just run inline. For a MUTATING ' +
+    'command use Bash (gated, synchronous); for a long-lived server/dev process use start_service.'
   )
 }
 
