@@ -111,6 +111,16 @@ export interface AgentTextDelta {
   streamId: string
   text: string
 }
+// 批C2b: a SOLO run resumed itself after a parked async op completed (solo-async). The backend started a fresh
+// streamId the renderer isn't subscribed to yet; this event tells the renderer to bind it to the conv (same as
+// agent.run's returned streamId for a user-initiated run) so the resumed turn streams into the conversation.
+export interface AgentResumeStream {
+  streamId: string
+  convId: string
+  roleId: string
+  endpointId: string
+  model: string
+}
 // Unified live usage for ANY in-flight turn (chat / agent / coordinator / image), keyed by convId.
 //
 // Distinct measurements ride this one channel, disambiguated by `kind`:

@@ -37,11 +37,18 @@ import { manager as skillManager } from './skill.service'
 import { DEV_ROLES, E2E_TOOLS, ENGINEER_ROLE_ID, SERVICE_TOOLS, SUBAGENT_TOOLS, toolsForAgentRole } from './agent-tools'
 import { buildAgentSystem } from './agent-system'
 import { conversationToAgentMessages, runAgentLoop, type AgentCallbacks } from './agent-dispatch'
+import { getSoloAsync, parkSolo } from './solo-async'
 
+// 批C2b: a RESUME is a turn the runtime starts itself after a parked async op completes — not a user message.
+// resumeNote carries the completion summary; in resume mode we do NOT persist a user turn (no robotic user
+// bubble) and seed the note as the trailing user turn so the agent continues. The assistant reply persists
+// normally, so the follow-up is durable. The synthetic 'user' framing is the standard way to feed a tool/async
+// result back into the loop (the model's own seed always ends on a user turn).
 export async function run(
   input: AgentRunInput,
   cb: AgentCallbacks,
   signal: AbortSignal,
+  opts?: { resumeNote?: string },
 ): Promise<{ reason: string; turns: number; convId: string; runId: string; promptTokens: number; outputTokens: number; sentTokens: number }> {
   const ep = endpointRepo.getById(input.endpointId)
   if (!ep) throw new LlmError('bad_request', 'endpoint not found')
@@ -66,15 +73,19 @@ export async function run(
   // hosted search) use the local WebSearch tool instead, which fires an ISOLATED search request free of tools.
   const serverTools: ServerToolSchema[] = protocol === 'openai' ? [{ type: 'web_search', name: 'web_search' }] : []
 
-  // ① Persist the user turn (tagged with run_id) so context assembly + extraction read it from the DB.
-  const userImages = (input.images ?? []).map((i) => ({ url: i.dataUrl }))
-  convService.append(convId, {
-    author: 'user',
-    expertId: roleId,
-    content: input.prompt,
-    attachments: userImages,
-    runId,
-  })
+  // ① Persist the user turn (tagged with run_id) so context assembly + extraction read it from the DB. SKIP on a
+  // resume (批C2b): the completion note isn't the user's words — persisting it would inject a robotic user bubble.
+  // The note is seeded only into this run's in-memory seed below; the assistant's reply still persists.
+  if (opts?.resumeNote == null) {
+    const userImages = (input.images ?? []).map((i) => ({ url: i.dataUrl }))
+    convService.append(convId, {
+      author: 'user',
+      expertId: roleId,
+      content: input.prompt,
+      attachments: userImages,
+      runId,
+    })
+  }
 
   // ② chat-layer context: recall memories + the history after the latest summary's boundary + summary.
   const memories = await memoryService.recall({
@@ -93,10 +104,22 @@ export async function run(
   const mapped = conversationToAgentMessages(recent)
   const firstUser = mapped.findIndex((m) => m.role === 'user')
   let seed = firstUser > 0 ? mapped.slice(firstUser) : mapped
-  // Claude-OAuth-routed upstreams reject assistant prefill ("the conversation must end with a user
-  // message"); the native API tolerates it. History normally ends on the just-persisted user prompt,
-  // but guard the invariant here too so a persistence-order change can't reintroduce a routed 400.
-  if (seed.length && seed[seed.length - 1].role === 'assistant') {
+  if (opts?.resumeNote != null) {
+    // 批C2b resume: deliver the completion note as the trailing user turn (in-memory only — not persisted). The
+    // parked turn USUALLY left an assistant reply ("launched X, awaiting…"), so history ends on assistant and we
+    // append a fresh user turn. But if that turn was a pure tool-call with NO prose, nothing persisted and history
+    // ends on the user's ORIGINAL turn — appending another user turn would put two in a row (some upstreams 400).
+    // Fold the note into that trailing user turn instead so the seed stays well-formed (user/assistant alternation).
+    const last = seed[seed.length - 1]
+    if (last && last.role === 'user') {
+      seed = [...seed.slice(0, -1), { role: 'user', content: [...last.content, { type: 'text', text: `\n\n${opts.resumeNote}` }] }]
+    } else {
+      seed = [...seed, { role: 'user', content: [{ type: 'text', text: opts.resumeNote }] }]
+    }
+  } else if (seed.length && seed[seed.length - 1].role === 'assistant') {
+    // Claude-OAuth-routed upstreams reject assistant prefill ("the conversation must end with a user message"); the
+    // native API tolerates it. History normally ends on the just-persisted user prompt, but guard the invariant here
+    // too so a persistence-order change can't reintroduce a routed 400.
     seed = [...seed, { role: 'user', content: [{ type: 'text', text: input.prompt }] }]
   }
 
@@ -139,6 +162,11 @@ export async function run(
       permissionMode: input.permissionMode ?? 'default',
       imageModel: input.imageModel,
       onTodosChange: cb.onTodos, // TodoWrite executed (mid-turn) → live push to the workspace Tasks panel
+      // 批C2b: solo direct chat gets a CONV-LEVEL async registry (handles outlive the run) + the cross-turn park
+      // hook, so launch_async + await_async can park the turn and resume when the op completes. The IPC layer
+      // (agent.handler.startAgentRun) arms the resume closure + drives markSoloRunActive/Idle around this run.
+      asyncRegistry: getSoloAsync(convId).reg,
+      parkSolo: (inflight, settledResults) => parkSolo(convId, inflight, settledResults),
     },
     cb,
     signal,

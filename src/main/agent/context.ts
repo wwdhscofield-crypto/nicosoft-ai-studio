@@ -155,8 +155,13 @@ export interface AgentContext {
   subAgents?: SubAgentPool
   // Async operation registry (C3 §6.2): agent-launched long ops (e2e / wait-for-service-exit / scripts / custom)
   // run as background handles awaited via await_async, instead of blocking the launch call. Set by agent-collab on
-  // the collaboration session; undefined for solo this round (solo long ops stay synchronous — await_async collab-only).
+  // the collaboration session; for solo direct chat it's the conv-level registry (批C2b) so handles outlive the run.
   async?: AsyncRegistry
+  // Solo cross-turn park (批C2b): await_async's SOLO branch calls this to PARK the turn (end it, free the UI) and
+  // be resumed when the awaited handles complete — instead of blocking within the turn. Set by runAgentLoop ONLY
+  // for the direct-chat path (it has a renderer stream to resume into); undefined for a dispatched expert / collab
+  // / sub-agent (no resumable stream of their own), so those fall back to a within-turn await. See solo-async.ts.
+  parkSolo?: (inflightIds: string[], settledResults: string[]) => string
   // Language server (batch 4): the lsp tool reaches it here for definition / references / hover /
   // diagnostics on TS/JS. Set by runAgentLoop (lazily spawns typescript-language-server on first query);
   // undefined where there's no project to analyze. Shared with sub-agents so they can use it too.

@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMain, type WebContents } from 'electron'
 import { ulid } from '../db/id'
 import type { PermissionDecision } from '../agent/context'
 import { isContentBlock } from '../agent/types'
@@ -8,6 +8,8 @@ import { StreamRegistry } from './stream-lifecycle'
 import * as agentService from '../services/agent.service'
 import * as compressionService from '../services/compression.service'
 import * as workspaceTasks from '../services/workspace-tasks.service'
+import { armSoloResume, markSoloRunActive, markSoloRunIdle } from '../services/solo-async'
+import { ENGINEER_ROLE_ID } from '../services/agent-tools'
 import type { AgentBlockDto, AgentPermissionResponse, AgentQuestionResponse, AgentResultDto, AgentRunInput } from './contracts'
 
 // Streaming agent over IPC: `agent:run` starts a run, returns its streamId, and pushes events on
@@ -38,18 +40,40 @@ function sweepStream(streamId: string): void {
   }
 }
 
-export function registerAgentHandlers(): void {
-  ipcMain.handle('agent:run', (e, input: AgentRunInput): { streamId: string } => {
-    const streamId = ulid()
-    const sender = e.sender
-    const { controller, send, finish } = streams.open(streamId, sender)
-    pendingByStream.set(streamId, new Set())
-    pendingQByStream.set(streamId, new Set())
+// Start (or RESUME) a streamed agent run on a fresh streamId. Factored out of the agent:run handler so 批C2b's
+// solo cross-turn park can drive a resumed run from the backend (a completed async op) with the SAME streaming +
+// permission/question bridging a user-initiated run gets. opts.resumeNote marks a resume: it's pushed to the
+// renderer up front (agent:resume-stream binds the new streamId to the conv) and handed to agent.service.run so
+// it seeds the completion note instead of persisting a user turn.
+function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: { resumeNote?: string }): { streamId: string } {
+  const streamId = ulid()
+  const { controller, send, finish } = streams.open(streamId, sender)
+  pendingByStream.set(streamId, new Set())
+  pendingQByStream.set(streamId, new Set())
 
-    void agentService
-      .run(
-        input,
-        {
+  // A RESUME pushes a brand-new stream the renderer isn't subscribed to yet (the parked run's streamId already
+  // closed on agent:done). Bind this streamId to the conv BEFORE any delta arrives so the resumed turn streams
+  // into the same conversation. A user-initiated run is bound renderer-side from agent.run's returned streamId.
+  if (opts?.resumeNote != null) {
+    send('agent:resume-stream', {
+      streamId,
+      convId: input.convId,
+      roleId: input.roleId ?? ENGINEER_ROLE_ID,
+      endpointId: input.endpointId,
+      model: input.model,
+    })
+  }
+  // Arm/refresh the conv's resume closure with THIS run's sender + input (latest wins; a WebContents survives a
+  // renderer reload, so it stays valid). When a parked async op completes, solo-async invokes it → a fresh resumed
+  // run on a new stream. markSoloRunActive claims the conv so a completion DURING this run defers its resume to the
+  // run's idle (finally → markSoloRunIdle) — never two concurrent runs on one conv.
+  armSoloResume(input.convId, (note) => startAgentRun(input, sender, { resumeNote: note }))
+  markSoloRunActive(input.convId)
+
+  void agentService
+    .run(
+      input,
+      {
           onStream: (ev) => {
             if (ev.type === 'text') send('agent:delta', { streamId, text: ev.delta })
             else if (ev.type === 'tool_use_start') send('agent:tool:start', { streamId, id: ev.id, name: ev.name })
@@ -155,6 +179,7 @@ export function registerAgentHandlers(): void {
             }),
         },
         controller.signal,
+        { resumeNote: opts?.resumeNote },
       )
       .then((r) => send('agent:done', { streamId, reason: r.reason, turns: r.turns, inputTokens: r.promptTokens, outputTokens: r.outputTokens, sentTokens: r.sentTokens }))
       .catch((err: unknown) => {
@@ -166,10 +191,16 @@ export function registerAgentHandlers(): void {
         workspaceTasks.finalizeConv(input.convId) // run silent → finalize an all-complete phase (design §5 P19)
         sweepStream(streamId) // deny any prompt the renderer never answered before the run ended
         finish()
+        // 批C2b: mark the conv idle LAST. If this turn PARKED on an async op (or one completed mid-run), this is
+        // where the resume fires — a fresh run on a new stream, now that no run streams for the conv.
+        markSoloRunIdle(input.convId)
       })
 
-    return { streamId }
-  })
+  return { streamId }
+}
+
+export function registerAgentHandlers(): void {
+  ipcMain.handle('agent:run', (e, input: AgentRunInput): { streamId: string } => startAgentRun(input, e.sender))
 
   ipcMain.handle('agent:stop', (_e, streamId: string) => {
     streams.abort(streamId)

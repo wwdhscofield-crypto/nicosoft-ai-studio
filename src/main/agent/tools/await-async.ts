@@ -48,8 +48,13 @@ export const awaitAsyncTool = buildTool({
     if (ctx.collab?.awaitHandles) {
       return { data: ctx.collab.awaitHandles(inflight, settled) }
     }
-    // SOLO (批C2a): no scheduler — AWAIT each in-flight handle within the turn (model idle, no token cost). 批C2b
-    // turns this into a true cross-turn park (end the turn, resume on completion) once the solo session shell lands.
+    // SOLO direct chat (批C2b): TRUE CROSS-TURN PARK — record the awaited handles, end the turn (free the UI), and
+    // the conversation resumes automatically when they complete (solo-async + agent:resume-stream). No block.
+    if (ctx.parkSolo) {
+      return { data: ctx.parkSolo(inflight, settled) }
+    }
+    // FALLBACK (dispatched expert / sub-agent: no resumable stream of their own) — AWAIT each in-flight handle
+    // within the turn (model idle, no token cost; launch_async already returned immediately so no block-from-start).
     const resolved = await Promise.all(inflight.map((id) => ctx.async!.settle(id)))
     return { data: [...settled, ...resolved.map((h) => (h ? formatAsyncHandle(h) : '(handle vanished)'))].join('\n') }
   },

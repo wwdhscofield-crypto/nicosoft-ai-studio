@@ -190,6 +190,15 @@ export const useChat = create<ChatState>((set, get) => {
     // The backend persists the user + final assistant turn itself; here we only accumulate the live UI
     // (text + tool cards) and the permission prompt. We never re-append the assistant message.
     const ag = window.api.agent
+    // 批C2b: a parked solo run resumed itself on a fresh stream (a launched async op completed). Bind the new
+    // streamId to its conversation — every agent:* handler below is keyed by agentMeta.get(streamId), so this one
+    // line routes the entire resumed turn (deltas, tool cards, done) into the conv without touching them. Mark the
+    // conv streaming so the composer shows the live working state; onDone clears it. A fresh assistant bubble opens
+    // on the first delta (appendDelta starts one when the last message isn't a live assistant turn).
+    ag.onResumeStream((d) => {
+      agentMeta.set(d.streamId, { convId: d.convId, expertId: d.roleId, endpointId: d.endpointId, model: d.model })
+      set((s) => ({ streaming: { ...s.streaming, [d.convId]: true } }))
+    })
     ag.onDelta((d) => {
       const meta = agentMeta.get(d.streamId)
       if (!meta) return

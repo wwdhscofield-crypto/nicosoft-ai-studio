@@ -76,6 +76,13 @@ export interface AgentLoopInput {
   initialTodos?: AgentContext['todos'] // seed the run's todos from the shared conv-level list (pipeline continuity)
   onTodosChange?: (roleId: string, todos: AgentContext['todos']) => void // TodoWrite writes back → shared conv-level list + per-role live push (roleId injected at ctx.setTodos)
   expectsFileChanges?: boolean // implementation-gated run: quiescing with zero file edits triggers one nudge turn (loop.ts)
+  // 批C2b: a CONV-LEVEL async registry (solo-async) for the direct-chat path, so launch_async handles outlive the
+  // run and a parked turn can resume across turns. When set, runAgentLoop uses it and does NOT dispose it in the
+  // finally (conv-delete / app-exit owns that). Absent (dispatched / collab-sub) → a per-run registry, disposed here.
+  asyncRegistry?: AsyncRegistry
+  // 批C2b: the solo cross-turn park hook (solo-async.parkSolo, convId-bound). Wired into ctx.parkSolo so await_async
+  // parks the turn instead of blocking. Set ONLY by the direct-chat path (resumable); undefined elsewhere.
+  parkSolo?: (inflightIds: string[], settledResults: string[]) => string
 }
 
 // Generic tool→image surfacing. A tool that produces an image (ns_generate_image, code_execution charts,
@@ -137,10 +144,12 @@ export async function runAgentLoop(
   // Per-run async sub-agent pool (batch 3): runAgent injects the child runner into it; tree-killed in the
   // same finally as the registry so no background child outlives the run.
   const subAgents = new AsyncSubAgentPool(signal)
-  // 批C2a: per-run async-op registry so a SOLO dispatched expert can launch_async a long op / panel and await it
-  // within the turn (the model is idle meanwhile). Tree-killed in the same finally as the others. (批C2b will make
-  // this session-level so a solo expert can also TRULY park across turns — UI-free for multi-hour ops.)
-  const asyncReg = new AsyncRegistry(signal)
+  // Async-op registry for launch_async / await_async / panel_examine launches. 批C2b: the direct-chat path passes a
+  // CONV-LEVEL registry (loop.asyncRegistry, from solo-async) so its handles outlive the run and a parked turn can
+  // resume across turns — we must NOT dispose THAT one here (conv-delete / app-exit owns it). A dispatched expert /
+  // collab-sub passes none → a per-run registry (批C2a within-turn await), tree-killed in the finally like the rest.
+  const ownsAsyncReg = !loop.asyncRegistry
+  const asyncReg = loop.asyncRegistry ?? new AsyncRegistry(signal)
   // Per-run language server (batch 4) — only dev roles (they have a project cwd + the lsp tool). Lazily
   // spawns typescript-language-server on the first query; tree-killed in the finally so none lingers.
   const lsp = DEV_ROLES.has(loop.roleId) ? new LSPManager(cwd) : undefined
@@ -161,7 +170,8 @@ export async function runAgentLoop(
     sessionDir,
     services: registry,
     subAgents,
-    async: asyncReg, // 批C2a: solo launch_async/await_async (+ panel_examine launches through it when present)
+    async: asyncReg, // launch_async/await_async (+ panel_examine launches through it when present)
+    parkSolo: loop.parkSolo, // 批C2b: direct-chat solo cross-turn park; undefined for dispatched/collab → within-turn await
     lsp,
     // panel_examine bridge (panel-examine §4.1 / closure-loop decision ⑤) — inject the handle iff this run's kit
     // actually carries the panel_examine tool (every agent role now does; a fixed-kit verifier / sub-agent does
@@ -269,7 +279,7 @@ export async function runAgentLoop(
     broadcastConvServices(loop.convId, []) // clear the Tasks panel's Services section on teardown
     registry.dispose() // tree-kill any dev servers this run started — no zombies, no resource pile-up
     subAgents.disposeAll() // tree-kill any background sub-agents — none outlive the parent run
-    asyncReg.dispose() // 批C2a: tree-kill any still-running launch_async op (within-turn await already settled the ones the agent collected)
+    if (ownsAsyncReg) asyncReg.dispose() // per-run registry only: tree-kill its launch_async ops. A conv-level registry (批C2b direct-chat) is owned by solo-async — disposing it here would kill a parked op the resume needs.
     lsp?.dispose() // tree-kill the language server if one was spawned
     // Reclaim e2e_browser sessions this run launched and never closed — without this, a run that ends,
     // aborts, or errors mid-verification leaks a live Chromium/Electron process per forgotten session.

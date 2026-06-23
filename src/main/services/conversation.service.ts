@@ -4,6 +4,7 @@ import { dataDir } from '../db/connection'
 import * as convRepo from '../repos/conversation.repo'
 import * as titleService from './title.service'
 import * as workspaceTasks from './workspace-tasks.service'
+import { disposeSoloAsync } from './solo-async'
 import { persistDataUrl, removeConversationMedia } from '../media/storage'
 import type {
   ConversationCreateDto,
@@ -116,6 +117,7 @@ export async function generateTitle(input: ConversationTitleInput): Promise<stri
 export function remove(convId: string): void {
   convRepo.remove(convId)
   workspaceTasks.dropLive(convId) // workspace_task_history rows cascade via FK; the in-memory live phase doesn't
+  disposeSoloAsync(convId) // 批C2b: tree-kill any still-running launch_async op parked under this conv (its registry outlives runs)
   removeConversationMedia(convId) // DB rows cascade via FK; the media files don't — drop them too
   // Agent runs persist transcript.jsonl + tool-results/ (and e2e screenshots) under
   // ~/.nsai/sessions/<convId>/ — outside both the DB and the media dir, so neither cleanup above touches

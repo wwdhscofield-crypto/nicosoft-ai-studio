@@ -10,6 +10,7 @@ import type {
   ChatErrorDto,
   AgentRunInput,
   AgentTextDelta,
+  AgentResumeStream,
   ConvUsage,
   ConvImage,
   ConvTodos,
@@ -240,6 +241,8 @@ const api = {
     respondQuestion: (resp: AgentQuestionResponse): Promise<void> =>
       ipcRenderer.invoke('agent:question:respond', resp),
     onDelta: (cb: (d: AgentTextDelta) => void): (() => void) => agentListen('agent:delta', cb),
+    // 批C2b: a parked solo run resumed itself on a new stream — bind it to the conv so the resumed turn streams in.
+    onResumeStream: (cb: (d: AgentResumeStream) => void): (() => void) => agentListen('agent:resume-stream', cb),
     onToolStart: (cb: (d: AgentToolStart) => void): (() => void) => agentListen('agent:tool:start', cb),
     onSubToolStart: (cb: (d: AgentSubToolStart) => void): (() => void) => agentListen('agent:sub-tool:start', cb),
     onSubToolDone: (cb: (d: AgentSubToolDone) => void): (() => void) => agentListen('agent:sub-tool:done', cb),
