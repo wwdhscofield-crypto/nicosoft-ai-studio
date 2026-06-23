@@ -143,6 +143,9 @@ export function createPanelHandle(deps: PanelHandleDeps): PanelHandle {
       // (the file bodies) carries the selection. The reviewers still read the files themselves (read-only kit).
       const base = await gitHead(deps.cwd)
       const diff = base ? await diffSince(deps.cwd, base, paths) : ''
+      // SYNTHESIZE runs INSIDE runPanelExamine now (as a visible 'Synth' step under the still-open card, workflow
+      // alignment) — the panel calls back with the produced findings; we capture the report here for the tool result.
+      let report: string | null = null
       const findings = await runPanelExamine(
         deps.callerRoleId,
         opts,
@@ -153,7 +156,7 @@ export function createPanelHandle(deps: PanelHandleDeps): PanelHandle {
         [],
         [],
         deps.signal,
-        { target: { changed: paths, diff }, explicit: true }
+        { target: { changed: paths, diff }, explicit: true, synthesize: async (produced) => (report = await synthesizeReview(reviewer, paths, produced, deps.signal)) }
       )
 
       const produced = findings.filter((f) => f.produced)
@@ -171,9 +174,8 @@ export function createPanelHandle(deps: PanelHandleDeps): PanelHandle {
       const confirmed: Finding[] = produced.flatMap((f) => (f.candidates ?? []).filter((c) => !c.refuted))
       const refutedCands: Finding[] = produced.flatMap((f) => (f.candidates ?? []).filter((c) => c.refuted))
       const header = `panel_examine (review by ${reviewer}) hunted ${produced.length} lens(es): ${confirmed.length} confirmed defect(s)${refutedCands.length ? `, ${refutedCands.length} dropped as false-positive` : ''}.`
-      // SYNTHESIZE (workflow-aligned final stage): one lead-reviewer turn dedups the CONFIRMED findings + writes the
-      // actionable report. Best-effort — on any failure fall back to the flat per-candidate lines.
-      const report = await synthesizeReview(reviewer, paths, produced, deps.signal)
+      // SYNTHESIZE already ran as a visible step inside runPanelExamine (above); `report` holds its output. Fall
+      // back to the flat per-candidate lines if it was unavailable.
       const lines = confirmed.length
         ? confirmed.map((c) => `- [${c.severity}] ${c.title}${c.file ? ` (${c.file}${c.line ? `:${c.line}` : ''})` : ''} — ${c.lens}`)
         : ['- no candidate defect survived refutation']

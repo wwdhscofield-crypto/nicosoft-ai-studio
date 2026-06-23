@@ -223,6 +223,44 @@
 .pe-nested { padding: 0 0 4px 14px; border-left: 1px solid var(--border-1); margin-left: 4px; }
 .pe-nested-line { color: var(--text-4); font-size: 11.5px; padding: 1px 0; }
 .pe-payload { margin: 2px 0 6px; }
+/* —— Live process tree (workflow /workflows parity): phase sections + per-candidate skeptics —— */
+.pe-phase {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px 2px;
+  margin-top: 2px;
+}
+.pe-phase-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  flex: none;
+}
+.pe-phase-count { color: var(--text-4); font-size: 10.5px; flex: none; }
+.pe-phase::after { content: ''; flex: 1; height: 1px; background: var(--border-1); }
+.pe-find, .pe-cand, .pe-read, .pe-synth { padding-left: 4px; }
+.pe-cand .pe-subject { color: var(--text-1); }
+/* Skeptics nested under a candidate — same gutter idiom as .pe-nested. */
+.pe-skeptics { padding: 0 0 4px 14px; border-left: 1px solid var(--border-1); margin: 0 0 2px 4px; }
+.pe-skeptic { padding: 1px 0; }
+.pe-skeptic-head { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; }
+.pe-skeptic-n { font-family: var(--mono); color: var(--text-3); flex: none; }
+.pe-vote {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 0 4px;
+  border-radius: 3px;
+  flex: none;
+}
+.pe-vote.fp { color: var(--text-3); background: var(--bg-2); }
+.pe-vote.fail { color: var(--error); background: color-mix(in oklch, var(--error) 14%, transparent); }
+.pe-vote.dim { color: var(--text-4); background: var(--bg-2); }
 /* Agent-authored Markdown result rendered inside the tool card — pad it like .tb-result and cap height
    so long verdicts scroll instead of stretching the card. */
 .tb-md {

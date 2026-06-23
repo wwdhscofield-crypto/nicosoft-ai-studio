@@ -55,6 +55,7 @@ export function registerAgentHandlers(): void {
             else if (ev.type === 'tool_use_start') send('agent:tool:start', { streamId, id: ev.id, name: ev.name })
             else if (ev.type === 'sub_tool_start') send('agent:sub-tool:start', { streamId, ...ev })
             else if (ev.type === 'sub_tool_done') send('agent:sub-tool:done', { streamId, ...ev })
+            else if (ev.type === 'sub_tool_delta') send('agent:sub-tool:delta', { streamId, ...ev })
             // Streaming usage: the in-flight request's own prompt size + running output (overwrite
             // semantics, see ConvUsage) → the live ↑ tracks current context in real time.
             else if (ev.type === 'usage') broadcastUsage(sender, input.convId, 'live', ev.inputTokens, ev.outputTokens, ev.cachedTokens)

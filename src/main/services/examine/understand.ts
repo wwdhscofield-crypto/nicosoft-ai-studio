@@ -69,8 +69,6 @@ export async function runUnderstand(callerRoleId: string, opts: RunStepOptions, 
   try {
     if (settingsService.get<boolean>('gateB.panelExamine.enabled') === false) return { map: '', parts: [] }
     if (paths.length === 0) return { map: '', parts: [] }
-    const endpointId = rolesService.getBinding(readerRoleId)?.endpointId ?? ''
-
     // The understand panel card (same chrome as review; mode='understand' → the card renders reader rows, no
     // verdicts). parentToolId 'coordinator-gate-b' has no match → surfaces top-level → PanelCard.
     opts.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_start', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'PanelExamine', input: { mode: 'understand', subjects: paths } })
@@ -78,7 +76,7 @@ export async function runUnderstand(callerRoleId: string, opts: RunStepOptions, 
 
     const tasks = paths.map((path, i) => async (): Promise<UnderstandPart> => {
       const toolId = `panel-reader-${i}-${stepId}`
-      opts.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_start', toolUseId: toolId, parentToolId: panelId, name: 'Subject', input: { subject: path, mode: 'understand' } })
+      opts.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_start', toolUseId: toolId, parentToolId: panelId, name: 'Subject', input: { subject: path, phase: 'read', mode: 'understand' } })
       let summary = ''
       try {
         const res = await runRoleStep({
@@ -89,17 +87,18 @@ export async function runUnderstand(callerRoleId: string, opts: RunStepOptions, 
           includeHistory: false,
           toolNames: ['Read', 'Grep', 'Glob'], // read-only — a reader never writes or builds
           systemPromptOverride: READER_SYSTEM,
+          streamCard: { toolUseId: toolId, parentToolId: panelId }, // stream the reader's summary live onto its row
           signal: signal ?? opts.signal
         })
         summary = res.text.trim()
       } catch (err) {
         summary = `(could not read — ${err instanceof Error ? err.message : String(err)})`
       }
-      opts.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: panelId, name: 'Subject', isError: false, input: { subject: path, mode: 'understand', verdict: 'read' }, result: summary || '(no summary)' })
+      opts.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: panelId, name: 'Subject', isError: false, input: { subject: path, phase: 'read', mode: 'understand', verdict: 'read' }, result: summary || '(no summary)' })
       return { path, summary }
     })
 
-    const parts = (await parallelExamineLimited(endpointId, tasks)).filter((p): p is UnderstandPart => p != null)
+    const parts = (await parallelExamineLimited(tasks)).filter((p): p is UnderstandPart => p != null)
 
     // SYNTHESIZE (workflow-aligned final stage): combine the per-file summaries into ONE cross-file map instead of
     // concatenating them. Rendered as a final row under the panel card (the card is still open here). Only worth a
@@ -107,10 +106,10 @@ export async function runUnderstand(callerRoleId: string, opts: RunStepOptions, 
     let map = parts.map((p) => `## ${p.path}\n${p.summary}`).join('\n\n')
     if (parts.length >= 2) {
       const synthId = `panel-synth-${stepId}`
-      opts.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_start', toolUseId: synthId, parentToolId: panelId, name: 'Subject', input: { subject: 'synthesis', mode: 'understand' } })
+      opts.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_start', toolUseId: synthId, parentToolId: panelId, name: 'Synth', input: { subject: 'synthesis', phase: 'synth', mode: 'understand' } })
       const synth = await synthesizeUnderstanding(readerRoleId, parts, signal ?? opts.signal)
       if (synth) map = synth
-      opts.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_done', toolUseId: synthId, parentToolId: panelId, name: 'Subject', isError: false, input: { subject: 'synthesis', mode: 'understand', verdict: 'synthesized' }, result: synth ? '(combined into one cross-file map)' : '(synthesis unavailable — concatenated per-file summaries)' })
+      opts.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_done', toolUseId: synthId, parentToolId: panelId, name: 'Synth', isError: false, input: { subject: 'synthesis', phase: 'synth', mode: 'understand', verdict: 'synthesized' }, result: synth ? map : '(synthesis unavailable — concatenated per-file summaries)' })
     }
 
     opts.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_done', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'PanelExamine', isError: false, result: `${parts.length}/${paths.length} file(s) read${parts.length >= 2 ? ' + synthesized' : ''}` })

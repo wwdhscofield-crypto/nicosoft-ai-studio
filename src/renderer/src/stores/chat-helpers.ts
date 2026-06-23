@@ -141,6 +141,31 @@ export const applySubToolDone = (message: ChatMessage, parentToolId: string, too
   }
 }
 
+// A sub-tool's streaming text (workflow /workflows parity) — appended live so each panel finder/skeptic/reader
+// row shows its reasoning as it's produced, not just on completion. Tail-capped so a long agent can't bloat the
+// store. A delta for an unknown sub-tool (start lost the IPC race) is a no-op — the start/done carry the result.
+const STREAM_CAP = 4000
+const appendSubToolStream = (tools: ToolCall[] | undefined, parentToolId: string, toolUseId: string, delta: string): ToolCall[] | undefined => {
+  if (!tools) return tools
+  let changed = false
+  const next = tools.map((tool) => {
+    if (tool.id !== parentToolId) return tool
+    const subTools = tool.subTools ?? []
+    const idx = subTools.findIndex((t) => t.id === toolUseId)
+    if (idx < 0) return tool
+    changed = true
+    // `stream` is tail-capped (bounded memory + the row only shows the tail); `streamLen` accumulates the FULL
+    // count so the Tasks-panel re-render key keeps advancing past the cap (else a long agent's live tail freezes).
+    return { ...tool, subTools: subTools.map((t, i) => (i === idx ? { ...t, stream: ((t.stream ?? '') + delta).slice(-STREAM_CAP), streamLen: (t.streamLen ?? 0) + delta.length } : t)) }
+  })
+  return changed ? next : tools
+}
+
+export const applySubToolDelta = (message: ChatMessage, parentToolId: string, toolUseId: string, delta: string): ChatMessage => {
+  const tools = appendSubToolStream(message.tools, parentToolId, toolUseId, delta)
+  return tools !== message.tools ? { ...message, tools } : message
+}
+
 // Server blocks shown as user-facing status rows (web_search). reasoning / thinking blocks are
 // round-tripped for context only, not shown. Extend when adding server tools (code_interpreter, image gen).
 export const SHOWN_SERVER_BLOCKS = new Set(['web_search_call'])

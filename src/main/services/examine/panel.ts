@@ -5,7 +5,6 @@
 // the location moved. No behavior change vs the in-gate-b version.
 
 import { readFile } from 'node:fs/promises'
-import * as rolesService from '../roles.service'
 import * as settingsService from '../settings.service'
 import { selectSubjects } from '../coordinator-route'
 import { refutePrompt } from '../../agent/roles/prompts'
@@ -115,6 +114,20 @@ export function renderFindings(findings: Finding[]): string {
     .join('\n')
 }
 
+// A candidate's panel-card row id + the input it carries (workflow VERIFY phase): each finding gets its OWN row
+// under the card with its skeptics nested, so the card shows every candidate being adversarially checked (not a
+// lens-level blob). Stable per-(candidate,step) id; subject=id keys the row uniquely in the card's subject map.
+const candRowId = (c: Finding, stepId: string): string => `cand-${c.id}-${stepId}`
+const candRowInput = (c: Finding): Record<string, unknown> => ({
+  phase: 'verify',
+  findingId: c.id,
+  subject: c.id,
+  lens: c.lens,
+  title: c.title,
+  severity: c.severity,
+  file: c.file ? `${c.file}${c.line ? `:${c.line}` : ''}` : undefined
+})
+
 // Read the target files' content (capped) so selectSubjects can pick risk dimensions from the CODE itself, not
 // only the diff — essential for the agent-driven entry (no diff) and surgical changes (thin diff), where a
 // diff-only selector starved and declined to fan out. Skips unreadable / out-of-bounds paths (confineReal);
@@ -144,7 +157,7 @@ async function readTargetContent(cwd: string | undefined, paths: readonly string
 // the caller supplies an explicit { changed, diff } target. The reviewer role is NOT overridden — chooseVerifierRole
 // is deterministic, so the bridge validates "a bound reviewer ≠ caller exists" (§4.2) and this re-picks the IDENTICAL
 // role. Gate B omits override → the git-derived target, byte-identical.
-export async function runPanelExamine(roleId: string, opts: RunStepOptions, gate: { originalPrompt: string; approvedPlan?: string; acceptance?: string[] }, implementationText: string, stepId: string, baseRef: string, baseChanged: string[], implementerFiles: readonly WrittenFile[], signal?: AbortSignal, override?: { target?: { changed: string[]; diff: string }; explicit?: boolean }): Promise<SubjectFinding[]> {
+export async function runPanelExamine(roleId: string, opts: RunStepOptions, gate: { originalPrompt: string; approvedPlan?: string; acceptance?: string[] }, implementationText: string, stepId: string, baseRef: string, baseChanged: string[], implementerFiles: readonly WrittenFile[], signal?: AbortSignal, override?: { target?: { changed: string[]; diff: string }; explicit?: boolean; synthesize?: (produced: SubjectFinding[]) => Promise<string | null> }): Promise<SubjectFinding[]> {
   // Card id is deterministic from stepId (gate-b re-emits onto it after closure). `panelOpened` guards the
   // error path: if anything throws AFTER the parent sub_tool_start, the catch MUST close it (else the card
   // spins 'running' forever — no turn-end net flips a lingering running tool on a finished segment).
@@ -178,10 +191,6 @@ export async function runPanelExamine(roleId: string, opts: RunStepOptions, gate
     // fan-out, workflow-aligned FIND). Gate B passes no override → conservative selector, byte-identical.
     const selected = await selectSubjects(changed, diff, gate.originalPrompt, signal, content, override?.explicit)
     if (selected.length === 0) return []
-
-    // All subjects borrow the ONE independent reviewer role (verifierRoleId, hoisted above) for their
-    // model/endpoint — also used to key the per-endpoint limiter + the refute votes + the subject fan-out.
-    const verifierEndpointId = rolesService.getBinding(verifierRoleId)?.endpointId ?? ''
 
     // The panel card parent (panel-examine §4.4), attributed to verifierRoleId so it opens on the Verifier
     // segment (closure-loop §3.2). parentToolId 'coordinator-gate-b' is a sentinel (no card with that id) → the
@@ -239,7 +248,7 @@ export async function runPanelExamine(roleId: string, opts: RunStepOptions, gate
     // (concurrency backstop / unexpected throw). Map each null back to a dropped record via selected[i] so
     // EVERY selected subject still produces exactly one record → exactly one gate_outcomes row → the selected
     // set stays fully reconstructable even in that edge (no silently-vanished subject).
-    const results = await parallelExamineLimited(verifierEndpointId, tasks)
+    const results = await parallelExamineLimited(tasks)
     const verdicts: SubjectFinding[] = results.map((v, i) =>
       v ?? { key: selected[i].key, why: selected[i].why, produced: false, passed: false, feedback: 'subject task aborted (concurrency backstop or unexpected error)', inputTokens: 0, outputTokens: 0 }
     )
@@ -255,10 +264,20 @@ export async function runPanelExamine(roleId: string, opts: RunStepOptions, gate
     // un-refuted candidate has refuted=undefined and would auto-"survive", so a candidate must never be skipped.
     const allCandidates = verdicts.flatMap((v) => v.candidates ?? [])
     if (allCandidates.length > 0) {
-      const tokByLens = await refuteEachCandidate(opts, gate, implementationText, allCandidates, verifierRoleId, verifierEndpointId, stepId, panelId, signal)
+      // VERIFY phase (workflow-faithful): open a row per CANDIDATE under the card, then fan its skeptics out
+      // beneath it — the card shows every finding being adversarially checked, each with its own k/N tally,
+      // instead of one collapsed lens blob. The row closes below with the code's authoritative refute verdict.
+      for (const c of allCandidates) {
+        opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_start', toolUseId: candRowId(c, stepId), parentToolId: panelId, name: 'Finding', input: candRowInput(c) })
+      }
+      const tokByLens = await refuteEachCandidate(opts, gate, implementationText, allCandidates, verifierRoleId, stepId, panelId, signal)
       for (const v of verdicts) {
         const tk = tokByLens.get(v.key)
         if (tk) { v.inputTokens += tk.inputTokens; v.outputTokens += tk.outputTokens }
+      }
+      // Close each candidate row with its authoritative verdict (stands → flagged/fail; all-refuted → false-positive).
+      for (const c of allCandidates) {
+        opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_done', toolUseId: candRowId(c, stepId), parentToolId: panelId, name: 'Finding', isError: !c.refuted, input: { ...candRowInput(c), verdict: c.refuted ? 'false-positive' : 'fail', refuted: c.refuted ?? false, refuteTally: c.refuteTotal ? `${c.refuteYes ?? 0}/${c.refuteTotal}` : '' }, result: c.mechanism })
       }
     }
     // DERIVE each lens's binary from its candidates' survival — this is what Gate-B's closure reads, so its
@@ -293,6 +312,22 @@ export async function runPanelExamine(roleId: string, opts: RunStepOptions, gate
     const dropped = verdicts.filter((v) => !v.produced)
     const refutedN = verdicts.filter((v) => v.refuted).length
     console.log(`[panel-examine] step ${stepId}: selected ${verdicts.length} subject(s) over ${changed.length} changed path(s) — ${verdicts.map((v) => `${v.key}${v.produced ? (v.refuted ? ':REFUTED' : `:${v.passed ? 'PASS' : 'FAIL'}`) : ':DROPPED'}`).join(', ')}${dropped.length ? ` (${produced.length} produced, ${dropped.length} dropped)` : ''}${refutedN ? ` (${refutedN} refuted→false-positive)` : ''}`)
+    // SYNTHESIZE phase (workflow-faithful, explicit/agent-tool path only): the caller supplies a synth fn; run it
+    // as a visible step UNDER the still-open card — a final 'Synth' agent that dedups the confirmed findings into
+    // ONE report, exactly like the Workflow tool's synthesize phase. Gate B passes none (its "synthesis" is the
+    // fix/closure step, shown via the per-lens "→ fixed by" re-emit instead).
+    if (override?.synthesize && produced.length > 0) {
+      const synthId = `panel-synth-${stepId}`
+      opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_start', toolUseId: synthId, parentToolId: panelId, name: 'Synth', input: { phase: 'synth', mode: 'review' } })
+      let report: string | null = null
+      try {
+        report = await override.synthesize(produced)
+      } catch (e) {
+        console.warn('[panel-examine] review synthesis failed (non-blocking):', e instanceof Error ? e.message : e)
+      }
+      opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_done', toolUseId: synthId, parentToolId: panelId, name: 'Synth', isError: false, result: report ?? '(synthesis unavailable — flat per-candidate findings)' })
+    }
+
     // Panel card done = ALL reviewers reported (refute settled). A confirmed unrefuted FAIL marks the card
     // errored; closure (fix) then re-emits those subject rows from gate-b while the card is already done, so
     // "→ fixed" nests in afterward (§4.4: refute/fix appear only once done).
@@ -325,7 +360,6 @@ async function refuteEachCandidate(
   implementationText: string,
   candidates: Finding[],
   verifierRoleId: string,
-  verifierEndpointId: string,
   stepId: string,
   panelId: string,
   signal?: AbortSignal
@@ -338,7 +372,7 @@ async function refuteEachCandidate(
       jobs.push(() => runCandidateRefuteVote(opts, gate, implementationText, cand, verifierRoleId, i, stepId, panelId, signal).then((r) => ({ findingId: cand.id, lens: cand.lens, ...r })))
     }
   }
-  const votes = (await parallelExamineLimited(verifierEndpointId, jobs)).filter((v): v is { findingId: string; lens: string; refuted: boolean; inputTokens: number; outputTokens: number } => v != null)
+  const votes = (await parallelExamineLimited(jobs)).filter((v): v is { findingId: string; lens: string; refuted: boolean; inputTokens: number; outputTokens: number } => v != null)
   const tokByLens = new Map<string, { inputTokens: number; outputTokens: number }>()
   for (const cand of candidates) {
     const cv = votes.filter((v) => v.findingId === cand.id)
@@ -374,7 +408,7 @@ async function runCandidateRefuteVote(
   // Refute votes nest under the panel card (parentToolId=panelId), attributed to verifierRoleId so they fold
   // into the Verifier segment alongside the subjects, tagged with their target lens + candidate so the card
   // groups them under that specific candidate (the k/N tally rides on the candidate's row).
-  opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_start', toolUseId: toolId, parentToolId: panelId, name: 'SubjectRefute', input: { subject: cand.lens, finding: cand.title.slice(0, 120), voter: voterIdx } })
+  opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_start', toolUseId: toolId, parentToolId: panelId, name: 'SubjectRefute', input: { phase: 'verify', findingId: cand.id, subject: cand.lens, lens: cand.lens, title: cand.title.slice(0, 120), severity: cand.severity, voter: voterIdx } })
   // Persona focus = the candidate's carried lens focus (custom lenses keep their agent-authored one), else the
   // enum focus, else the bare key. The user message carries the SPECIFIC candidate (title + file:line + mechanism).
   const focus = cand.focus ?? subjectMeta(cand.lens)?.focus ?? cand.lens
@@ -396,16 +430,17 @@ async function runCandidateRefuteVote(
       toolNames: ['Read', 'Grep', 'Glob', 'Bash'], // self-fetches the diff (git diff) like a Workflow agent; persona says don't re-run the heavy build
       systemPromptOverride: refutePrompt(focus),
       quiet: true, // card-only: the skeptic vote folds into the Verifier segment's panel card, not its own segment
+      streamCard: { toolUseId: toolId, parentToolId: panelId }, // stream the skeptic's reasoning live onto its row
       signal: signal ?? opts.signal
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: panelId, name: 'SubjectRefute', isError: true, result: `refute vote failed: ${msg}` })
+    opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: panelId, name: 'SubjectRefute', isError: true, input: { phase: 'verify', findingId: cand.id, voter: voterIdx, vote: 'failed' }, result: `refute vote failed: ${msg}` })
     return { refuted: false, inputTokens: 0, outputTokens: 0 } // infra failure → cannot disprove → candidate stands
   }
   const text = res.text.trim()
   const contracted = [...text.matchAll(/^\s*[#*>•-]*\s*REFUTE:\s*(YES|NO)\b/gim)].pop()?.[1]
   const refuted = contracted ? contracted.toUpperCase() === 'YES' : false // no parseable vote → candidate stands
-  opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: panelId, name: 'SubjectRefute', isError: false, result: text || 'no vote' })
+  opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: panelId, name: 'SubjectRefute', isError: false, input: { phase: 'verify', findingId: cand.id, voter: voterIdx, vote: refuted ? 'refute' : 'uphold' }, result: text || 'no vote' })
   return { refuted, inputTokens: res.inputTokens, outputTokens: res.outputTokens }
 }

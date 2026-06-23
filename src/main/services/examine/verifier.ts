@@ -63,7 +63,7 @@ export async function runVerifierStep(implementerRoleId: string | string[], opts
   const toolId = subject ? `gate-b-subject-${subject.key}-${subject.stepId}` : `gate-b-verifier-${Date.now()}`
   const parentToolId = subject?.panelId ?? 'coordinator-gate-b'
   const emitCard = Boolean(subject) && !subject?.quiet
-  if (emitCard) opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_start', toolUseId: toolId, parentToolId, name: 'Subject', input: { verifierRoleId, subject: subject!.key, mode: 'review', why: subject!.why ?? '' } })
+  if (emitCard) opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_start', toolUseId: toolId, parentToolId, name: 'Subject', input: { verifierRoleId, subject: subject!.key, lens: subject!.key, focus: subject!.focus, phase: 'find', mode: 'review', why: subject!.why ?? '' } })
   // Persona + how-to-verify live in the system-prompt override; this user message carries only the case to
   // judge. FLOOR: detect the project's own toolchain and run the build itself — stack-agnostic on purpose (a
   // hard-coded npm command sent a Go-repo verifier chasing a nonexistent package.json, dogfood 2026-06-11).
@@ -108,6 +108,9 @@ export async function runVerifierStep(implementerRoleId: string | string[], opts
       // into that segment as a PanelCard row (via the sub_tool card above), never a separate prose segment.
       segmentKind: subject ? undefined : 'verifier',
       quiet: Boolean(subject),
+      // Stream the subject finder's reasoning live onto its card row (workflow parity); the floor verifier
+      // (no card) and the quiet integrator re-verify (no card) pass none.
+      streamCard: emitCard ? { toolUseId: toolId, parentToolId } : undefined,
       signal: signal ?? opts.signal
     })
   } catch (err) {

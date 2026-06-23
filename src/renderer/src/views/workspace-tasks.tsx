@@ -162,7 +162,12 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
     for (const m of ms ?? []) {
       if (m.role !== 'assistant' || !m.tools) continue
       for (const tl of m.tools) {
-        if (tl.name === 'PanelExamine') sig += `${m.expertId ?? ''}~${tl.id}~${tl.status}~${(tl.subTools ?? []).map((st) => st.status).join('')};`
+        // A COARSE per-subtool stream length (bucketed by 32 chars) is folded in so the live card re-renders AS
+        // each panel sub-agent (finder/skeptic/reader) streams its reasoning — but only on PANEL tokens (the
+        // coordinator's own main-turn text isn't a PanelExamine subtool, so it still never triggers this), and
+        // bucketed so it advances ~smoothly, not on every single token (workflow /workflows live parity + perf).
+        // Keyed on the MONOTONIC streamLen (not stream.length, which pins at the tail cap → tail would freeze).
+        if (tl.name === 'PanelExamine') sig += `${m.expertId ?? ''}~${tl.id}~${tl.status}~${(tl.subTools ?? []).map((st) => `${st.status}${Math.floor((st.streamLen ?? 0) / 32)}`).join('')};`
       }
     }
     return sig

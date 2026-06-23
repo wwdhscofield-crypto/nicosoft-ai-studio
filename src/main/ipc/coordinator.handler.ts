@@ -114,6 +114,8 @@ export function registerCoordinatorHandlers(): void {
               send('coordinator:sub-tool:start', { streamId, roleId, ...evt })
             } else if (evt.type === 'sub_tool_done') {
               send('coordinator:sub-tool:done', { streamId, roleId, ...evt })
+            } else if (evt.type === 'sub_tool_delta') {
+              send('coordinator:sub-tool:delta', { streamId, roleId, ...evt })
             } else if (evt.type === 'assistant') {
               const blocks: AgentBlockDto[] = []
               for (const b of evt.message.content) {

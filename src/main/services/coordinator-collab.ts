@@ -90,6 +90,7 @@ export async function runCollaboration(
           break
         case 'sub_tool_start':
         case 'sub_tool_done':
+        case 'sub_tool_delta':
           // Canonical sub-tool sink: coordinator.handler onToolEvent → coordinator:sub-tool:* → renderer
           // PanelCard (anchored by roleId) — the SAME path the coordinator's own Gate-B panel uses.
           // onExpertEvent routes AgentEvent tool activity here; the fine-grained sub_tool lifecycle

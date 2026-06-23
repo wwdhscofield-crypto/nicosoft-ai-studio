@@ -129,7 +129,7 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
       parentToolId: panelId,
       name: 'Subject',
       isError: outcome === 'unresolved' || outcome === 'unverified',
-      input: { subject: lv.key, why: lv.why, mode: 'review', verdict: outcome, refuted: lv.refuted ?? false, refuteTally: lv.refuteTotal ? `${lv.refuteYes ?? 0}/${lv.refuteTotal}` : '', handlerName: handlerRoleId ? displayName(handlerRoleId) : '' },
+      input: { subject: lv.key, lens: lv.key, phase: 'find', why: lv.why, mode: 'review', verdict: outcome, refuted: lv.refuted ?? false, refuteTally: lv.refuteTotal ? `${lv.refuteYes ?? 0}/${lv.refuteTotal}` : '', handlerName: handlerRoleId ? displayName(handlerRoleId) : '' },
       result: lv.refuteEvidence ? `${lv.feedback}\n[${lv.refuteEvidence}]` : lv.feedback
     })
   }

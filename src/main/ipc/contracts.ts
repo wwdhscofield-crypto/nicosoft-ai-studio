@@ -266,6 +266,13 @@ export interface AgentSubToolDone {
   input?: unknown
   subAgentId?: string
 }
+export interface AgentSubToolDelta {
+  streamId: string
+  parentToolId: string
+  toolUseId: string
+  delta: string
+  subAgentId?: string
+}
 export interface AgentResultDto {
   toolUseId: string
   content: string
@@ -440,6 +447,9 @@ export interface CoordinatorSubToolStart extends AgentSubToolStart {
   roleId: string
 }
 export interface CoordinatorSubToolDone extends AgentSubToolDone {
+  roleId: string
+}
+export interface CoordinatorSubToolDelta extends AgentSubToolDelta {
   roleId: string
 }
 // A dispatched-tool approval (phase 2 still pops to the user — doc 19 §14). The response reuses

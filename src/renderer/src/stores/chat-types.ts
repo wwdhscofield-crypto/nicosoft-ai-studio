@@ -11,6 +11,8 @@ export interface ToolCall {
   input: unknown
   status: 'running' | 'done' | 'error'
   result?: string
+  stream?: string // live partial text from a quiet sub-agent (panel finder/skeptic/reader) — shown while running
+  streamLen?: number // MONOTONIC total chars streamed (uncapped) — drives the Tasks-panel re-render key even after `stream` is tail-capped
   subTools?: ToolCall[]
 }
 // One renderable unit of an assistant turn, in EMISSION order. A 'tool' block references a tool by id in

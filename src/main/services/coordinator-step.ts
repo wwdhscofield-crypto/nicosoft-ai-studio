@@ -103,6 +103,9 @@ export interface RunStepOptions {
   // renders the work via an explicit sub_tool card instead (panel subjects / refute votes fold into the
   // verifier segment as PanelCard rows, never as their own prose segments). Usage is still recorded (billing).
   quiet?: boolean
+  // When a quiet step represents a panel sub-agent (a card row), stream its TEXT deltas to that card as
+  // sub_tool_delta events (workflow /workflows parity — watch each finder/skeptic reason live). Absent → no stream.
+  streamCard?: { toolUseId: string; parentToolId: string }
 }
 
 // Coordinator's system = a base prompt section (direct / synthesis) + his recalled memories + the running
@@ -115,7 +118,7 @@ export function withCoordinatorContext(base: string, memories: MemoryRow[], summ
 }
 
 export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; reason: AgentResult['reason']; inputTokens: number; outputTokens: number; endpointId: string; model: string; writtenFiles: WrittenFile[] }> {
-  const { convId, roleId, prompt, dispatch, cb, signal, cwd, includeHistory = false, isSynthesis = false, isDirect = false, isParallelSynthesis = false, isCouncilSynthesis = false, quiet = false, segmentKind } = opts
+  const { convId, roleId, prompt, dispatch, cb, signal, cwd, includeHistory = false, isSynthesis = false, isDirect = false, isParallelSynthesis = false, isCouncilSynthesis = false, quiet = false, segmentKind, streamCard } = opts
   const binding = rolesService.getBinding(roleId)
   if (!binding?.endpointId || !binding.model) {
     throw new LlmError('bad_request', `role "${roleId}" has no endpoint binding`)
@@ -166,6 +169,7 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
         if (ev.type === 'text') {
           text += ev.delta
           if (!quiet) cb.onDelta(roleId, ev.delta)
+          else if (streamCard) cb.onToolEvent?.(roleId, { type: 'sub_tool_delta', parentToolId: streamCard.parentToolId, toolUseId: streamCard.toolUseId, delta: ev.delta })
         } else if (quiet) {
           return
         } else if (ev.type === 'tool_use_start') {

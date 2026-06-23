@@ -60,6 +60,7 @@ export type AgentLlmEvent =
   | { type: 'tool_use_input'; id: string; delta: string }
   | { type: 'sub_tool_start'; parentToolId: string; toolUseId: string; name: string; input?: Record<string, unknown>; subAgentId?: string }
   | { type: 'sub_tool_done'; parentToolId: string; toolUseId: string; name: string; result?: unknown; isError?: boolean; input?: Record<string, unknown>; subAgentId?: string }
+  | { type: 'sub_tool_delta'; parentToolId: string; toolUseId: string; delta: string; subAgentId?: string } // a quiet sub-agent's live text (panel finder/skeptic/reader) → streamed onto its card row (workflow /workflows parity)
   | { type: 'usage'; inputTokens: number; outputTokens: number; cachedTokens?: number } // in-flight request's REAL usage per chunk; cachedTokens = cache-read share of inputTokens (cache-aware split in the ↑ readout)
   | { type: 'turn-final'; usage: FinalUsage } // exactly-once final usage for accumulation
 
