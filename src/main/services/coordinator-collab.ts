@@ -18,6 +18,7 @@ import { LlmError } from '../llm/types'
 import { coordinatorApproval } from './coordinator-approvals'
 import type { CoordinatorCallbacks, CoordinatorRunInput } from './coordinator-types'
 import type { AgentResult } from '../agent/loop'
+import type { PanelExamineResult } from '../agent/context'
 
 export async function runCollaboration(
   input: CoordinatorRunInput,
@@ -26,7 +27,7 @@ export async function runCollaboration(
   cb: CoordinatorCallbacks,
   signal: AbortSignal,
   project?: collabProject.CollabProject,
-): Promise<{ outputs: { role: string; text: string; reason: AgentResult['reason'] }[]; reasons: AgentResult['reason'][] }> {
+): Promise<{ outputs: { role: string; text: string; reason: AgentResult['reason'] }[]; reasons: AgentResult['reason'][]; panelResult?: PanelExamineResult }> {
   const experts: agentService.CollabExpertInput[] = []
   const models = new Map<string, string>()
   for (const roleId of roleIds) {
@@ -131,7 +132,7 @@ export async function runCollaboration(
     requestPermission: (roleId, req) =>
       coordinatorApproval(input.convId, roleId, experts.find((e) => e.roleId === roleId)?.cwd ?? '', req, cb, input.prompt)
   }
-  const results = await agentService.runCollabSession(input.convId, experts, hooks, signal, () => Date.now())
+  const { results, panelResult } = await agentService.runCollabSession(input.convId, experts, hooks, signal, () => Date.now())
 
   const outputs: { role: string; text: string; reason: AgentResult['reason'] }[] = []
   const reasons: AgentResult['reason'][] = [] // every expert's terminal reason, independent of the text gate
@@ -153,5 +154,5 @@ export async function runCollaboration(
     }
     cb.onStepDone(roleId, text, contextTokens, outTokens, inTokens)
   }
-  return { outputs, reasons }
+  return { outputs, reasons, panelResult }
 }

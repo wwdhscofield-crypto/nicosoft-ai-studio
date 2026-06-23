@@ -6,7 +6,7 @@
 import { mkdir } from 'node:fs/promises'
 import { dataDir } from '../db/connection'
 import { join } from 'node:path'
-import type { AgentContext, PermissionRequest, PermissionDecision } from '../agent/context'
+import type { AgentContext, PermissionRequest, PermissionDecision, PanelExamineResult } from '../agent/context'
 import type { AgentLlmEvent } from '../agent/llm'
 import { runAgent, type AgentEvent, type AgentResult } from '../agent/loop'
 import { promptTokensFromUsage } from '../agent/compact'
@@ -129,7 +129,7 @@ export async function runCollabSession(
   hooks: CollabHooks,
   signal: AbortSignal,
   nowMs: () => number,
-): Promise<Map<string, { text: string; reason: AgentResult['reason']; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number }>> {
+): Promise<{ results: Map<string, { text: string; reason: AgentResult['reason']; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number }>; panelResult?: PanelExamineResult }> {
   // One service registry per collaboration, shared by all its experts (Flynn starts a backend, Shuri
   // lists + connects). Tree-killed in the finally below when the session ends — no zombie ports survive.
   const registry = new ServiceRegistry()
@@ -306,9 +306,16 @@ export async function runCollabSession(
     // result (notifyHandleComplete → runExpert T1). Set before run() so a fast handle can't fire before it's wired.
     asyncRegistry.onComplete = (h) => session.notifyHandleComplete(h.id, formatAsyncHandle(h))
     const texts = await session.run(signal)
-    return new Map(
+    // 批D (dogfood2 P1): the elected driver ran the consolidated panel from its OWN turn (批C) → its verdict is the
+    // 'panel' handle in the shared async registry. Extract it BEFORE the finally dispose so the coordinator
+    // (runCollabReview) uses THIS result instead of self-running a second independent panel (批E). Last completed
+    // panel handle = the driver's consolidated review (absent if the team never elected/ran one → 批E falls back).
+    const panelHandle = asyncRegistry.list().filter((h) => h.kind === 'panel' && h.status === 'done').pop()
+    const panelResult = panelHandle?.result as PanelExamineResult | undefined
+    const results = new Map(
       [...texts].map(([roleId, text]): [string, { text: string; reason: AgentResult['reason']; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number }] => [roleId, { text, reason: reasonByRole.get(roleId) ?? 'completed', inTokens: inTokensByRole.get(roleId) ?? 0, contextTokens: contextByRole.get(roleId) ?? 0, cacheReadTokens: cacheReadByRole.get(roleId) ?? 0, outTokens: outTokensByRole.get(roleId) ?? 0 }])
     )
+    return { results, panelResult }
   } finally {
     hooks.onServices?.([])
     clearActiveServices(convId, registry)
