@@ -21,6 +21,12 @@ export function QuestionDialog({
   const name = (prompt.roleId && STUDIO_DATA.EXPERT_BY_ID[prompt.roleId]?.name) || t('q.theAgent')
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      // Ignore the keypress while the IME is composing — pressing 1/2 to pick a Chinese/Japanese candidate must NOT
+      // select an option (isComposing / keyCode 229 flag it, the same guard the composer uses). Also ignore keys
+      // typed INTO an input/textarea (a digit in the Other field is text being typed, not an option hotkey).
+      if (e.isComposing || e.keyCode === 229) return
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
       const n = parseInt(e.key, 10)
       if (n >= 1 && n <= prompt.options.length) {
         e.preventDefault()
@@ -52,7 +58,9 @@ export function QuestionDialog({
           value={other}
           onChange={(e) => setOther(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && other.trim()) {
+            // Don't submit on the Enter that CONFIRMS an IME composition (Chinese/Japanese) — only a real Enter.
+            // nativeEvent.isComposing / keyCode 229 flag the IME confirm, the same guard as the composer.
+            if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229 && other.trim()) {
               e.preventDefault()
               onAnswer(other.trim())
             }
