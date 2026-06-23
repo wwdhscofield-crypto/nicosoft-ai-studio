@@ -29,6 +29,8 @@ import { detectE2EIntent, disabledRoleIds, route, routeNeedsPlan } from './coord
 import { emitCoordinatorIntro, resetPipelineTodos, runRoleStep, type RunStepOptions } from './coordinator-step'
 import { runGatedRoleStep } from './coordinator-gate-b'
 import { chooseVerifierRole, runVerifierStep } from './examine/verifier'
+import { runConsolidatedReview } from './examine/agent-panel'
+import { gitHead, changedPathsSince, diffSince } from './examine/diff'
 import { submitGateC } from './coordinator-gate-c'
 import { runCollaboration } from './coordinator-collab'
 import {
@@ -81,9 +83,39 @@ async function runCollabReview(
     signal
   }
   try {
+    // 1. FLOOR (existing): the independent reviewer runs the project's own build/typecheck on the combined delta.
     const v = await runVerifierStep(roles, opts, { originalPrompt: input.prompt, acceptance: [] }, implementationText, signal)
-    if (v.skipped || v.infraFailure) return UNVERIFIED // ran but produced no verdict → still UNVERIFIED, never a silent done
-    return `Independent reviewer ${displayName(reviewer)} ran the project's own checks on the combined result — VERDICT: ${v.passed ? 'PASS' : 'FAIL'}.\n${v.feedback.slice(0, 2000)}`
+    const floorNote = v.skipped || v.infraFailure
+      ? null // ran but produced no verdict (no independent verifier / infra fault) → contributes no note
+      : `Independent reviewer ${displayName(reviewer)} ran the project's own checks on the combined result — VERDICT: ${v.passed ? 'PASS' : 'FAIL'}.\n${v.feedback.slice(0, 2000)}`
+
+    // 2. CONSOLIDATED PANEL (C1 §4.3): ONE multi-lens panel by the SAME independent reviewer over the FULL worktree
+    //    delta (all collaborators' accumulated changes), AFTER every expert finished — replaces the old per-expert
+    //    concurrent self-runs (P1). Reviewer is independent of ALL collaborators (runConsolidatedReview re-checks).
+    //    Best-effort: any fault leaves the floor verdict standing. Streams the panel card via the same `cb`.
+    let panelNote: string | null = null
+    try {
+      const base = await gitHead(cwd)
+      const changed = base ? await changedPathsSince(cwd, base) : []
+      if (changed.length > 0) {
+        const diff = await diffSince(cwd, base) // empty paths = whole-tree diff = all collaborators' accumulated changes
+        const outcome = await runConsolidatedReview(opts, roles, { changed, diff }, input.prompt, reviewer)
+        if (!outcome.ok) {
+          panelNote = `Consolidated independent panel review did NOT complete (${outcome.message}) — treat the combined result as NOT deep-reviewed.`
+        } else if (outcome.confirmed.length > 0) {
+          panelNote = `Consolidated independent panel review by ${displayName(reviewer)} found ${outcome.confirmed.length} confirmed defect(s):\n${outcome.message}`
+        } else {
+          panelNote = `Consolidated independent panel review by ${displayName(reviewer)}: no defect survived adversarial refutation across the selected risk lenses (clean).`
+        }
+      }
+    } catch (e) {
+      console.warn('[coordinator] collab consolidated panel failed (floor verdict stands):', e instanceof Error ? e.message : e)
+    }
+
+    // 3. Merge floor + panel into ONE reviewNote for synthesis. Both empty (floor couldn't run AND panel produced
+    //    nothing usable) → UNVERIFIED, never a silent done.
+    const merged = [floorNote, panelNote].filter(Boolean).join('\n\n---\n\n')
+    return merged || UNVERIFIED
   } catch (e) {
     console.warn('[coordinator] collab independent review failed (synthesis flagged UNVERIFIED):', e instanceof Error ? e.message : e)
     return UNVERIFIED
