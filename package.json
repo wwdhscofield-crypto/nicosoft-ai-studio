@@ -20,6 +20,7 @@
     "e2e:engineer": "node e2e/engineer-agent.mjs",
     "e2e:title-memory": "node e2e/title-memory.mjs",
     "test:collab": "node --experimental-transform-types e2e/collab-scheduler.mts",
+    "test:lens": "node --experimental-transform-types --import ./e2e/_register.mjs e2e/lens-value.mts && node --experimental-transform-types --import ./e2e/_register.mjs e2e/lens-engine.mts && node --experimental-transform-types --import ./e2e/_register.mjs e2e/lens-template.mts",
     "rebuild:native": "electron-rebuild --only node-pty --force",
     "postinstall": "node scripts/ensure-electron.mjs && node scripts/rebuild-native.mjs"
   },
@@ -30,6 +31,7 @@
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "electron-updater": "^6.8.9",
+    "js-yaml": "^4.2.0",
     "markdown-it": "^14.2.0",
     "node-pty": "^1.1.0",
     "pdf-parse": "^2.4.5",

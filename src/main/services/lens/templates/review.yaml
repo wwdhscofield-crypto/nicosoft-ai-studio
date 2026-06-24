@@ -1,0 +1,156 @@
+# Studio Lens — REVIEW template. The find→refute→synth panel, fully model-driven: the SELECT step AUTHORS the
+# review lenses from the code itself (zero enum, the whole point of the refactor), the refute stage is the
+# backstop against a fabricated lens. Orchestration is data; the engine owns the domain projections (§3).
+name: review
+inputs: [paths, diff, content, baseRef, task, writtenFiles, floorVerdict]
+enabledSetting: gateB.studioLens.enabled
+breadthInput: thorough                 # explicit entry = broad; Gate-B injects 'conservative' (Workflow scale-to-request)
+vars:
+  breadthClause:                       # {{breadthClause}} resolved by breadthInput (no eval) — verbatim from coordinator-route
+    thorough: "Fan out BROADLY — one reviewer per distinct risk surface; bias toward MORE perspectives, not fewer."
+    conservative: "Pick a lens ONLY when the change genuinely risks it; an empty array [] is the right answer for a low-risk change."
+phases:
+  # ESCALATE — the Gate-B throttle (only 'conservative' entry runs it; explicit review skips straight to select).
+  # Fail-open: a missing/garbled verdict → escalate=true (never silently drop the amplifier).
+  - id: escalate
+    type: agent
+    role: reviewer
+    when: "${breadthInput == 'conservative'}"
+    output:
+      escalate: bool
+    prompt: |
+      An independent FLOOR reviewer already verified this change. Decide whether to ESCALATE to a
+      multi-perspective PANEL — several reviewers each probing a distinct risk axis the floor does not
+      scrutinize at depth. The panel is an AMPLIFIER for SUBSTANTIAL work; a small, contained change is
+      already covered by the floor alone. {{writtenFiles.length}} file(s) touched across
+      {{writtenFiles.topLevelAreas.length}} top-level area(s); floor verdict: {{floorVerdict}}.
+      Judge from the workload and the floor's own read — there is NO fixed file-count threshold. A broad,
+      cross-cutting, or risk-laden change → ESCALATE: YES; a small single-area edit the floor already covers
+      → ESCALATE: NO. When genuinely unsure, prefer YES (the floor is the safety net either way).
+      End your reply with exactly one final line: `ESCALATE: YES` or `ESCALATE: NO` — nothing after it.
+
+  # SELECT — the model AUTHORS the review lenses from the code. No fixed list, no whitelist (the refute stage
+  # is the backstop against a fabricated lens). Replaces the deleted enum + deriveSubjects.
+  - id: select
+    type: agent
+    role: reviewer
+    when: "${breadthInput != 'conservative' || escalate.escalate}"
+    output:
+      lenses:
+        - key: string
+          focus: string
+          why: string
+    prompt: |
+      You DRIVE an independent review. Read the change below and AUTHOR the review LENSES this code
+      warrants — each a risk surface BEYOND standard correctness (the floor verifier already owns
+      correctness / duplication / wrong-problem; do NOT re-run them). There is NO fixed list — self-derive
+      the lenses from what THIS code actually does and means (a token check that can be bypassed = a
+      security lens; a shared write without a lock = a concurrency lens), never from file names.
+      {{breadthClause}}
+
+      For each lens emit {"key":"<short-kebab-name>","focus":"<one sentence: exactly what this lens hunts
+      and the failure it looks for>","why":"<one line citing the specific code — a file:hunk or concrete
+      behavior — that puts it in scope>"}. The refute stage that follows drops any lens that yields no real
+      defect, so over-proposing a lens is cheap and under-covering a real risk is the costly miss. NEVER
+      fabricate a risk the code does not actually have.
+
+      Task:
+      {{task}}
+
+      Changed file(s): {{paths}}
+
+      Diff:
+      {{diff}}
+
+      Target file content (the code as it stands):
+      {{content}}
+
+      Return ONLY a JSON array of lens objects — no prose, no markdown fence.
+
+  # FIND — one independent finder per lens (barrier fan-out, faithful to the current panel). Each self-fetches
+  # the diff, hunts its lens aggressively, and emits a ```findings array (the candidate column). Empty array is
+  # trusted ONLY on VERDICT: PASS — a FAIL with no array degrades to one prose candidate (never swallow a FAIL).
+  - id: find
+    phase: Review
+    type: parallel
+    over: "${select.lenses}"
+    as: lens
+    role: reviewer
+    kit: read-only
+    card:
+      name: Subject
+      phase: find
+      subject: "${lens.key}"
+    prompt: "Run your \"{{lens.key}}\" lens on the uncommitted change: {{lens.focus}}. Inspect it YOURSELF — `git diff {{baseRef}}` + `git status`, then Read the touched files for your lens — nothing is inlined."
+    output:
+      verdict: PASS|FAIL
+      candidates:
+        - title: string
+          file: string
+          line: int
+          severity: high|med|low
+          mechanism: string
+    emit:
+      contract: findings
+      degradeTo: verdict
+      trustEmptyOn: PASS
+
+  # VERIFY — the adversarial REFUTE filter: every candidate, across ALL lenses, faces 3 independent skeptics;
+  # ≥2 "could not confirm" votes drop it. failVote=uphold: an infra-failed / unparseable vote never drops a real
+  # defect. The engine then folds each lens's verdict (§3⑤) and fans the refute token cost back by lens (§3②).
+  - id: verify
+    phase: Verify
+    type: refute
+    over: "${find.pluck(candidates).flat}"
+    as: cand
+    voters: 3
+    majority: 2
+    failVote: uphold
+    role: reviewer
+    kit: read-only
+    card:
+      name: SubjectRefute
+      phase: verify
+      subject: "${cand.id}"
+    system: "refutePrompt(${cand.focus})"
+    prompt: |
+      An independent "{{cand.lens}}" finder flagged ONE candidate defect in the uncommitted change. As a
+      SKEPTIC, try to REFUTE this single candidate — prove it is a false alarm, or concede it stands.
+      Inspect it YOURSELF (`git diff {{baseRef}} -- {{cand.file}}` + Read the cited file) — nothing is inlined.
+
+      Candidate to refute:
+      [{{cand.severity}}] {{cand.title}}
+      Mechanism: {{cand.mechanism}}
+
+  # SYNTHESIZE — the lead-reviewer turn (tool-less one-shot, the chatOnce seam): dedup the CONFIRMED findings
+  # into one actionable report, severity-first. Only runs when a confirmed defect survived refute.
+  - id: synth
+    phase: Synthesize
+    type: agent
+    role: reviewer
+    when: "${verify.kept.where(refuted == false).length > 0}"
+    card:
+      name: Synth
+      phase: synth
+    output:
+      report: string
+    prompt: |
+      You are the LEAD REVIEWER. An independent panel hunted the SAME code across multiple risk lenses; every
+      candidate below survived adversarial refutation (the false alarms were already dropped). Synthesize the
+      CONFIRMED findings into ONE final, actionable review report for the engineer who wrote the code.
+
+      - De-duplicate: if several lenses confirmed the SAME underlying issue, state it ONCE.
+      - Lead with the real defects, most severe first. For each: WHAT is wrong, WHERE (file:line when cited),
+        WHY it matters, and a concrete FIX.
+      - Be tight and concrete — no preamble, no restating these instructions. This goes straight to the engineer.
+
+      Confirmed findings (survived adversarial refutation), severity-first:
+      {{verify.kept.where(refuted == false).orderBy(severity, asc)}}
+
+# result: — the YAML归约 projection. The engine layers the domain projections (subjects[] / ok / message /
+# reviewer / recordExamine payload) on top in the bridge (§3①/M-7); they are NOT expressible as归约.
+result:
+  confirmed: "${verify.kept.where(refuted == false).orderBy(severity, asc)}"
+  refuted: "${verify.kept.where(refuted == true)}"
+  candidates: "${find.pluck(candidates).flat}"
+  report: "${synth.report}"
