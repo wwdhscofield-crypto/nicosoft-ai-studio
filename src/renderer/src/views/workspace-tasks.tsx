@@ -285,6 +285,18 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
     ...history.services.map((s) => ({ kind: 'service' as const, row: s }))
   ].sort((a, b) => b.row.createdAt - a.row.createdAt)
 
+  // Unify History into per-OWNER groups (like the Live section + the studio_lens panel): each owner's done review
+  // panels + completed todo phases + exited services under ONE "● name" header, content below. Previously
+  // owner-grouped panels were followed by a FLAT, owner-less phase/service list, so a finished phase from one role
+  // (Shuri's) visually merged under the previous owner's header (Flynn's). Owner order = first-seen; '' = solo (no header).
+  const histGroups = [...new Set([...donePanels.map(([o]) => o), ...timeline.map((it) => it.row.owner ?? '')])]
+    .map((owner) => ({
+      owner,
+      panels: donePanels.filter(([o]) => o === owner).flatMap(([, pt]) => pt),
+      items: timeline.filter((it) => (it.row.owner ?? '') === owner)
+    }))
+    .filter((g) => g.panels.length > 0 || g.items.length > 0)
+
   return (
     <div className="ws-panel">
       <div className="ws-panel-body">
@@ -356,18 +368,29 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
                 <Icons.refresh size={12} /> {t('tasks.clear')}
               </button>
             </div>
-            {/* Completed studio_lens reviews — the rich card moved here from the live "Panel reviews" section the
-                moment it finished (like a todo phase), still grouped by owner. */}
-            {donePanels.map(([owner, panelTools]) => (
-              <PanelGroup key={'dp' + (owner || 'solo')} owner={owner} panelTools={panelTools} expertsById={expertsById} />
+            {/* Per-owner groups: ONE "● name" header, then that owner's done studio_lens review(s) + completed
+                todo phases + exited services — like the Live section + the studio_lens panel (name on its own
+                line, content below), so no role's finished work merges under another's header. */}
+            {histGroups.map((g) => (
+              <div className="ws-panel-group" key={'hg' + (g.owner || 'solo')}>
+                {g.owner ? (
+                  <div className="ws-svc-owner">
+                    <span className="ws-svc-owner-dot" style={{ background: expertsById[g.owner]?.color ?? 'var(--text-3)' }} />
+                    <span className="ws-svc-owner-name">{expertsById[g.owner]?.name ?? g.owner}</span>
+                  </div>
+                ) : null}
+                {g.panels.map((tl) => (
+                  <LensCard key={tl.id} tool={tl} />
+                ))}
+                {g.items.map((it) =>
+                  it.kind === 'phase' ? (
+                    <PhaseCard key={'p' + it.row.id} phase={it.row} t={t} />
+                  ) : (
+                    <ServiceHistCard key={'s' + it.row.id} svc={it.row} t={t} />
+                  )
+                )}
+              </div>
             ))}
-            {timeline.map((it) =>
-              it.kind === 'phase' ? (
-                <PhaseCard key={'p' + it.row.id} phase={it.row} t={t} />
-              ) : (
-                <ServiceHistCard key={'s' + it.row.id} svc={it.row} t={t} />
-              )
-            )}
           </div>
         )}
       </div>
