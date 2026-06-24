@@ -10,7 +10,7 @@
 // LensDeps (runRoleStep / chatOnce); the bridge (agent-lens.ts) wires it.
 
 import yaml from 'js-yaml'
-import { parallelExamineLimited } from './pool'
+import { parallelExamineLimited, withLensSlot } from './pool'
 import { resolveValue, interpolate, evalWhen, type Scope } from './value'
 import {
   parseFindings,
@@ -450,8 +450,19 @@ function finderStage(step: StepSpec): StepSpec | undefined {
 async function runPipeline(step: StepSpec, scope: Scope, ctx: LensContext, deps: LensDeps): Promise<SubjectFinding[]> {
   const list = (resolveValue(stripRef(step.over ?? ''), scope) as unknown[] | undefined) ?? []
   const as = step.as ?? 'item'
-  const tasks = list.map((item, index) => () => runPipelineItem(step, scope, ctx, deps, item, as, index))
-  const results = await parallelExamineLimited(tasks)
+  // CRITICAL (anti-deadlock): the per-item chains run as a plain Promise.all, NOT under the global limiter — an
+  // item must NOT hold a semaphore slot while its inner refute sub-fan-out acquires slots (that nested
+  // acquire-while-holding deadlocks once GLOBAL_MAX items park in refute). Throttling happens at the LEAF agent
+  // calls instead: runPipelineItem wraps its finder in withLensSlot, and refuteCandidates throttles each skeptic —
+  // so the global cap still bounds total in-flight agent calls, but no holder ever waits on the pool it occupies.
+  const results = await Promise.all(
+    list.map((item, index) =>
+      runPipelineItem(step, scope, ctx, deps, item, as, index).catch((e) => {
+        console.warn('[studio-lens] pipeline item failed (dropped):', e instanceof Error ? e.message : e)
+        return null
+      }),
+    ),
+  )
   // null (aborted/threw the whole chain) → a dropped SubjectFinding so the per-lens set stays reconstructable
   return results.map((r, i) => r ?? (droppedItem(finderStage(step) ?? step, list[i], as) as SubjectFinding))
 }
@@ -468,7 +479,9 @@ async function runPipelineItem(step: StepSpec, scope: Scope, ctx: LensContext, d
   let subject: SubjectFinding | undefined
   for (const stage of step.stages ?? []) {
     if (isFinderShape(stage)) {
-      subject = await runFinder(stage, itemScope, ctx, deps, item as { key: string; focus: string; why: string }, roleId, kit, stepId, panelId)
+      // throttle the finder as a LEAF (one slot for its lifetime), then RELEASE before the refute stage acquires
+      // its own skeptic slots — never hold across the inner fan-out (see runPipeline's anti-deadlock note).
+      subject = await withLensSlot(() => runFinder(stage, itemScope, ctx, deps, item as { key: string; focus: string; why: string }, roleId, kit, stepId, panelId))
       itemScope = { ...itemScope, steps: { ...itemScope.steps, [stage.id]: subject } } // expose to the refute stage
     } else if (stage.type === 'refute') {
       const cands = (resolveValue(stripRef(stage.over ?? ''), itemScope) as Finding[] | undefined) ?? []

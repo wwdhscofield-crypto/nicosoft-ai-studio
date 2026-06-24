@@ -20,7 +20,7 @@ function globalConcurrency(): number {
   return Math.max(1, Math.min(16, cores - 2))
 }
 
-const GLOBAL_MAX = globalConcurrency()
+export const GLOBAL_MAX = globalConcurrency()
 
 // Minimal async semaphore. acquire() takes a slot or queues a resolver; release() hands the freed slot
 // DIRECTLY to the next waiter (active count unchanged across the handoff) or frees it when none wait.
@@ -73,4 +73,12 @@ export async function runExamineLimited<T>(fn: () => Promise<T>): Promise<T | nu
 // A barrier (awaits all) returning a null-padded array the caller filters.
 export function parallelExamineLimited<T>(tasks: Array<() => Promise<T>>): Promise<(T | null)[]> {
   return Promise.all(tasks.map((t) => runExamineLimited(t)))
+}
+
+// Run ONE LEAF op under the global cap, PROPAGATING throws (unlike runExamineLimited, which swallows to null).
+// For a caller that must throttle a single agent call while NOT itself occupying a slot across an inner fan-out —
+// e.g. the pipeline item throttles its finder leaf, then releases before its refute sub-fan-out acquires slots.
+// This is the anti-deadlock rule: NEVER hold a slot here while awaiting more globalSem work (no nested acquire).
+export function withLensSlot<T>(fn: () => Promise<T>): Promise<T> {
+  return globalSem.run(fn)
 }
