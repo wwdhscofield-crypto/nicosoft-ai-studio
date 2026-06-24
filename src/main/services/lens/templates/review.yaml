@@ -122,14 +122,16 @@ phases:
       # VERIFY stage — the adversarial REFUTE filter over THIS lens's OWN candidates (over: ${find.candidates},
       # the finder stage's output threaded into this stage's scope — not a cross-lens flat list). The skeptic
       # COUNT is MODEL-DECIDED: it scales to the finder's own `confidence` (votersByConfidence), so a borderline
-      # candidate is vetted harder (3) than an obvious one (1); majority derives from the count (1→1, 2→2, 3→2).
-      # failVote=uphold: an infra-failed / unparseable vote never drops a real defect.
+      # candidate is vetted harder (5) than an obvious one (2). majority = floor(n/2)+1 → drop-bars high 2/2,
+      # med 2/3, low 3/5: a MONOTONIC increasing drop-probability (high hardest to drop — we trust the finder —
+      # low easiest), and every tier survives ONE flaky/failed vote (no even-count unanimity trap; no single vote
+      # is dispositive even for high). failVote=uphold: an infra-failed / unparseable vote never drops a real defect.
       - id: verify
         phase: Verify
         type: refute
         over: "${find.candidates}"
         as: cand
-        votersByConfidence: { high: 1, med: 2, low: 3 }
+        votersByConfidence: { high: 2, med: 3, low: 5 }
         failVote: uphold
         card:
           name: SubjectRefute
