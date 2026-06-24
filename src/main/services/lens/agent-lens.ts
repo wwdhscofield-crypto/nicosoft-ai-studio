@@ -57,8 +57,11 @@ async function runReviewEngine(
   floorVerdict: string,
   stepId: string,
 ): Promise<LensRun> {
-  // Docs-only target → no code risk → no panel, zero LLM (L1 short-circuit, before any engine step runs).
-  if (target.changed.length > 0 && target.changed.every((p) => NO_RISK_PATH.test(p))) {
+  // Docs-only target → no code risk → no panel, zero LLM — but ONLY on the Gate-B floor-amplifier path
+  // (conservative), where skipping a pure-docs change is the right throttle. An EXPLICIT review request
+  // (thorough — collab / the agent tool) is HONORED even for a .md: the user asked for it, so let the model/
+  // finders decide. (Previously this short-circuited the explicit path too, silently dropping a requested review.)
+  if (breadthInput === 'conservative' && target.changed.length > 0 && target.changed.every((p) => NO_RISK_PATH.test(p))) {
     return { steps: {}, result: {}, subjects: [], reviewerRoleId }
   }
   const callerId = Array.isArray(implementers) ? implementers[0] : implementers
