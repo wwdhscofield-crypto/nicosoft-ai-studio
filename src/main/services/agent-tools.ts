@@ -8,7 +8,7 @@ import { ENGINEER_SYSTEM_PROMPT, SHURI_SYSTEM_PROMPT } from '../agent/system-pro
 import { enterPlanModeTool } from '../agent/tools/enter-plan-mode'
 import { exitPlanModeTool } from '../agent/tools/exit-plan-mode'
 import { askUserQuestionTool } from '../agent/tools/ask-user-question'
-import { panelExamineTool } from '../agent/tools/panel-examine'
+import { studioLensTool } from '../agent/tools/studio-lens'
 import { startServiceTool, stopServiceTool, serviceLogsTool, listServicesTool } from '../agent/tools/service'
 import { agentSpawnTool, agentSendTool, agentWaitTool, agentCloseTool, agentBatchTool } from '../agent/tools/async-subagent'
 import { e2eBrowserTool } from '../agent/tools/e2e-browser'
@@ -64,12 +64,12 @@ const ROLE_CORE_TOOLS: Record<string, readonly string[]> = {
 // Plan-mode tools (EnterPlanMode/ExitPlanMode) — every agent role gets them (doc 17). They're
 // read-only (mode switch + plan presentation), so they're never gated by the plan-mode mutation deny.
 const PLAN_TOOLS = [enterPlanModeTool, exitPlanModeTool] as unknown as Tool[]
-// panel_examine (closure-loop §3.5 / decision ⑤) is a UNIVERSAL-tier tool like the plan-mode tools — NOT part
+// studio_lens (closure-loop §3.5 / decision ⑤) is a UNIVERSAL-tier tool like the plan-mode tools — NOT part
 // of the filterable CORE_TOOLS. It is appended to EVERY agent role (review + understand both open, not just the
 // dev roles); the runtime chooseVerifierRole gate decides whether a panel can actually form. It carries ctx.panel:
 // the injection sites (runAgentLoop / collab) key off the kit containing this tool, so handle-presence ⟺
-// tool-presence — a fixed-kit verifier / sub-agent (no panel_examine) automatically gets no handle (recursion guard).
-const PANEL_TOOLS = [panelExamineTool] as unknown as Tool[]
+// tool-presence — a fixed-kit verifier / sub-agent (no studio_lens) automatically gets no handle (recursion guard).
+const PANEL_TOOLS = [studioLensTool] as unknown as Tool[]
 // Dev roles (Flynn/Shuri) get the service tools in the SINGLE-agent path too (collab already had them),
 // so they run dev servers via start_service — detached + readiness-probed + tree-killed — instead of a
 // blocking `Bash ... &` that wedges the loop and leaks the process.
@@ -91,7 +91,7 @@ export function toolsForAgentRole(roleId: string): Tool[] {
     core = core.filter((t) => t.name !== 'ns_generate_image')
   }
   const skill = skillManager.skillTool(roleId)
-  // panel_examine for every agent role (decision ⑤). coordinator's read-only DIRECT kit is not an agent role,
+  // studio_lens for every agent role (decision ⑤). coordinator's read-only DIRECT kit is not an agent role,
   // so it does not get it; the runtime gate handles whether an independent reviewer can be formed.
   const panel = AGENT_ROLE_IDS.has(roleId) ? PANEL_TOOLS : []
   return [...core, ...PLAN_TOOLS, askUserQuestionTool as unknown as Tool, ...panel, ...mcpManager.toolsForRole(roleId), ...(skill ? [skill] : [])]

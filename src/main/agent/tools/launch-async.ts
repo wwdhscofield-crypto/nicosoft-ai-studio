@@ -6,7 +6,7 @@
 // so no per-command approval prompt is needed for a detached process.
 //
 // This is the collab expert's real launch→await_async entry. The other §6.3 categories are intentionally NOT
-// wired this round: panel (collab implementers have no panel_examine — 批3; the consolidated review is a
+// wired this round: panel (collab implementers have no studio_lens — 批3; the consolidated review is a
 // synchronous coordinator step), service (start_service is already non-blocking/background), e2e (synchronous;
 // native async would mean reworking the e2e tools), subagent (collab has no agent_spawn). They already have a
 // synchronous/background form or no collab consumer, so launch_async covers the genuine gap (a detached script).

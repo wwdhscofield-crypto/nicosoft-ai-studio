@@ -1,4 +1,4 @@
-// panel_examine — UNDERSTAND mode (panel-examine §7 Phase 5). Deliberately a SEPARATE pipeline, not a flag on
+// studio_lens — UNDERSTAND mode (panel-examine §7 Phase 5). Deliberately a SEPARATE pipeline, not a flag on
 // the review fan-out: review is ~90% build/VERDICT/refute/integrator machinery that understand has none of.
 // Understand fans out one read-only READER per target file (each summarizes its file), then stitches the
 // summaries into one structured map. The ONLY substrate it shares with review is the concurrency limiter
@@ -71,7 +71,7 @@ export async function runUnderstand(callerRoleId: string, opts: RunStepOptions, 
     if (paths.length === 0) return { map: '', parts: [] }
     // The understand panel card (same chrome as review; mode='understand' → the card renders reader rows, no
     // verdicts). parentToolId 'coordinator-gate-b' has no match → surfaces top-level → PanelCard.
-    opts.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_start', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'PanelExamine', input: { mode: 'understand', subjects: paths } })
+    opts.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_start', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'StudioLens', input: { mode: 'understand', subjects: paths } })
     opened = true
 
     const tasks = paths.map((path, i) => async (): Promise<UnderstandPart> => {
@@ -112,12 +112,12 @@ export async function runUnderstand(callerRoleId: string, opts: RunStepOptions, 
       opts.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_done', toolUseId: synthId, parentToolId: panelId, name: 'Synth', isError: false, input: { subject: 'synthesis', phase: 'synth', mode: 'understand', verdict: 'synthesized' }, result: synth ? map : '(synthesis unavailable — concatenated per-file summaries)' })
     }
 
-    opts.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_done', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'PanelExamine', isError: false, result: `${parts.length}/${paths.length} file(s) read${parts.length >= 2 ? ' + synthesized' : ''}` })
+    opts.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_done', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'StudioLens', isError: false, result: `${parts.length}/${paths.length} file(s) read${parts.length >= 2 ? ' + synthesized' : ''}` })
     console.log(`[panel-examine] step ${stepId}: understand read ${parts.length}/${paths.length} file(s)`)
     return { map, parts }
   } catch (e) {
     console.warn('[panel-examine] understand fan-out failed (non-blocking):', e instanceof Error ? e.message : e)
-    if (opened) opts.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_done', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'PanelExamine', isError: true, result: 'understand fan-out failed' })
+    if (opened) opts.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_done', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'StudioLens', isError: true, result: 'understand fan-out failed' })
     return { map: '', parts: [] }
   }
 }

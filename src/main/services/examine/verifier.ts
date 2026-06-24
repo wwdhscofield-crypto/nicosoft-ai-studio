@@ -139,7 +139,7 @@ export async function runVerifierStep(implementerRoleId: string | string[], opts
   // scanning is the fallback for a non-compliant reply only, fail-closed (PASS && !FAIL) — it MUST NOT
   // be the primary path: dogfood 2026-06-12 had two clear-PASS verdicts flipped to FAIL because the
   // evidence prose contained the brief's own term "fail-open", voiding a fully-green delivery. `contracted`
-  // is also the subject-retry signal (runPanelExamine): a non-contracted subject reply is retried once, then dropped.
+  // is also the subject-retry signal (runStudioLens): a non-contracted subject reply is retried once, then dropped.
   const contracted = [...text.matchAll(/^\s*[#*>•-]*\s*VERDICT:\s*(PASS|FAIL)\b/gim)].pop()?.[1]
   const passed = contracted ? contracted.toUpperCase() === 'PASS' : /\bPASS\b/i.test(text) && !/\bFAIL\b/i.test(text)
   if (emitCard) opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId, name: 'Subject', isError: !passed, result: text })

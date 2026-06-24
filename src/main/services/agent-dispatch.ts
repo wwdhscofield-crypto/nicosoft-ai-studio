@@ -144,7 +144,7 @@ export async function runAgentLoop(
   // Per-run async sub-agent pool (batch 3): runAgent injects the child runner into it; tree-killed in the
   // same finally as the registry so no background child outlives the run.
   const subAgents = new AsyncSubAgentPool(signal)
-  // Async-op registry for launch_async / await_async / panel_examine launches. 批C2b: the direct-chat path passes a
+  // Async-op registry for launch_async / await_async / studio_lens launches. 批C2b: the direct-chat path passes a
   // CONV-LEVEL registry (loop.asyncRegistry, from solo-async) so its handles outlive the run and a parked turn can
   // resume across turns — we must NOT dispose THAT one here (conv-delete / app-exit owns it). A dispatched expert /
   // collab-sub passes none → a per-run registry (批C2a within-turn await), tree-killed in the finally like the rest.
@@ -170,13 +170,13 @@ export async function runAgentLoop(
     sessionDir,
     services: registry,
     subAgents,
-    async: asyncReg, // launch_async/await_async (+ panel_examine launches through it when present)
+    async: asyncReg, // launch_async/await_async (+ studio_lens launches through it when present)
     parkSolo: loop.parkSolo, // 批C2b: direct-chat solo cross-turn park; undefined for dispatched/collab → within-turn await
     lsp,
-    // panel_examine bridge (panel-examine §4.1 / closure-loop decision ⑤) — inject the handle iff this run's kit
-    // actually carries the panel_examine tool (every agent role now does; a fixed-kit verifier / sub-agent does
+    // studio_lens bridge (panel-examine §4.1 / closure-loop decision ⑤) — inject the handle iff this run's kit
+    // actually carries the studio_lens tool (every agent role now does; a fixed-kit verifier / sub-agent does
     // NOT). Handle-presence ⟺ tool-presence is the recursion guard: no tool → no handle, self-enforcing.
-    panel: loop.tools.some((t) => t.name === 'panel_examine')
+    panel: loop.tools.some((t) => t.name === 'studio_lens')
       ? createLensHandle({
           convId: loop.convId,
           callerRoleId: loop.roleId,
@@ -391,7 +391,7 @@ export async function runDispatchedAgent(
     const allow = new Set(d.toolNames)
     tools = [...CORE_TOOLS, ...E2E_TOOLS].filter((t) => allow.has(t.name))
   } else {
-    tools = [...toolsForAgentRole(d.roleId), launchAsyncTool, awaitAsyncTool] // 批C2a: solo can launch/await async ops (panel_examine launches through ctx.async too)
+    tools = [...toolsForAgentRole(d.roleId), launchAsyncTool, awaitAsyncTool] // 批C2a: solo can launch/await async ops (studio_lens launches through ctx.async too)
     if (DEV_ROLES.has(d.roleId)) tools = [...tools, ...SERVICE_TOOLS, ...E2E_TOOLS, ...SUBAGENT_TOOLS, lspTool as unknown as Tool]
     if (!d.cwd && !DEV_ROLES.has(d.roleId)) tools = tools.filter((t) => t.name !== 'Read' && t.name !== 'Glob')
   }

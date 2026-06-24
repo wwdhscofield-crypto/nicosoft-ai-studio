@@ -39,7 +39,7 @@ const TOOL_ACTIVITY: Record<string, string> = {
   Glob: 'Searching', Grep: 'Searching', WebSearch: 'Searching', web_search: 'Searching',
   TodoWrite: 'Planning', EnterPlanMode: 'Planning', ExitPlanMode: 'Planning',
   ns_generate_image: 'Generating',
-  panel_examine: 'Reviewing',
+  studio_lens: 'Reviewing',
   lsp: 'Analyzing',
   Task: 'Delegating', agent_spawn: 'Delegating', agent_send: 'Delegating', agent_wait: 'Delegating',
   agent_batch: 'Delegating', agent_close: 'Delegating', assign_task: 'Delegating', send_message: 'Delegating', wait: 'Delegating',
@@ -48,7 +48,7 @@ const TOOL_ACTIVITY: Record<string, string> = {
 }
 function segmentActivity(tools?: ToolCall[]): string {
   // findLast, NOT find: the readout reflects the MOST RECENT activity. With find (first-running) a tool whose
-  // 'running' status lingered earlier in the turn masks the tool actually executing now (e.g. a long panel_examine
+  // 'running' status lingered earlier in the turn masks the tool actually executing now (e.g. a long studio_lens
   // still open while the agent has moved on to a Write → the readout should say "Writing", not the stale verb).
   const running = tools?.findLast((t) => t.status === 'running')
   if (!running) return 'Thinking'
@@ -178,15 +178,15 @@ function RunBody({ msgs, onOpenImage, live }: { msgs: ChatMessage[]; onOpenImage
       }
       const tool = tools.find((tl) => tl.id === b.id)
       if (!tool) return
-      // The PanelExamine card (subjects / verdicts / refute) now lives in the Workspace Tasks panel, grouped by
+      // The StudioLens card (subjects / verdicts / refute) now lives in the Workspace Tasks panel, grouped by
       // its owner — NOT inline. Skip it here.
-      if (tool.name === 'PanelExamine') return
-      // panel_examine, like its review card, behaves like a todo: WHILE RUNNING show a live "Running a panel
+      if (tool.name === 'StudioLens') return
+      // studio_lens, like its review card, behaves like a todo: WHILE RUNNING show a live "Running a panel
       // review" line (flush the done history FIRST so a minutes-long run can't keep the fold "live" and hide it —
       // a live ToolRun renders only the running gerund, not the done tools before it). Once DONE, OMIT it: the
-      // completed review has moved to the Tasks panel → History, so a lingering "Used panel_examine" line in chat
+      // completed review has moved to the Tasks panel → History, so a lingering "Used studio_lens" line in chat
       // is redundant. The surrounding history folds normally around the gap.
-      if (tool.name === 'panel_examine') {
+      if (tool.name === 'studio_lens') {
         if (tool.status === 'running') {
           flushFold(false)
           out.push(<ToolRun key={`pe${tool.id}`} tools={[tool]} live={live} />)

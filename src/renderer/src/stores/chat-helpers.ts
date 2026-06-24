@@ -75,11 +75,11 @@ const summarizeValue = (v: unknown): string => {
 }
 
 // Which message a sub_tool event belongs to — for BOTH the coordinator path (roleId given) and the agent/solo
-// path (roleId === ''). CARD-ANCHORED first: if the parent card (e.g. a PanelExamine card, id=parentToolId) or
+// path (roleId === ''). CARD-ANCHORED first: if the parent card (e.g. a StudioLens card, id=parentToolId) or
 // this very sub-tool (toolUseId) already lives on a message, target THAT message — a re-emit of a subject's
 // final state, or a refute nesting, MUST land on the message that owns the card, NOT some other message. This
 // is also the fix for the agent path's old `.map(applySubToolStart over EVERY message)` bug: a sentinel parent
-// (panel_examine's 'coordinator-gate-b') matched nothing, so the orphan-append ran on every message → a panel
+// (studio_lens's 'coordinator-gate-b') matched nothing, so the orphan-append ran on every message → a panel
 // card duplicated after every block. Fallback for the FIRST event of a new card (no card match yet): the
 // coordinator path opens it on the latest segment of roleId; the agent path (no roleId) opens it on the current
 // streaming assistant message, else the latest assistant.
@@ -116,7 +116,7 @@ export const applySubToolStart = (message: ChatMessage, parentToolId: string, to
   }
 }
 
-// `input` on a DONE event carries final structured metadata (panel_examine re-emits a subject's resolved
+// `input` on a DONE event carries final structured metadata (studio_lens re-emits a subject's resolved
 // outcome / refute tally / fixed-by here). Most done events omit it → input stays whatever the start set.
 export const applySubToolDone = (message: ChatMessage, parentToolId: string, toolUseId: string, name: string, result: unknown, isError?: boolean, input?: unknown): ChatMessage => {
   const patch: Partial<ToolCall> = {

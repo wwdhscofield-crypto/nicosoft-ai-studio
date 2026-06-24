@@ -1,4 +1,4 @@
-// panel_examine — the agent-driven multi-perspective fan-out tool (panel-examine §4 / closure-loop §3.5).
+// studio_lens — the agent-driven multi-perspective fan-out tool (panel-examine §4 / closure-loop §3.5).
 // Lets ANY agent role escalate, on its OWN judgment, to a fan-out of independent read-only agents: 'review'
 // (N reviewers each probing one risk axis + adversarial skeptics refuting false alarms → PASS/FAIL+evidence)
 // or 'understand' (N readers each summarizing one file → a shared map). The actual fan-out lives behind
@@ -8,7 +8,7 @@
 import { z } from 'zod'
 import { buildTool } from '../tool'
 import type { ToolResultBlock } from '../types'
-import type { PanelExamineResult } from '../context'
+import type { StudioLensResult } from '../context'
 
 const inputSchema = z.object({
   paths: z.array(z.string()).min(1).describe('Project-relative file path(s) — the body of work to examine.'),
@@ -18,8 +18,8 @@ const inputSchema = z.object({
     .describe("'review' (default): fan out reviewers that find defects. 'understand': fan out readers that summarize each file into a shared map.")
 })
 
-export const panelExamineTool = buildTool<typeof inputSchema, PanelExamineResult>({
-  name: 'panel_examine',
+export const studioLensTool = buildTool<typeof inputSchema, StudioLensResult>({
+  name: 'studio_lens',
   inputSchema,
   prompt: () =>
     'Fan a body of work out to SEVERAL independent, read-only agents that each examine it from one angle — far ' +
@@ -50,7 +50,7 @@ export const panelExamineTool = buildTool<typeof inputSchema, PanelExamineResult
     // ctx.panel is set only on a top-level dev run; absent inside a sub-agent / a panel reviewer (the depth
     // guard) → say so plainly rather than returning a silent empty result the model would read as "all clear".
     if (!ctx.panel) {
-      return { data: { ok: false, message: 'panel_examine is not available here — it cannot be run from inside a sub-agent or a panel reviewer.' } }
+      return { data: { ok: false, message: 'studio_lens is not available here — it cannot be run from inside a sub-agent or a panel reviewer.' } }
     }
     const mode = input.mode === 'understand' ? 'understand' : 'review'
     // ASYNC drive (dogfood2 P1/P3/P5 + C3): when an async registry is present (a collaboration today; a solo run
@@ -61,7 +61,7 @@ export const panelExamineTool = buildTool<typeof inputSchema, PanelExamineResult
     // panel runs detached; 批A's delta-stall watchdog bounds it so the handle always settles (no indefinite park, N1).
     if (ctx.async) {
       const label = `${mode} panel over ${input.paths.length} path(s): ${input.paths.slice(0, 3).join(', ')}${input.paths.length > 3 ? ' …' : ''}`
-      const handle = ctx.async.launch('panel', label, () => ctx.panel!.examine({ paths: input.paths, mode }))
+      const handle = ctx.async.launch('lens', label, () => ctx.panel!.examine({ paths: input.paths, mode }))
       return {
         data: {
           ok: true,
@@ -77,6 +77,6 @@ export const panelExamineTool = buildTool<typeof inputSchema, PanelExamineResult
   mapResult(out, toolUseId): ToolResultBlock {
     // is_error only when the panel could not RUN (disabled / no reviewer / bad target) — a successful review that
     // FLAGGED defects is not a tool error (the findings are the result).
-    return { type: 'tool_result', tool_use_id: toolUseId, content: out.message || '(panel_examine returned no result)', is_error: !out.ok }
+    return { type: 'tool_result', tool_use_id: toolUseId, content: out.message || '(studio_lens returned no result)', is_error: !out.ok }
   }
 })

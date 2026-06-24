@@ -87,7 +87,7 @@ export function buildAgentSystem(
   // Verify-before-done + stay-in-scope discipline applies to EVERY tool-wielding expert, not just the dev
   // roles — a non-dev expert (e.g. the translator editing source files) must verify + stay in scope too.
   const parts = [PLAN_FIRST, base, CODING_DISCIPLINE]
-  // Panel self-review + orient discipline is SOLO-only: those steps drive the panel_examine tool, which solo runs
+  // Panel self-review + orient discipline is SOLO-only: those steps drive the studio_lens tool, which solo runs
   // carry but collab implementers do NOT (批3 filters it + nulls ctx.panel). For collab, buildCollabSystem adds
   // its own review note (one consolidated post-completion review by an independent reviewer) instead.
   if (!collab) parts.push(PANEL_REVIEW_DISCIPLINE)

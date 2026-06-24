@@ -22,7 +22,7 @@ import type { RunStepOptions } from '../coordinator-step'
 import type { CoordinatorCallbacks } from '../coordinator-types'
 import type { AgentEvent } from '../../agent/loop'
 import type { AgentLlmEvent } from '../../agent/llm'
-import type { PermissionMode, PermissionDecision, PermissionRequest, PanelHandle, PanelExamineResult } from '../../agent/context'
+import type { PermissionMode, PermissionDecision, PermissionRequest, PanelHandle, StudioLensResult } from '../../agent/context'
 import type { MessageAttachmentDto, WorkspaceExamineFindingDto } from '../../ipc/contracts'
 
 type Gate = { originalPrompt: string; approvedPlan?: string; acceptance?: string[] }
@@ -33,8 +33,12 @@ type Gate = { originalPrompt: string; approvedPlan?: string; acceptance?: string
 const NO_RISK_PATH = /(\.md|\.markdown|\.txt|\.rst|\.adoc)$|(^|\/)(LICENSE|CHANGELOG|README|CONTRIBUTING|NOTICE)(\.[a-z0-9]+)?$/i
 
 // Kill-switch (both entries — gate-b's outer cost gate is separate): a disabled lens degrades to floor-only / a
-// tool error. The setting key is renamed to gateB.studioLens.enabled in L3 (with a fallback read).
-function lensEnabled(): boolean {
+// tool error. Settings migration: read the new key, fall back to the OLD gateB.panelExamine.enabled so a user
+// who disabled the panel before the rename stays disabled (never silently re-enabled). Exported so Gate-B's
+// outer cost gate reads the SAME migrated value.
+export function lensEnabled(): boolean {
+  const next = settingsService.get<boolean>('gateB.studioLens.enabled')
+  if (next != null) return next !== false
   return settingsService.get<boolean>('gateB.panelExamine.enabled') !== false
 }
 
@@ -74,7 +78,7 @@ async function runReviewEngine(
   return runLens(reviewTemplate, ctx, makeLensDeps(opts))
 }
 
-// --- Gate-B raw entry (replaces runPanelExamine; consumed as SubjectFinding[]) -------------------------------
+// --- Gate-B raw entry (replaces runStudioLens; consumed as SubjectFinding[]) -------------------------------
 // Derives the target itself (greenfield + de-contam, must-fix ②/H-4), runs the engine on the CONSERVATIVE path
 // (the escalate step throttles — M1: decideEscalation now lives in review.yaml), returns the folded per-lens set.
 export async function runLensReview(
@@ -210,7 +214,7 @@ export interface LensHandleDeps {
 
 export function createLensHandle(deps: LensHandleDeps): PanelHandle {
   return {
-    async examine(input): Promise<PanelExamineResult> {
+    async examine(input): Promise<StudioLensResult> {
       if (!lensEnabled()) {
         return { ok: false, message: 'studio_lens is disabled by configuration (gateB.studioLens.enabled = false).' }
       }

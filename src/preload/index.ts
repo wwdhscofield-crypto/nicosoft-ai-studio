@@ -158,7 +158,7 @@ const api = {
   // Files tree live-refresh: main fires this (debounced) when the watched root's contents change.
   onFsChanged: (cb: (d: FsChanged) => void): (() => void) => agentListen('fs:changed', cb),
 
-  // Workspace Tasks panel history (completed-phase snapshots + panel_examine verdicts), per conversation.
+  // Workspace Tasks panel history (completed-phase snapshots + studio_lens verdicts), per conversation.
   tasks: {
     history: (convId: string): Promise<WorkspaceTaskHistoryDto> => ipcRenderer.invoke('tasks:history', convId),
     clearHistory: (convId: string): Promise<void> => ipcRenderer.invoke('tasks:clearHistory', convId)

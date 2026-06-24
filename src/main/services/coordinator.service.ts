@@ -30,7 +30,7 @@ import { emitCoordinatorIntro, resetPipelineTodos, runRoleStep, type RunStepOpti
 import { runGatedRoleStep } from './coordinator-gate-b'
 import { chooseVerifierRole, runVerifierStep } from './examine/verifier'
 import { runConsolidatedReview } from './lens/agent-lens'
-import type { PanelExamineResult } from '../agent/context'
+import type { StudioLensResult } from '../agent/context'
 import { gitHead, changedPathsSince, diffSince } from './examine/diff'
 import { AGENT_ROLE_IDS } from './agent-dispatch'
 import { submitGateC } from './coordinator-gate-c'
@@ -63,7 +63,7 @@ async function runCollabReview(
   outputs: { role: string; text: string }[],
   cb: CoordinatorCallbacks,
   signal: AbortSignal,
-  panelResult?: PanelExamineResult
+  panelResult?: StudioLensResult
 ): Promise<string> {
   // When verification can't run, we still return a note — an UNVERIFIED marker — so the synthesis closes HONESTLY
   // instead of presenting unchecked work as done (matching single/pipeline's explicit unverified beat). Returning
@@ -105,7 +105,7 @@ async function runCollabReview(
     try {
       if (panelResult) {
         // The elected COLLABORATOR drove the panel from its OWN turn (批C/D). Its result is the tool-facing
-        // PanelExamineResult ({ ok, message }) — the message IS the verdict summary (findings + refutations as text).
+        // StudioLensResult ({ ok, message }) — the message IS the verdict summary (findings + refutations as text).
         panelNote = panelResult.ok
           ? `Consolidated panel review (driven by the team's elected reviewer over the full combined change):\n${panelResult.message}`
           : `Consolidated panel review did NOT complete (${panelResult.message}) — treat the combined result as NOT deep-reviewed.`

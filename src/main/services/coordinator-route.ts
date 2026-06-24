@@ -213,7 +213,7 @@ ${DEFAULT_REVIEW_SUBJECTS.map((d) => `- ${d.key}: ${d.focus}`).join('\n')}
 
 Return ONLY a JSON array of {"key":"<a dimension key from the list>","why":"<one line citing the specific change — a file:hunk or concrete behavior — that risks that dimension>"}. Choose a dimension ONLY when the diff genuinely risks it; an empty array [] is the right answer for a low-risk change. NEVER invent a key outside the list. Output ONLY the JSON array — no prose, no markdown fence.`
 
-// The THOROUGH selector — used ONLY by the explicit agent-tool entry (panel_examine called on purpose), never by
+// The THOROUGH selector — used ONLY by the explicit agent-tool entry (studio_lens called on purpose), never by
 // Gate B's auto-escalation (which stays conservative). It aligns the panel's FIND stage with the workflow's broad
 // multi-lens fan-out: a review was deliberately requested, so lay out the FULL panel of perspectives the code
 // warrants and probe each risk surface independently — bias toward breadth, not the single-dimension floor. NO

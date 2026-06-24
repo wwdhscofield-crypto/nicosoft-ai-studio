@@ -17,7 +17,7 @@ import { ulid } from '../db/id'
 // Studio Lens (§3): the multi-lens fan-out is now the YAML engine — Gate-B drives it via runLensReview and
 // consumes the raw folded SubjectFinding[]. The SHARED single FLOOR verifier body stays in examine/verifier —
 // the floor (runGatedRoleStep + closeFloor + the subject integrator re-verify) calls the SAME runVerifierStep.
-import { runLensReview } from './lens/agent-lens'
+import { runLensReview, lensEnabled } from './lens/agent-lens'
 import { subjectEvidence, type SubjectFinding } from './lens/types'
 import { runVerifierStep, chooseVerifierRole } from './examine/verifier'
 
@@ -114,7 +114,7 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
     }
   }
   // Panel card (panel-examine §4.4): re-emit each subject's FINAL resolved state — after refute + closure —
-  // onto the panel card (id=panel-<stepId>, the same id runPanelExamine opened). Carries the structured
+  // onto the panel card (id=panel-<stepId>, the same id runStudioLens opened). Carries the structured
   // outcome / refute tally / fixed-by so the card row renders the final verdict + "→ fixed by X" without
   // re-parsing prose. A no-op when no panel ran (no card with that id exists → the orphan event is ignored).
   const panelId = `panel-${stepId}`
@@ -180,7 +180,7 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
   // forgoing the Property-B amplifier, never Property A. Gated behind the kill-switch so a floor-only A/B baseline
   // spends no engine cost. !verdict.skipped: a SKIPPED floor means no independent verifier role is bound — the
   // panel can never form (the reviewer would resolve to the implementer → []), so don't even call the engine.
-  const panelEnabled = settingsService.get<boolean>('gateB.panelExamine.enabled') !== false
+  const panelEnabled = lensEnabled() // new gateB.studioLens.enabled key, falling back to the old one
   let subjectFindings: SubjectFinding[] = []
   if (panelEnabled && !verdict.skipped) {
     // The escalation throttle (M1: was decideEscalation here) now lives INSIDE the engine — review.yaml's

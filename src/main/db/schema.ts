@@ -283,7 +283,7 @@ CREATE TABLE IF NOT EXISTS gate_outcomes (
 );
 CREATE INDEX IF NOT EXISTS idx_gate_outcomes_created ON gate_outcomes (created_at);
 
--- Workspace Tasks panel history (design §5): completed-phase TODO snapshots + panel_examine verdicts,
+-- Workspace Tasks panel history (design §5): completed-phase TODO snapshots + studio_lens verdicts,
 -- per conversation. dedup_key makes capture replay-idempotent (phase=convId:setHash; examine=convId:
 -- examinedAt). A user Clear flips cleared=1 (rows are kept so the dedup_key still blocks re-add — clear
 -- stays durable against a re-snapshot of identical content); the read filters cleared=0.

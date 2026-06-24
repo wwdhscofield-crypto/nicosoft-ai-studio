@@ -6,7 +6,7 @@
 import { mkdir } from 'node:fs/promises'
 import { dataDir } from '../db/connection'
 import { join } from 'node:path'
-import type { AgentContext, PermissionRequest, PermissionDecision, PanelExamineResult } from '../agent/context'
+import type { AgentContext, PermissionRequest, PermissionDecision, StudioLensResult } from '../agent/context'
 import type { AgentLlmEvent } from '../agent/llm'
 import { runAgent, type AgentEvent, type AgentResult } from '../agent/loop'
 import { promptTokensFromUsage } from '../agent/compact'
@@ -73,7 +73,7 @@ export interface CollabHooks {
 // expert knows who to consult and to stay in its own area. Memories/summary are skipped — a collaboration
 // is a fresh shared task, not a continuation of the role's chat history.
 function buildCollabSystem(roleId: string, teammates: { id: string; name: string }[], cwd?: string): string {
-  const base = buildAgentSystem(roleId, [], null, skillManager.listingForRole(roleId), cwd, true) // collab=true: skip the SOLO "every agent self-runs panel_examine before done" discipline — in a collab only the ELECTED driver runs the ONE consolidated panel (批C), not each expert (the per-expert flood was P1)
+  const base = buildAgentSystem(roleId, [], null, skillManager.listingForRole(roleId), cwd, true) // collab=true: skip the SOLO "every agent self-runs studio_lens before done" discipline — in a collab only the ELECTED driver runs the ONE consolidated panel (批C), not each expert (the per-expert flood was P1)
   const roster = teammates.map((t) => `- ${t.name} (roleId: ${t.id})`).join('\n')
   return (
     base +
@@ -99,14 +99,14 @@ function buildCollabSystem(roleId: string, teammates: { id: string; name: string
     'services; frontend owns the renderer / UI) — and split your todos so they do NOT collide. Build only ' +
     "within your agreed scope; never edit a teammate's files. This opening alignment is what prevents two of " +
     'you touching the same files and duplicating or conflicting work.\n\n' +
-    // dogfood2 P1/§4.5: collab implementers KEEP panel_examine but do NOT each self-run it — they ELECT one driver.
+    // dogfood2 P1/§4.5: collab implementers KEEP studio_lens but do NOT each self-run it — they ELECT one driver.
     '## Review in a collaboration — elect ONE of you to drive it\n' +
-    'You DO have panel_examine here — but you do NOT each run your own (N overlapping panels flood the work; that ' +
+    'You DO have studio_lens here — but you do NOT each run your own (N overlapping panels flood the work; that ' +
     'was the bug). Instead, during your opening alignment (or as the work finishes), ELECT ONE of you — agree via ' +
     'send_message, e.g. whoever owns the larger / riskier surface — to drive the team\'s ONE consolidated review. ' +
     'Everyone else: self-check + fix after EACH batch (your own type-check / build + a careful re-read) and finish ' +
     'your COMPLETE part clean, so the review has little left to catch. The ELECTED driver, AFTER every teammate has ' +
-    'finished, runs panel_examine ONCE over the WHOLE combined change (all of your files, review mode): it launches ' +
+    'finished, runs studio_lens ONCE over the WHOLE combined change (all of your files, review mode): it launches ' +
     'as an async handle — REPORT that it started (name the handle + what it covers, like driving a workflow), then ' +
     'await_async it to SUSPEND until the verdict lands, and report the result. The panel\'s own internal reviewers ' +
     'are independent of all of you, so a single elected driver does not compromise the review\'s independence.' +
@@ -129,7 +129,7 @@ export async function runCollabSession(
   hooks: CollabHooks,
   signal: AbortSignal,
   nowMs: () => number,
-): Promise<{ results: Map<string, { text: string; reason: AgentResult['reason']; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number }>; panelResult?: PanelExamineResult }> {
+): Promise<{ results: Map<string, { text: string; reason: AgentResult['reason']; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number }>; panelResult?: StudioLensResult }> {
   // One service registry per collaboration, shared by all its experts (Flynn starts a backend, Shuri
   // lists + connects). Tree-killed in the finally below when the session ends — no zombie ports survive.
   const registry = new ServiceRegistry()
@@ -161,8 +161,8 @@ export async function runCollabSession(
     const lsp = DEV_ROLES.has(x.roleId) ? new LSPManager(x.cwd) : undefined
     if (lsp) lspByExpert.push(lsp)
     const tools = [
-      // 批B (dogfood2 P1): collab implementers carry panel_examine AGAIN — 批3 had filtered it, which inverted the
-      // user's explicit "don't remove panel_examine from collab experts" spec. The election + async-drive of it is
+      // 批B (dogfood2 P1): collab implementers carry studio_lens AGAIN — 批3 had filtered it, which inverted the
+      // user's explicit "don't remove studio_lens from collab experts" spec. The election + async-drive of it is
       // wired in 批C; here we just restore the tool so an ELECTED collaborator CAN drive the consolidated review
       // from its own turn. Independence still holds: the panel's internal finders/skeptics are independent roles
       // (driver ≠ reviewers — chooseVerifierRole excludes the implementer set).
@@ -217,10 +217,10 @@ export async function runCollabSession(
           async: asyncRegistry,
           lsp,
           // 批B (dogfood2 P1): restore ctx.panel for collab implementers (批3 had nulled it). Solo-style handle so
-          // an elected collaborator can drive the consolidated review from its OWN turn (批C wraps the panel_examine
+          // an elected collaborator can drive the consolidated review from its OWN turn (批C wraps the studio_lens
           // tool in ctx.async for non-blocking launch + await_async suspend). Gated on the tool's presence —
           // recursion-guard parity with solo agent-dispatch: no tool → no handle.
-          panel: tools.some((t) => t.name === 'panel_examine')
+          panel: tools.some((t) => t.name === 'studio_lens')
             ? createLensHandle({
                 convId,
                 callerRoleId: x.roleId,
@@ -311,8 +311,8 @@ export async function runCollabSession(
     // 'panel' handle in the shared async registry. Extract it BEFORE the finally dispose so the coordinator
     // (runCollabReview) uses THIS result instead of self-running a second independent panel (批E). Last completed
     // panel handle = the driver's consolidated review (absent if the team never elected/ran one → 批E falls back).
-    const panelHandle = asyncRegistry.list().filter((h) => h.kind === 'panel' && h.status === 'done').pop()
-    const panelResult = panelHandle?.result as PanelExamineResult | undefined
+    const panelHandle = asyncRegistry.list().filter((h) => h.kind === 'lens' && h.status === 'done').pop()
+    const panelResult = panelHandle?.result as StudioLensResult | undefined
     const results = new Map(
       [...texts].map(([roleId, text]): [string, { text: string; reason: AgentResult['reason']; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number }] => [roleId, { text, reason: reasonByRole.get(roleId) ?? 'completed', inTokens: inTokensByRole.get(roleId) ?? 0, contextTokens: contextByRole.get(roleId) ?? 0, cacheReadTokens: cacheReadByRole.get(roleId) ?? 0, outTokens: outTokensByRole.get(roleId) ?? 0 }])
     )

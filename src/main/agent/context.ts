@@ -9,17 +9,17 @@ import type { ServiceHandle } from './service-registry'
 import type { LspHandle } from './lsp/manager'
 import type { AsyncRegistry } from './async-registry'
 
-// panel_examine agent tool (panel-examine §4.1): the agent drives a multi-perspective review on an EXPLICIT
+// studio_lens agent tool (panel-examine §4.1): the agent drives a multi-perspective review on an EXPLICIT
 // target (file paths). The handle (impl in services/examine/agent-panel.ts) captures the run's convId/cwd/signal
 // and adapts the agent's AgentCallbacks → the CoordinatorCallbacks the reviewer fan-out needs. `ok:false` carries
 // a clear reason (kill-switch off / no other bound reviewer role / no target) — NEVER a silent empty result.
-export interface PanelExamineResult {
+export interface StudioLensResult {
   ok: boolean
   message: string
   findings?: Array<{ subject: string; passed: boolean; refuted?: boolean; feedback: string }>
 }
 export interface PanelHandle {
-  examine(input: { paths?: string[]; mode: 'review' | 'understand' }): Promise<PanelExamineResult>
+  examine(input: { paths?: string[]; mode: 'review' | 'understand' }): Promise<StudioLensResult>
 }
 
 export interface ReadFileEntry {
@@ -166,9 +166,9 @@ export interface AgentContext {
   // diagnostics on TS/JS. Set by runAgentLoop (lazily spawns typescript-language-server on first query);
   // undefined where there's no project to analyze. Shared with sub-agents so they can use it too.
   lsp?: LspHandle
-  // panel_examine agent tool (panel-examine §4 / closure-loop decision ⑤): set by runAgentLoop / collab iff the
-  // run's kit carries the panel_examine tool — every agent role now does (handle-presence ⟺ tool-presence).
-  // Undefined inside a sub-agent / a panel reviewer / any fixed-kit verifier (they have no panel_examine tool;
+  // studio_lens agent tool (panel-examine §4 / closure-loop decision ⑤): set by runAgentLoop / collab iff the
+  // run's kit carries the studio_lens tool — every agent role now does (handle-presence ⟺ tool-presence).
+  // Undefined inside a sub-agent / a panel reviewer / any fixed-kit verifier (they have no studio_lens tool;
   // sub-agents also null it explicitly in loop.ts) so a reviewer can't recursively trigger another panel →
   // bounded fan-out×depth. The tool no-ops with a clear reason when this is absent.
   panel?: PanelHandle

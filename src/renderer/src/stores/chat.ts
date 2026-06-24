@@ -229,7 +229,7 @@ export const useChat = create<ChatState>((set, get) => {
       })
     })
     // Card-anchored to ONE message (locateSubToolMsgIndex), NOT mapped over EVERY message — the old `.map`
-    // applied each sub-tool to all messages, so panel_examine's sentinel parent ('coordinator-gate-b', matched
+    // applied each sub-tool to all messages, so studio_lens's sentinel parent ('coordinator-gate-b', matched
     // by nothing) hit the orphan-append on every message → a panel card duplicated after every block. Same
     // routing the coordinator path uses; '' roleId → the agent path's streaming-message fallback.
     ag.onSubToolStart((d) => {
@@ -482,7 +482,7 @@ export const useChat = create<ChatState>((set, get) => {
           cur.segmentKind = d.segmentKind ?? null
         } else {
           // Else adopt this role's un-adopted streaming PLACEHOLDER anywhere in the list — a sub-tool event (e.g.
-          // a panel_examine card) may have opened the role's bubble before this step:start, and it is not
+          // a studio_lens card) may have opened the role's bubble before this step:start, and it is not
           // necessarily the tail if another role's event interleaved. Walk back like the sibling handlers; a
           // placeholder is identified by `dispatch === undefined` (a real step's bubble always has dispatch set,
           // even to null), so we fill it in place instead of stranding it into a duplicate same-role segment.
@@ -596,7 +596,7 @@ export const useChat = create<ChatState>((set, get) => {
         let i = locateSubToolMsgIndex(msgs, d.roleId, d.parentToolId, d.toolUseId)
         // A sub-tool can arrive BEFORE this role's segment exists in the store: step:start and sub-tool:start
         // cross the main→renderer IPC as separate sends in separate ticks, so their order isn't guaranteed. The
-        // flaky case is panel_examine's PanelExamine card (sentinel parent 'coordinator-gate-b' matches no card,
+        // flaky case is studio_lens's StudioLens card (sentinel parent 'coordinator-gate-b' matches no card,
         // so it can only anchor on the role's latest message) — if its event wins the race it found no message
         // and was silently dropped (i<0), so the panel card never rendered. Don't drop it: open a streaming
         // bubble for the role and anchor the card there. A later step:start for the same role REUSES this bubble

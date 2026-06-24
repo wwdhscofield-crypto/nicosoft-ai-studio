@@ -106,11 +106,11 @@ function verbDone(t: ToolCall): string {
     case 'IndependentVerifier': return 'Verified independently'
     case 'GateBFailHandler': return 'Reworked after failed verification'
     case 'DannyPlanReview': return 'Reviewed the plan'
-    // panel_examine internals normally render inside PanelCard; these guard the rare top-level leak.
-    case 'PanelExamine': return 'Examined across perspectives'
+    // studio_lens internals normally render inside LensCard; these guard the rare top-level leak.
+    case 'StudioLens': return 'Examined across perspectives'
     case 'Subject': return 'Reviewed a perspective'
     case 'SubjectRefute': return 'Cross-checked a finding'
-    case 'panel_examine': return 'Ran a panel review'
+    case 'studio_lens': return 'Ran a panel review'
     default: return t.name
   }
 }
@@ -134,11 +134,11 @@ function verbLive(t: ToolCall): string {
     case 'IndependentVerifier': return 'Verifying independently'
     case 'GateBFailHandler': return 'Reworking after failed verification'
     case 'DannyPlanReview': return 'Reviewing the plan'
-    // panel_examine internals normally render inside PanelCard; these guard the rare top-level leak.
-    case 'PanelExamine': return 'Examining across perspectives'
+    // studio_lens internals normally render inside LensCard; these guard the rare top-level leak.
+    case 'StudioLens': return 'Examining across perspectives'
     case 'Subject': return 'Reviewing a perspective'
     case 'SubjectRefute': return 'Cross-checking a finding'
-    case 'panel_examine': return 'Running a panel review'
+    case 'studio_lens': return 'Running a panel review'
     default: return `Running ${t.name}`
   }
 }

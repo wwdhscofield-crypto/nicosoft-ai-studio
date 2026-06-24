@@ -271,7 +271,7 @@ export interface AgentSubToolDone {
   name: string
   result?: unknown
   isError?: boolean
-  // Final structured metadata on the done event (panel_examine re-emits a subject's resolved outcome /
+  // Final structured metadata on the done event (studio_lens re-emits a subject's resolved outcome /
   // refute tally / fixed-by here so the panel card renders the final row without re-parsing prose).
   input?: unknown
   subAgentId?: string
@@ -641,7 +641,7 @@ export interface FsReadForViewResult {
   size?: number
   mtime?: number
 }
-// Workspace Tasks panel history (design §5). Phases = completed-list snapshots; examines = panel_examine
+// Workspace Tasks panel history (design §5). Phases = completed-list snapshots; examines = studio_lens
 // verdicts. Both per conversation, newest-first.
 export interface WorkspacePhaseDto {
   id: number
@@ -663,14 +663,14 @@ export interface WorkspaceExamineFindingDto {
   severity?: 'high' | 'med' | 'low'
   file?: string // "path" or "path:line" the defect lives at
 }
-// A persisted panel_examine review. Carries the FULL panel (owner + roster + per-subject feedback/refute) so the
+// A persisted studio_lens review. Carries the FULL panel (owner + roster + per-subject feedback/refute) so the
 // rich PanelCard can be RECONSTRUCTED from history and survive reload — the live card is a session-only sub-tool
 // stream, this is its durable home (Tasks panel, grouped by owner). `mode`/`roster`/`owner` are optional so
 // pre-existing rows (summary-only) still parse.
 export interface WorkspaceExamineDto {
   id: number
   createdAt: number
-  owner?: string | null // the expert that ran panel_examine — the card is grouped under it (per-owner, "不要串")
+  owner?: string | null // the expert that ran studio_lens — the card is grouped under it (per-owner, "不要串")
   mode?: 'review' | 'understand'
   subject: string
   roster?: string[] // the selected subject keys in order (the card's stable row roster)

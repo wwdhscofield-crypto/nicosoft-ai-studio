@@ -269,7 +269,7 @@ export function StatsPage(): ReactElement {
             {verifRows.length ? <BarList rows={verifRows} max={1} /> : <div className="an-mini-label">No gated runs yet.</div>}
           </AnCard>
 
-          <AnCard title="Panel examine" sub={examineImpact.steps + " amplified"}>
+          <AnCard title="Studio Lens" sub={examineImpact.steps + " amplified"}>
             {examineImpact.steps ? (
               subjectRows.length ? (
                 <BarList rows={subjectRows} />

@@ -1361,7 +1361,7 @@
 .ws-todo-group { display: flex; flex-direction: column; gap: 8px; }
 .ws-todo-group .ws-svc-owner { margin: 0; }
 
-/* Panel reviews (panel_examine) moved into the Tasks panel — per-owner groups (like todos), in BOTH the live
+/* Panel reviews (studio_lens) moved into the Tasks panel — per-owner groups (like todos), in BOTH the live
    "Panel reviews" section (running) and History (done). The pe-card is made adaptive for the narrow column:
    scope on .ws-panel-group (NOT .ws-panels) so it applies in History too — otherwise a completed card's header
    (agents · X/N · passed · failed) overflowed and got clipped by the card's overflow:hidden. The inline meta

@@ -148,7 +148,7 @@
   opacity: 0.45;
 }
 
-/* — panel_examine card (panel-examine §4.4): ONE foldable card, dedicated to panel_examine only. Reuses the
+/* — studio_lens card (panel-examine §4.4): ONE foldable card, dedicated to studio_lens only. Reuses the
      breathing .tr-dot (front, running-only) + .tr-chev (right end); no new widgets. Header = agent COUNTS only,
      never a token sum (the "↑48.1m" balloon root). — */
 .pe-card {

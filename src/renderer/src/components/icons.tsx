@@ -488,7 +488,7 @@ const TOOL_ICON: Record<string, string> = {
   schedule_create: 'calendarClock', schedule_list: 'calendarClock', schedule_delete: 'calendarClock',
   // planning
   Plan: 'listChecks', EnterPlanMode: 'listChecks', ExitPlanMode: 'listChecks', Task: 'listChecks',
-  Dispatch: 'arrowRight', Watch: 'eye', panel_examine: 'compass',
+  Dispatch: 'arrowRight', Watch: 'eye', studio_lens: 'compass',
   // sub-agents
   agent_spawn: 'users', agent_send: 'users', agent_wait: 'users', agent_close: 'users', agent_batch: 'users',
   // dev services & e2e

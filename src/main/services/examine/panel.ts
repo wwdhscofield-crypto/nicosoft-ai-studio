@@ -157,13 +157,13 @@ async function readTargetContent(cwd: string | undefined, paths: readonly string
 // the caller supplies an explicit { changed, diff } target. The reviewer role is NOT overridden — chooseVerifierRole
 // is deterministic, so the bridge validates "a bound reviewer ≠ caller exists" (§4.2) and this re-picks the IDENTICAL
 // role. Gate B omits override → the git-derived target, byte-identical.
-export async function runPanelExamine(roleId: string | string[], opts: RunStepOptions, gate: { originalPrompt: string; approvedPlan?: string; acceptance?: string[] }, implementationText: string, stepId: string, baseRef: string, baseChanged: string[], implementerFiles: readonly WrittenFile[], signal?: AbortSignal, override?: { target?: { changed: string[]; diff: string }; explicit?: boolean; synthesize?: (produced: SubjectFinding[]) => Promise<string | null> }): Promise<SubjectFinding[]> {
+export async function runStudioLens(roleId: string | string[], opts: RunStepOptions, gate: { originalPrompt: string; approvedPlan?: string; acceptance?: string[] }, implementationText: string, stepId: string, baseRef: string, baseChanged: string[], implementerFiles: readonly WrittenFile[], signal?: AbortSignal, override?: { target?: { changed: string[]; diff: string }; explicit?: boolean; synthesize?: (produced: SubjectFinding[]) => Promise<string | null> }): Promise<SubjectFinding[]> {
   // Card id is deterministic from stepId (gate-b re-emits onto it after closure). `panelOpened` guards the
   // error path: if anything throws AFTER the parent sub_tool_start, the catch MUST close it (else the card
   // spins 'running' forever — no turn-end net flips a lingering running tool on a finished segment).
   const panelId = `panel-${stepId}`
   // closure-loop §3.2: the panel folds into the independent "· Verifier" segment, so EVERY panel card
-  // (the PanelExamine parent + its subject / refute rows) is attributed to verifierRoleId — never the
+  // (the StudioLens parent + its subject / refute rows) is attributed to verifierRoleId — never the
   // implementer. Hoisted before the try so the catch's card-close targets the SAME role the card opened on.
   // chooseVerifierRole is pure (no I/O); === caller → no independent reviewer → no panel (floor labels 'skipped').
   const verifierRoleId = chooseVerifierRole(roleId)
@@ -197,10 +197,10 @@ export async function runPanelExamine(roleId: string | string[], opts: RunStepOp
 
     // The panel card parent (panel-examine §4.4), attributed to verifierRoleId so it opens on the Verifier
     // segment (closure-loop §3.2). parentToolId 'coordinator-gate-b' is a sentinel (no card with that id) → the
-    // PanelExamine card surfaces top-level within that segment; subjects/refute votes then nest under it
+    // StudioLens card surfaces top-level within that segment; subjects/refute votes then nest under it
     // (id=panelId). The roster (every selected key) lets the card show queued rows + a stable N before any
     // subject starts under the concurrency limiter.
-    opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_start', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'PanelExamine', input: { mode: 'review', subjects: selected.map((s) => s.key) } })
+    opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_start', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'StudioLens', input: { mode: 'review', subjects: selected.map((s) => s.key) } })
     panelOpened = true
 
     // Fan out under the two-layer limiter (global min(16,cores−2) + per-endpoint). Each subject emits a hard
@@ -335,13 +335,13 @@ export async function runPanelExamine(roleId: string | string[], opts: RunStepOp
     // errored; closure (fix) then re-emits those subject rows from gate-b while the card is already done, so
     // "→ fixed" nests in afterward (§4.4: refute/fix appear only once done).
     const confirmedFails = verdicts.filter((v) => v.produced && !v.passed && !v.refuted).length
-    opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_done', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'PanelExamine', isError: confirmedFails > 0, result: `${produced.length}/${verdicts.length} reviewer(s) reported${confirmedFails ? `, ${confirmedFails} flagged` : ''}` })
+    opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_done', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'StudioLens', isError: confirmedFails > 0, result: `${produced.length}/${verdicts.length} reviewer(s) reported${confirmedFails ? `, ${confirmedFails} flagged` : ''}` })
     return verdicts
   } catch (e) {
     console.warn('[panel-examine] subject fan-out failed (non-blocking, floor stands):', e instanceof Error ? e.message : e)
     // Settle the card if it was opened — a throw after the parent start would otherwise leave it spinning
     // 'running' forever (no turn-end net flips a lingering running tool on the finished Verifier segment).
-    if (panelOpened) opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_done', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'PanelExamine', isError: true, result: 'panel fan-out failed — floor verdict stands' })
+    if (panelOpened) opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_done', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'StudioLens', isError: true, result: 'panel fan-out failed — floor verdict stands' })
     return []
   }
 }

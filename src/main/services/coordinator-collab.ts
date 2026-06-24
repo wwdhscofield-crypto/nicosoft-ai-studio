@@ -18,7 +18,7 @@ import { LlmError } from '../llm/types'
 import { coordinatorApproval } from './coordinator-approvals'
 import type { CoordinatorCallbacks, CoordinatorRunInput } from './coordinator-types'
 import type { AgentResult } from '../agent/loop'
-import type { PanelExamineResult } from '../agent/context'
+import type { StudioLensResult } from '../agent/context'
 
 export async function runCollaboration(
   input: CoordinatorRunInput,
@@ -27,7 +27,7 @@ export async function runCollaboration(
   cb: CoordinatorCallbacks,
   signal: AbortSignal,
   project?: collabProject.CollabProject,
-): Promise<{ outputs: { role: string; text: string; reason: AgentResult['reason'] }[]; reasons: AgentResult['reason'][]; panelResult?: PanelExamineResult }> {
+): Promise<{ outputs: { role: string; text: string; reason: AgentResult['reason'] }[]; reasons: AgentResult['reason'][]; panelResult?: StudioLensResult }> {
   const experts: agentService.CollabExpertInput[] = []
   const models = new Map<string, string>()
   for (const roleId of roleIds) {
@@ -77,7 +77,7 @@ export async function runCollaboration(
     onExpertActive: (roleId, active) => cb.onExpertActive?.(roleId, active),
     // Forward the expert's fine-grained stream to the coordinator UI. EXHAUSTIVE over AgentLlmEvent
     // (agent/llm.ts) on purpose: the tool/sub_tool lifecycle must reach the renderer the SAME way the
-    // solo path forwards it (agent.handler onStream), so a collab expert's panel_examine fan-out and its
+    // solo path forwards it (agent.handler onStream), so a collab expert's studio_lens fan-out and its
     // Task sub-agents render their sub-tool cards instead of being silently dropped at this seam. The
     // `never` default turns a newly-added stream event type into a compile error here rather than a
     // silent collab-only UI gap — that omission (sub_tool_* fell through the old if/else) WAS the bug.
@@ -95,7 +95,7 @@ export async function runCollaboration(
           // Canonical sub-tool sink: coordinator.handler onToolEvent → coordinator:sub-tool:* → renderer
           // PanelCard (anchored by roleId) — the SAME path the coordinator's own Gate-B panel uses.
           // onExpertEvent routes AgentEvent tool activity here; the fine-grained sub_tool lifecycle
-          // (AgentLlmEvent, from a panel_examine fan-out or a Task sub-agent) must too.
+          // (AgentLlmEvent, from a studio_lens fan-out or a Task sub-agent) must too.
           cb.onToolEvent?.(roleId, ev)
           break
         case 'usage':

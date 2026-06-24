@@ -1,5 +1,5 @@
-// PanelCard — the dedicated, foldable render for a panel_examine fan-out (panel-examine §4.4). ONLY
-// panel_examine uses this card; every other tool keeps its ToolRun rendering untouched. It reuses the
+// LensCard — the dedicated, foldable render for a studio_lens fan-out (panel-examine §4.4). ONLY
+// studio_lens uses this card; every other tool keeps its ToolRun rendering untouched. It reuses the
 // existing chrome (the breathing `.tr-dot`, the `.tr-chev` chevron) rather than inventing new widgets.
 //
 // Two render shapes (workflow alignment — the card should be indistinguishable from the Workflow tool's
@@ -162,7 +162,7 @@ function ResultCard({ tool }: { tool: ToolCall }): ReactElement {
   return (
     <div className={'pe-card' + (failed > 0 && !isUnderstand ? ' has-flag' : '')}>
       <button className="pe-head" onClick={() => setOpen((o) => !o)}>
-        <span className="pe-name">panel_examine</span>
+        <span className="pe-name">studio_lens</span>
         <span className="pe-sep">·</span>
         <span className="pe-mode">{mode}</span>
         <span className="pe-sep">·</span>
@@ -376,7 +376,7 @@ function LiveCard({ tool }: { tool: ToolCall }): ReactElement {
     <div className={'pe-card' + (confirmed > 0 && !isUnderstand ? ' has-flag' : '')}>
       <button className="pe-head" onClick={() => setOpen((o) => !o)}>
         {running ? <span className="tr-dot" /> : null}
-        <span className="pe-name">panel_examine</span>
+        <span className="pe-name">studio_lens</span>
         <span className="pe-sep">·</span>
         <span className="pe-mode">{mode}</span>
         <span className="pe-sep">·</span>
@@ -434,7 +434,7 @@ function LiveCard({ tool }: { tool: ToolCall }): ReactElement {
   )
 }
 
-export function PanelCard({ tool }: { tool: ToolCall }): ReactElement {
+export function LensCard({ tool }: { tool: ToolCall }): ReactElement {
   // findingsCard (persisted, rebuilt from history) → the durable per-candidate result view; otherwise the tool
   // is a LIVE running fan-out → the workflow-style process tree.
   const findingsCard = ((tool.input ?? {}) as { findingsCard?: boolean }).findingsCard === true

@@ -178,7 +178,7 @@ export async function runLens(template: Template, ctx: LensContext, deps: LensDe
     }
   }
 
-  // The StudioLens parent card (PanelExamine until L3 renames it) wraps the fan-out rows. It opens just before
+  // The StudioLens parent card (StudioLens until L3 renames it) wraps the fan-out rows. It opens just before
   // the first fan-out phase — once the roster is known (review: select.lenses; understand: paths) — so the card
   // shows queued rows + a stable N, and closes (even on a throw) so it never spins 'running' forever.
   const mode = template.name === 'understand' ? 'understand' : 'review'
@@ -190,7 +190,7 @@ export async function runLens(template: Template, ctx: LensContext, deps: LensDe
     panelRole = ctx.roleBySlot[step.role ?? 'reviewer'] ?? panelRole
     const subjects = mode === 'understand' ? (ctx.paths as string[] ?? []) : ((scope.steps.select as { lenses?: { key: string }[] } | undefined)?.lenses?.map((l) => l.key) ?? [])
     if (subjects.length === 0) return // empty roster (no lens fired / no path) → no panel at all (matches panel.ts's pre-card return)
-    deps.cb.onToolEvent?.(panelRole, { type: 'sub_tool_start', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'PanelExamine', input: { mode, subjects } })
+    deps.cb.onToolEvent?.(panelRole, { type: 'sub_tool_start', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'StudioLens', input: { mode, subjects } })
     panelOpened = true
   }
 
@@ -206,7 +206,7 @@ export async function runLens(template: Template, ctx: LensContext, deps: LensDe
       }
     }
   } finally {
-    if (panelOpened) deps.cb.onToolEvent?.(panelRole, { type: 'sub_tool_done', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'PanelExamine', isError: panelSummary(template, scope).isError, result: panelSummary(template, scope).text })
+    if (panelOpened) deps.cb.onToolEvent?.(panelRole, { type: 'sub_tool_done', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'StudioLens', isError: panelSummary(template, scope).isError, result: panelSummary(template, scope).text })
   }
 
   // result: projection (value-layer归约) — the engine adds the domain projections (subjects/ok/message/reviewer)

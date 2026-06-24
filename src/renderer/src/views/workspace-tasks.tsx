@@ -6,13 +6,13 @@
    Services = the conversation's live background services started via start_service (pushed via conv:services;
    only active starting/ready ones — exited services move to History). Single chat lists them flat; a group
    chat groups them by the expert that started them. Each card can expand its logs inline and be stopped.
-   History = completed-phase snapshots + panel_examine verdicts + exited services, read from SQLite (never
+   History = completed-phase snapshots + studio_lens verdicts + exited services, read from SQLite (never
    re-derived from the transcript) and refreshed on tasks:historyChanged. Clear hides history.
    ============================================================ */
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { Icons } from '@/components/icons'
 import { useChat } from '@/stores/chat'
-import { PanelCard } from '@/components/panel-card'
+import { LensCard } from '@/components/lens-card'
 import { useT } from '@/stores/locale'
 import { useConvTodos } from '@/stores/conv-todos'
 import { useConvServices } from '@/stores/conv-services'
@@ -49,20 +49,20 @@ function fmtDur(ms: number): string {
   return `${Math.round(m / 60)}h`
 }
 
-// Rebuild a PanelExamine ToolCall from a PERSISTED examine row so the SAME rich PanelCard renders a completed
+// Rebuild a StudioLens ToolCall from a PERSISTED examine row so the SAME rich LensCard renders a completed
 // review after reload — the live card is a session-only sub-tool stream, this is its durable form. The verdict is
-// mapped back to what PanelCard.subjectState reads: pass / false-positive ride input.verdict; a FAIL rides
+// mapped back to what LensCard.subjectState reads: pass / false-positive ride input.verdict; a FAIL rides
 // status:'error' (subjectState falls to status when input.verdict isn't one of its enum values). refuteTally
 // drives the nested skeptic line. Synthetic, stable ids ('hist-pe-…') so React keys don't collide with live tools.
 function examineToPanelTool(ex: WorkspaceExamine): ToolCall {
   const findings = ex.findings ?? []
   // ONE row per persisted finding (per-candidate, workflow-faithful). Multiple candidates share a lens (axis),
-  // so the roster key must be UNIQUE per row (`${axis}#${i}`) or PanelCard's subjectsByKey would collapse them
+  // so the roster key must be UNIQUE per row (`${axis}#${i}`) or LensCard's subjectsByKey would collapse them
   // into one; the row itself shows the candidate's title + severity + lens. (No findings → an empty card.)
   const rowKey = (f: WorkspaceExamine['findings'][number], i: number): string => `${f.axis}#${i}`
   return {
     id: 'hist-pe-' + ex.id,
-    name: 'PanelExamine',
+    name: 'StudioLens',
     status: 'done',
     input: { mode: ex.mode ?? 'review', subjects: findings.map((f, i) => rowKey(f, i)), findingsCard: true },
     subTools: findings.map((f, i) => ({
@@ -75,7 +75,7 @@ function examineToPanelTool(ex: WorkspaceExamine): ToolCall {
   }
 }
 
-// One owner's panel_examine cards (shared by the live "Panel reviews" section and the History section). Owner
+// One owner's studio_lens cards (shared by the live "Panel reviews" section and the History section). Owner
 // header shown whenever a real expert owns it — even a single owner in a collab — so attribution is never lost
 // ("不要串"); solo (no expertId) renders headerless.
 function PanelGroup({ owner, panelTools, expertsById }: { owner: string; panelTools: ToolCall[]; expertsById: ReturnType<typeof useAllExperts>['byId'] }): ReactElement {
@@ -88,7 +88,7 @@ function PanelGroup({ owner, panelTools, expertsById }: { owner: string; panelTo
         </div>
       ) : null}
       {panelTools.map((tl) => (
-        <PanelCard key={tl.id} tool={tl} />
+        <LensCard key={tl.id} tool={tl} />
       ))}
     </div>
   )
@@ -156,7 +156,7 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
     ? Object.entries(liveByRole).filter(([roleId, ts]) => ts.length > 0 && (!ts.every((tk) => tk.status === 'completed') || !inHistory(roleId, ts)))
     : []
 
-  // — Panel reviews (panel_examine) — moved OUT of the chat segment (its tall body overflowed the folded 160px
+  // — Panel reviews (studio_lens) — moved OUT of the chat segment (its tall body overflowed the folded 160px
   // window and swallowed the expert's history) into here, grouped by the expert that OWNS it — like the per-role
   // todos, never mixed across experts ("不要串"). TWO sources, handed off at completion exactly like todos
   // (live → history):
@@ -173,20 +173,20 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
       for (const tl of m.tools) {
         // A COARSE per-subtool stream length (bucketed by 32 chars) is folded in so the live card re-renders AS
         // each panel sub-agent (finder/skeptic/reader) streams its reasoning — but only on PANEL tokens (the
-        // coordinator's own main-turn text isn't a PanelExamine subtool, so it still never triggers this), and
+        // coordinator's own main-turn text isn't a StudioLens subtool, so it still never triggers this), and
         // bucketed so it advances ~smoothly, not on every single token (workflow /workflows live parity + perf).
         // Keyed on the MONOTONIC streamLen (not stream.length, which pins at the tail cap → tail would freeze).
-        if (tl.name === 'PanelExamine') sig += `${m.expertId ?? ''}~${tl.id}~${tl.status}~${(tl.subTools ?? []).map((st) => `${st.status}${Math.floor((st.streamLen ?? 0) / 32)}`).join('')};`
+        if (tl.name === 'StudioLens') sig += `${m.expertId ?? ''}~${tl.id}~${tl.status}~${(tl.subTools ?? []).map((st) => `${st.status}${Math.floor((st.streamLen ?? 0) / 32)}`).join('')};`
       }
     }
     return sig
   })
-  // panel_examine behaves EXACTLY like todos: a RUNNING review shows in the live "Panel reviews" section; once it
+  // studio_lens behaves EXACTLY like todos: a RUNNING review shows in the live "Panel reviews" section; once it
   // COMPLETES it moves to History. Both per-owner ("不要串").
-  //   • RUNNING (live "Panel reviews"): chat-store PanelExamine tools with status:'running'.
+  //   • RUNNING (live "Panel reviews"): chat-store StudioLens tools with status:'running'.
   //   • DONE (History): in-session, the chat-store tool flips to status:'done' → it moves from one Map to the other
   //     in the SAME re-render (atomic, no flicker — no IPC round-trip). On RELOAD the chat store has no synthetic
-  //     PanelExamine, so done panels are rebuilt from the PERSISTED examines instead (live XOR reloaded → never
+  //     StudioLens, so done panels are rebuilt from the PERSISTED examines instead (live XOR reloaded → never
   //     shown twice).
   const { runningPanels, donePanels } = useMemo<{ runningPanels: [string, ToolCall[]][]; donePanels: [string, ToolCall[]][] }>(() => {
     const running = new Map<string, ToolCall[]>()
@@ -201,7 +201,7 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
     for (const m of ms ?? []) {
       if (m.role !== 'assistant' || !m.tools) continue
       for (const tl of m.tools) {
-        if (tl.name !== 'PanelExamine') continue
+        if (tl.name !== 'StudioLens') continue
         live++
         push(tl.status === 'running' ? running : done, m.expertId ?? '', tl)
       }
@@ -274,8 +274,8 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
   // Report History presence up to the drawer so it can relax the narrow fixed window when there's nothing
   // archived yet (current-todos-only view → show them in full, not cramped). Phases / examines / exited services.
 
-  // Merge phases + exited services into one newest-first timeline. panel_examine reviews are NOT here — they
-  // render as their own rich PanelCard in the "Panel reviews" section above (rebuilt from these same persisted
+  // Merge phases + exited services into one newest-first timeline. studio_lens reviews are NOT here — they
+  // render as their own rich LensCard in the "Panel reviews" section above (rebuilt from these same persisted
   // examine rows), so a completed review shows ONCE (not also as a summary card here).
   const timeline: (
     | { kind: 'phase'; row: WorkspacePhase }
@@ -356,7 +356,7 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
                 <Icons.refresh size={12} /> {t('tasks.clear')}
               </button>
             </div>
-            {/* Completed panel_examine reviews — the rich card moved here from the live "Panel reviews" section the
+            {/* Completed studio_lens reviews — the rich card moved here from the live "Panel reviews" section the
                 moment it finished (like a todo phase), still grouped by owner. */}
             {donePanels.map(([owner, panelTools]) => (
               <PanelGroup key={'dp' + (owner || 'solo')} owner={owner} panelTools={panelTools} expertsById={expertsById} />

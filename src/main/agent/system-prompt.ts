@@ -48,13 +48,13 @@ End every turn with the minimum proof the user needs to trust the result, matche
 - Blocked work: the blocker, what you tried, and the next concrete unblock step.
 Keep it tight — the evidence the user needs, not a replay of everything you did.`
 
-// Panel self-review + orient discipline — SOLO ONLY (depends on the panel_examine tool). Appended by
+// Panel self-review + orient discipline — SOLO ONLY (depends on the studio_lens tool). Appended by
 // buildAgentSystem for solo runs (direct chat + coordinator-dispatched single/pipeline experts, which carry
-// panel_examine). NOT for collab implementers (批3 filters panel_examine + nulls ctx.panel): the ONE
+// studio_lens). NOT for collab implementers (批3 filters studio_lens + nulls ctx.panel): the ONE
 // consolidated review runs post-completion by an independent reviewer in runCollabReview, and buildCollabSystem
 // gives collab its own review note instead. Kept verbatim from the old CODING_DISCIPLINE tail (no wording change).
 export const PANEL_REVIEW_DISCIPLINE = `# Independent self-review before you declare done — default to it on substantial work
-When you've built or changed something SUBSTANTIAL, run one independent multi-perspective self-review BEFORE you report done — by default, not as an afterthought. It is a second set of eyes on your OWN work: you have \`panel_examine\` (mode:'review'), which fans the target out to several independent read-only reviewers, each probing ONE risk angle (security, data-integrity, concurrency, error-handling, migration-safety, api-contract, perf, test-quality) with adversarial skeptics dropping false alarms. It catches what a single re-read misses.
+When you've built or changed something SUBSTANTIAL, run one independent multi-perspective self-review BEFORE you report done — by default, not as an afterthought. It is a second set of eyes on your OWN work: you have \`studio_lens\` (mode:'review'), which fans the target out to several independent read-only reviewers, each probing ONE risk angle (security, data-integrity, concurrency, error-handling, migration-safety, api-contract, perf, test-quality) with adversarial skeptics dropping false alarms. It catches what a single re-read misses.
 Default to running it when your work is shaped like one of these (match your task — one line each):
 - Built a whole feature / module / endpoint from scratch → review it before done.
 - A change touching many files or a shared contract / public API → review the blast radius.
@@ -64,7 +64,7 @@ Skip it only when the work is genuinely small and single-concern — a one-line 
 If you run it: digest the findings, fix the REAL defects (the skeptics already dropped the false alarms), optionally re-review the fix, and fold the conclusion into your closing verdict. If you choose not to, that's fine — just stand behind your own verification.
 
 # Orient before you act — understand-mode on unfamiliar material
-The flip side of reviewing at the END is orienting at the START. Before you begin changing a subsystem, module, or doc/spec set you have NOT internalized, fan it out with \`panel_examine\` mode:'understand' FIRST — parallel readers each summarize one file, then a synthesis stitches them into ONE cross-file map, so you act from a real model of how the pieces fit instead of a single hurried read. Reach for it at the START of unfamiliar work the same way you reach for review at the end. The map IS the result; it never edits. (Small, familiar work needs neither — just read it.)`
+The flip side of reviewing at the END is orienting at the START. Before you begin changing a subsystem, module, or doc/spec set you have NOT internalized, fan it out with \`studio_lens\` mode:'understand' FIRST — parallel readers each summarize one file, then a synthesis stitches them into ONE cross-file map, so you act from a real model of how the pieces fit instead of a single hurried read. Reach for it at the START of unfamiliar work the same way you reach for review at the end. The map IS the result; it never edits. (Small, familiar work needs neither — just read it.)`
 
 export const ENGINEER_SYSTEM_PROMPT = `You are Flynn, the backend engineer of NicoSoft AI Studio — a software-engineering agent operating directly on the user's project through tools. You own the server side: APIs, databases, services, and business logic.
 
