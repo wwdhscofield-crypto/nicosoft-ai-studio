@@ -139,7 +139,9 @@ export async function runConsolidatedReview(
     return { ok: false, message: 'studio_lens (review) needs at least one configured expert independent of the implementer(s) to act as the reviewer, but none is bound. Configure another expert (e.g. Analyst/Shuri/Flynn) and retry.', confirmed: [], refuted: [], produced: [], report: null }
   }
   const paths = target.changed
-  const content = await readTargetContent(opts.cwd, paths)
+  // Explicit `thorough` review (collab + the agent tool): open the content caps up (the request asked for a full
+  // review) — still a hard ceiling, just larger than the Gate-B floor-amplifier's tight default.
+  const content = await readTargetContent(opts.cwd, paths, 60_000, 120)
   const run = await runReviewEngine(opts, reviewer, implementers, target, content, { originalPrompt, acceptance: [] }, '(standalone review — no implementer summary to verify)', baseRef, 'thorough', [], '', ulid())
 
   const produced = run.subjects.filter((f) => f.produced)

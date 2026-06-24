@@ -117,14 +117,19 @@ export async function buildChangedSet(
 
 // Read the target files' content (capped) so the SELECT step can author lenses from the CODE itself, not only
 // the diff — essential for the explicit entry (no diff) and surgical changes (thin diff), where a diff-only
-// selector starves. Carved verbatim from examine/panel.ts (must-fix ②). Skips unreadable / out-of-bounds paths
-// (confineReal); caps per-file (8k) + total (24k) so a large target can't bloat the selection prompt.
-export async function readTargetContent(cwd: string | undefined, paths: readonly string[], maxTotal = 24_000): Promise<string> {
+// selector starves. Carved from examine/panel.ts (must-fix ②). The caps SCALE to the review breadth: the caller
+// passes maxTotal/maxFiles, so an explicit `thorough` review opens them up while the Gate-B floor-amplifier stays
+// tight — a hard ceiling (token/body safety) always remains. Truncation is NEVER silent: every changed file the
+// cap excludes (over-budget OR unreadable) is still NAMED in a trailing note, so SELECT authors lenses for the
+// WHOLE change (its finders then read those files directly) instead of going blind past file N (was a silent
+// first-40 slice). Per-file body still capped at 8k so one huge file can't crowd out the rest.
+export async function readTargetContent(cwd: string | undefined, paths: readonly string[], maxTotal = 24_000, maxFiles = 40): Promise<string> {
   if (!cwd) return ''
   const parts: string[] = []
+  const omitted: string[] = []
   let total = 0
-  for (const p of paths.slice(0, 40)) {
-    if (total >= maxTotal) break
+  for (const p of paths) {
+    if (parts.length >= maxFiles || total >= maxTotal) { omitted.push(p); continue } // over budget — name it, don't read
     try {
       const abs = await confineReal(cwd, p)
       let body = await readFile(abs, 'utf-8')
@@ -133,9 +138,14 @@ export async function readTargetContent(cwd: string | undefined, paths: readonly
       parts.push(block)
       total += block.length
     } catch {
-      /* unreadable / out-of-bounds path — skip */
+      omitted.push(p) // unreadable / out-of-bounds — still name it below
     }
   }
-  const out = parts.join('\n\n')
-  return out.length > maxTotal ? out.slice(0, maxTotal) + '\n…[content truncated for lens selection]' : out
+  let out = parts.join('\n\n')
+  if (out.length > maxTotal) out = out.slice(0, maxTotal) + '\n…[content truncated for lens selection]'
+  if (omitted.length) {
+    const named = omitted.slice(0, 60).join(', ')
+    out += `\n\n[${omitted.length} more changed file(s) NOT inlined above (prompt-length cap) — author lenses for these too where the path/role implies risk; the finders read them directly: ${named}${omitted.length > 60 ? `, …+${omitted.length - 60} more` : ''}]`
+  }
+  return out
 }
