@@ -22,6 +22,7 @@ export interface Finding {
   file?: string // file the defect lives in
   line?: number // line within the file
   severity: Severity
+  confidence?: Severity // the finder's self-assessed confidence this candidate is REAL (NOT severity = how bad IF real) — drives refute DEPTH: low → more skeptics, high → fewer
   mechanism: string // the concrete failure path (the finder's evidence for this candidate)
   refuted?: boolean // per-candidate refute: a majority of skeptics could not confirm it → dropped as a false alarm
   refuteYes?: number // skeptics who could NOT confirm the candidate (→ refute)
@@ -60,6 +61,16 @@ export function normSeverity(s: unknown): Severity {
   return 'med'
 }
 
+// The finder's self-assessed confidence a candidate is a REAL defect (distinct from severity = how bad IF real).
+// Drives how hard the refute stage vets it: low confidence → MORE skeptics (likelier a false alarm), high → fewer
+// (it will survive anyway). 'med' when the finder omits it (a safe middle). Same high/med/low scale as severity.
+export function normConfidence(s: unknown): Severity {
+  const v = String(s ?? '').toLowerCase()
+  if (v === 'high' || v === 'certain' || v === 'sure') return 'high'
+  if (v === 'low' || v === 'unsure' || v === 'tentative' || v === 'maybe') return 'low'
+  return 'med'
+}
+
 // Parse the finder's machine contract: a fenced ```findings JSON array of candidate defects. Returns null when
 // no parseable block is present (the caller then DEGRADES to the binary VERDICT). Caps the list + each field so
 // a runaway reply can't bloat.
@@ -85,6 +96,7 @@ export function parseFindings(text: string, lens: string): Finding[] | null {
       file: typeof x?.file === 'string' ? x.file.trim().slice(0, 240) : undefined,
       line: typeof x?.line === 'number' && Number.isFinite(x.line) ? x.line : undefined,
       severity: normSeverity(x?.severity),
+      confidence: normConfidence(x?.confidence),
       mechanism: String(x?.mechanism ?? '').trim().slice(0, 1600)
     })
   }

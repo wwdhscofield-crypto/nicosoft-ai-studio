@@ -64,6 +64,7 @@ export interface StepSpec {
   stages?: string[]
   voters?: number
   majority?: number
+  votersByConfidence?: Record<string, number> // refute DEPTH per candidate: finder-confidence → skeptic count (model-decided depth vs a flat `voters`); majority derives from the count unless `majority` is set
   failVote?: 'uphold' | 'refute'
   loop?: LoopSpec
 }
@@ -143,6 +144,7 @@ const candRowInput = (c: Finding): Record<string, unknown> => ({
   lens: c.lens,
   title: c.title,
   severity: c.severity,
+  confidence: c.confidence,
   file: c.file ? `${c.file}${c.line ? `:${c.line}` : ''}` : undefined,
 })
 
@@ -500,8 +502,12 @@ async function runRefute(step: StepSpec, scope: Scope, ctx: LensContext, deps: L
   const candidates = (resolveValue(stripRef(step.over ?? ''), scope) as Finding[] | undefined) ?? []
   const stepId = ctx.stepId
   const panelId = panelCardId(stepId)
-  const voters = step.voters ?? 3
-  const majority = step.majority ?? 2
+  // Refute DEPTH is per-candidate + model-decided: the finder's own `confidence` picks the skeptic count from the
+  // template's `votersByConfidence` map (low confidence → MORE skeptics, likelier a false alarm; high → fewer, it
+  // survives anyway). Falls back to a flat `voters` (default 3). majority = strict majority of the chosen count
+  // (floor(n/2)+1) unless the template pins `majority`. Replaces the engine's old flat `voters × every candidate`.
+  const votersFor = (c: Finding): number => step.votersByConfidence?.[c.confidence ?? 'med'] ?? step.voters ?? 3
+  const majorityFor = (n: number): number => step.majority ?? Math.floor(n / 2) + 1
   if (candidates.length === 0) {
     foldSource(step, scope, new Map())
     return { kept: [] }
@@ -517,7 +523,8 @@ async function runRefute(step: StepSpec, scope: Scope, ctx: LensContext, deps: L
   // one read-only skeptic per (candidate × voter), all under the limiter
   const jobs: Array<() => Promise<{ id: string; lens: string; refuted: boolean; inputTokens: number; outputTokens: number }>> = []
   for (const cand of candidates) {
-    for (let i = 0; i < voters; i++) {
+    const n = votersFor(cand)
+    for (let i = 0; i < n; i++) {
       jobs.push(() => runRefuteVote(step, ctx, deps, cand, roleId, kit, i, stepId, panelId).then((r) => ({ id: cand.id, lens: cand.lens, ...r })))
     }
   }
@@ -527,7 +534,7 @@ async function runRefute(step: StepSpec, scope: Scope, ctx: LensContext, deps: L
   for (const cand of candidates) {
     const cv = votes.filter((v) => v.id === cand.id)
     const yes = cv.filter((v) => v.refuted).length
-    cand.refuted = yes >= majority
+    cand.refuted = yes >= majorityFor(votersFor(cand))
     cand.refuteYes = yes
     cand.refuteTotal = cv.length
     const tk = tokByLens.get(cand.lens) ?? { inputTokens: 0, outputTokens: 0 }

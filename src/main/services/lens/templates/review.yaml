@@ -101,22 +101,27 @@ phases:
           file: string
           line: int
           severity: high|med|low
+          confidence: high|med|low
           mechanism: string
     emit:
       contract: findings
       degradeTo: verdict
       trustEmptyOn: PASS
 
-  # VERIFY — the adversarial REFUTE filter: every candidate, across ALL lenses, faces 3 independent skeptics;
-  # ≥2 "could not confirm" votes drop it. failVote=uphold: an infra-failed / unparseable vote never drops a real
-  # defect. The engine then folds each lens's verdict (§3⑤) and fans the refute token cost back by lens (§3②).
+  # VERIFY — the adversarial REFUTE filter: every candidate, across ALL lenses, faces independent skeptics, but the
+  # COUNT is MODEL-DECIDED — it scales to the finder's own `confidence` (votersByConfidence), so a borderline
+  # candidate is vetted harder (3) than an obvious one (1). A strict-majority "could not confirm" drops it.
+  # failVote=uphold: an infra-failed / unparseable vote never drops a real defect. The engine then folds each
+  # lens's verdict (§3⑤) and fans the refute token cost back by lens (§3②).
   - id: verify
     phase: Verify
     type: refute
     over: "${find.pluck(candidates).flat}"
     as: cand
-    voters: 3
-    majority: 2
+    # Refute depth scales to the finder's OWN confidence (the model's signal): low confidence → MORE skeptics
+    # (likelier a false alarm), high → fewer (it survives anyway). majority derives from the count (1→1, 2→2, 3→2).
+    # Replaces the flat `voters: 3 × every candidate` — the old all-candidates×3 Cartesian behind the 18-min review.
+    votersByConfidence: { high: 1, med: 2, low: 3 }
     failVote: uphold
     role: reviewer
     kit: read-only
