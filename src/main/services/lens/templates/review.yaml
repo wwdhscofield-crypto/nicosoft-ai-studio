@@ -72,83 +72,85 @@ phases:
 
       Return ONLY a JSON array of lens objects — no prose, no markdown fence.
 
-  # FIND — one independent finder per lens (barrier fan-out, faithful to the current panel). Each READS the
-  # target files directly (git diff is OPTIONAL enrichment, agent's call — works on any tree, git or not),
-  # hunts its lens aggressively, and emits a ```findings array (the candidate column). Empty array is
-  # trusted ONLY on VERDICT: PASS — a FAIL with no array degrades to one prose candidate (never swallow a FAIL).
-  - id: find
+  # PANEL — the find→refute PIPELINE (a real Workflow pipeline, NOT a barrier): each lens flows finder → refute
+  # INDEPENDENTLY, so a fast lens's candidates are vetted while a slow lens's finder is still hunting (the old
+  # two-phase `find` made EVERY finder finish before ANY refute — the 18-min coupling). All stages run under ONE
+  # global concurrency limiter. The pipeline returns the folded per-lens SubjectFinding[]; candidates carry their
+  # own refute verdict, so `panel.pluck(candidates).flat` is the cross-lens candidate list the result reads.
+  - id: panel
     phase: Review
-    type: parallel
+    type: pipeline
     over: "${select.lenses}"
     as: lens
     role: reviewer
     kit: read-only
-    card:
-      name: Subject
-      phase: find
-      subject: "${lens.key}"
-    prompt: |
-      Run your "{{lens.key}}" lens on the code under review: {{lens.focus}}. Inspect it YOURSELF — READ the
-      target file(s) ({{paths}}) directly; reading the code is ALWAYS enough on its own. If this happens to
-      be a git repo you MAY also use `git diff {{baseRef}}` / `git status` to isolate the precise change —
-      your call, only if it helps. Nothing is inlined.
+    stages:
+      # FIND stage — one finder for this lens. READS the target files directly (git diff is OPTIONAL enrichment,
+      # agent's call — works on any tree, git or not), hunts its lens, emits a ```findings array with a
+      # per-candidate confidence. Empty array trusted ONLY on VERDICT: PASS — a FAIL with no array degrades to
+      # one prose candidate (never swallow a FAIL).
+      - id: find
+        card:
+          name: Subject
+          phase: find
+          subject: "${lens.key}"
+        prompt: |
+          Run your "{{lens.key}}" lens on the code under review: {{lens.focus}}. Inspect it YOURSELF — READ the
+          target file(s) ({{paths}}) directly; reading the code is ALWAYS enough on its own. If this happens to
+          be a git repo you MAY also use `git diff {{baseRef}}` / `git status` to isolate the precise change —
+          your call, only if it helps. Nothing is inlined.
 
-      Original task:
-      {{task}}
+          Original task:
+          {{task}}
 
-      Implementer's own summary (a claim to verify, not ground truth):
-      {{implementerSummary}}
-    output:
-      verdict: PASS|FAIL
-      candidates:
-        - title: string
-          file: string
-          line: int
-          severity: high|med|low
-          confidence: high|med|low
-          mechanism: string
-    emit:
-      contract: findings
-      degradeTo: verdict
-      trustEmptyOn: PASS
+          Implementer's own summary (a claim to verify, not ground truth):
+          {{implementerSummary}}
+        output:
+          verdict: PASS|FAIL
+          candidates:
+            - title: string
+              file: string
+              line: int
+              severity: high|med|low
+              confidence: high|med|low
+              mechanism: string
+        emit:
+          contract: findings
+          degradeTo: verdict
+          trustEmptyOn: PASS
 
-  # VERIFY — the adversarial REFUTE filter: every candidate, across ALL lenses, faces independent skeptics, but the
-  # COUNT is MODEL-DECIDED — it scales to the finder's own `confidence` (votersByConfidence), so a borderline
-  # candidate is vetted harder (3) than an obvious one (1). A strict-majority "could not confirm" drops it.
-  # failVote=uphold: an infra-failed / unparseable vote never drops a real defect. The engine then folds each
-  # lens's verdict (§3⑤) and fans the refute token cost back by lens (§3②).
-  - id: verify
-    phase: Verify
-    type: refute
-    over: "${find.pluck(candidates).flat}"
-    as: cand
-    # Refute depth scales to the finder's OWN confidence (the model's signal): low confidence → MORE skeptics
-    # (likelier a false alarm), high → fewer (it survives anyway). majority derives from the count (1→1, 2→2, 3→2).
-    # Replaces the flat `voters: 3 × every candidate` — the old all-candidates×3 Cartesian behind the 18-min review.
-    votersByConfidence: { high: 1, med: 2, low: 3 }
-    failVote: uphold
-    role: reviewer
-    kit: read-only
-    card:
-      name: SubjectRefute
-      phase: verify
-      subject: "${cand.id}"
-    system: "refutePrompt(${cand.focus})"
-    prompt: |
-      An independent "{{cand.lens}}" finder flagged ONE candidate defect in the code under review. As a
-      SKEPTIC, try to REFUTE this single candidate — prove it is a false alarm, or concede it stands.
-      Inspect it YOURSELF — READ the cited file ({{cand.file}}) directly; that is always enough. If this is a
-      git repo you MAY also `git diff {{baseRef}} -- {{cand.file}}` for the precise hunk — your call.
+      # VERIFY stage — the adversarial REFUTE filter over THIS lens's OWN candidates (over: ${find.candidates},
+      # the finder stage's output threaded into this stage's scope — not a cross-lens flat list). The skeptic
+      # COUNT is MODEL-DECIDED: it scales to the finder's own `confidence` (votersByConfidence), so a borderline
+      # candidate is vetted harder (3) than an obvious one (1); majority derives from the count (1→1, 2→2, 3→2).
+      # failVote=uphold: an infra-failed / unparseable vote never drops a real defect.
+      - id: verify
+        phase: Verify
+        type: refute
+        over: "${find.candidates}"
+        as: cand
+        votersByConfidence: { high: 1, med: 2, low: 3 }
+        failVote: uphold
+        card:
+          name: SubjectRefute
+          phase: verify
+          subject: "${cand.id}"
+        system: "refutePrompt(${cand.focus})"
+        prompt: |
+          An independent "{{cand.lens}}" finder flagged ONE candidate defect in the code under review. As a
+          SKEPTIC, try to REFUTE this single candidate — prove it is a false alarm, or concede it stands.
+          Inspect it YOURSELF — READ the cited file ({{cand.file}}) directly; that is always enough. If this is a
+          git repo you MAY also `git diff {{baseRef}} -- {{cand.file}}` for the precise hunk — your call.
 
-      Candidate to refute:
-      [{{cand.severity}}] {{cand.title}}
-      Mechanism: {{cand.mechanism}}
+          Candidate to refute:
+          [{{cand.severity}}] {{cand.title}}
+          Mechanism: {{cand.mechanism}}
 
-      Original task:
-      {{task}}
+          Original task:
+          {{task}}
 
-      Implementer's own summary:
-      {{implementerSummary}}
+          Implementer's own summary:
+          {{implementerSummary}}
 
   # SYNTHESIZE — the lead-reviewer turn (tool-less one-shot, the chatOnce seam): dedup the CONFIRMED findings
   # into one actionable report, severity-first. Only runs when a confirmed defect survived refute.
@@ -156,7 +158,7 @@ phases:
     phase: Synthesize
     type: agent
     role: reviewer
-    when: "${verify.kept.where(refuted == false).length > 0}"
+    when: "${panel.pluck(candidates).flat.where(refuted == false).length > 0}"
     card:
       name: Synth
       phase: synth
@@ -173,12 +175,12 @@ phases:
       - Be tight and concrete — no preamble, no restating these instructions. This goes straight to the engineer.
 
       Confirmed findings (survived adversarial refutation), severity-first:
-      {{verify.kept.where(refuted == false).orderBy(severity, asc)}}
+      {{panel.pluck(candidates).flat.where(refuted == false).orderBy(severity, asc)}}
 
 # result: — the YAML归约 projection. The engine layers the domain projections (subjects[] / ok / message /
 # reviewer / recordExamine payload) on top in the bridge (§3①/M-7); they are NOT expressible as归约.
 result:
-  confirmed: "${verify.kept.where(refuted == false).orderBy(severity, asc)}"
-  refuted: "${verify.kept.where(refuted == true)}"
-  candidates: "${find.pluck(candidates).flat}"
+  confirmed: "${panel.pluck(candidates).flat.where(refuted == false).orderBy(severity, asc)}"
+  refuted: "${panel.pluck(candidates).flat.where(refuted == true)}"
+  candidates: "${panel.pluck(candidates).flat}"
   report: "${synth.report}"

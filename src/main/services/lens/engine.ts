@@ -61,7 +61,7 @@ export interface StepSpec {
   when?: string
   over?: string
   as?: string
-  stages?: string[]
+  stages?: StepSpec[] // pipeline ONLY: the per-item stages (e.g. [finder, refute]) each item flows through with NO cross-item barrier
   voters?: number
   majority?: number
   votersByConfidence?: Record<string, number> // refute DEPTH per candidate: finder-confidence → skeptic count (model-decided depth vs a flat `voters`); majority derives from the count unless `majority` is set
@@ -173,13 +173,18 @@ export function loadTemplate(raw: string): Template {
 // break the moment a template renamed a step ("orchestration is data" leaks). So identify each by its declared
 // SHAPE — the card type + emit contract, which are the engine's OWN vocabulary (CardSpec.name / EmitSpec.contract,
 // the things the engine renders), not the template author's free-choice id. Rename a step freely; the fold follows.
+const isFinderShape = (st: StepSpec): boolean => st.card?.name === 'Subject' && st.emit?.contract === 'findings'
+const isReaderShape = (st: StepSpec): boolean => st.card?.name === 'Subject' && st.emit?.contract === 'text'
+
 function classifySteps(t: Template): { finderId?: string; readerId?: string; synthId?: string } {
   let finderId: string | undefined
   let readerId: string | undefined
   let synthId: string | undefined
   for (const s of t.phases) {
-    if (s.card?.name === 'Subject' && s.emit?.contract === 'findings') finderId ??= s.id
-    else if (s.card?.name === 'Subject' && s.emit?.contract === 'text') readerId ??= s.id
+    // a finder/reader is a top-level fan-out step OR a `pipeline` whose stages CARRY that shape (the find→refute
+    // pipeline nests the finder as a stage, so the shape — not a literal id — still locates the source step).
+    if (isFinderShape(s) || s.stages?.some(isFinderShape)) finderId ??= s.id
+    else if (isReaderShape(s) || s.stages?.some(isReaderShape)) readerId ??= s.id
     if (s.card?.name === 'Synth') synthId ??= s.id
   }
   return { finderId, readerId, synthId }
@@ -205,8 +210,13 @@ export async function runLens(template: Template, ctx: LensContext, deps: LensDe
   const panelId = panelCardId(ctx.stepId)
   let panelOpened = false
   let panelRole = ctx.roleBySlot.reviewer ?? ctx.roleBySlot.caller ?? 'generalist'
+  // A fan-out renders Subject rows when the step itself carries a Subject card (parallel) OR a stage does
+  // (pipeline — the finder is a nested stage). Either way the panel wraps them.
+  const opensSubjects = (step: StepSpec): boolean =>
+    (step.type === 'parallel' || step.type === 'pipeline') &&
+    (step.card?.name === 'Subject' || (step.stages?.some((st) => st.card?.name === 'Subject') ?? false))
   const openPanelBefore = (step: StepSpec): void => {
-    if (panelOpened || !((step.type === 'parallel' || step.type === 'pipeline') && step.card?.name === 'Subject')) return
+    if (panelOpened || !opensSubjects(step)) return
     panelRole = ctx.roleBySlot[step.role ?? 'reviewer'] ?? panelRole
     // roster = the fan-out's OWN `over` list (review: select.lenses → keys; understand: paths), resolved
     // generically — the panel never hard-codes the producing step's id (orchestration is data).
@@ -273,8 +283,9 @@ async function runStep(step: StepSpec, scope: Scope, ctx: LensContext, deps: Len
     case 'agent':
       return runAgentStep(step, scope, ctx, deps)
     case 'parallel':
-    case 'pipeline':
       return runFanOut(step, scope, ctx, deps)
+    case 'pipeline':
+      return runPipeline(step, scope, ctx, deps)
     case 'refute':
       return runRefute(step, scope, ctx, deps)
     case 'loop':
@@ -414,6 +425,49 @@ async function runFanOutItem(step: StepSpec, scope: Scope, ctx: LensContext, dep
   return { [as]: item, ...(parseOutput(step, out.text) as object) }
 }
 
+// The finder stage of a pipeline (the Subject/findings stage) — used for the dropped-record shape on abort.
+function finderStage(step: StepSpec): StepSpec | undefined {
+  return step.stages?.find(isFinderShape)
+}
+
+// pipeline — a REAL non-barrier staged fan-out (Workflow's pipeline, the §3 fix for #6/#3b). Each item flows
+// through `stages` in sequence INDEPENDENTLY, sharing only the global concurrency limiter — so lens B's refute
+// can run while lens A's finder is still going (NO cross-item barrier; the old `parallel find` → `refute` made
+// every finder finish before ANY refute). The shipped review uses [finder, refute]: each lens is found, then ITS
+// OWN candidates are refuted + folded. Returns the folded SubjectFinding[] — same shape as the old `find` step,
+// each candidate carrying its refute verdict — so run.subjects / panelSummary / the result projection are unchanged.
+async function runPipeline(step: StepSpec, scope: Scope, ctx: LensContext, deps: LensDeps): Promise<SubjectFinding[]> {
+  const list = (resolveValue(stripRef(step.over ?? ''), scope) as unknown[] | undefined) ?? []
+  const as = step.as ?? 'item'
+  const tasks = list.map((item, index) => () => runPipelineItem(step, scope, ctx, deps, item, as, index))
+  const results = await parallelExamineLimited(tasks)
+  // null (aborted/threw the whole chain) → a dropped SubjectFinding so the per-lens set stays reconstructable
+  return results.map((r, i) => r ?? (droppedItem(finderStage(step) ?? step, list[i], as) as SubjectFinding))
+}
+
+// One item's find→refute chain (independent of every other item). Runs the finder stage → refutes ITS candidates
+// → folds that lens in place, threading the finder result into later stages' scope as `<finderStage.id>` (so the
+// refute stage's `over: ${find.candidates}` resolves to this lens's own candidates, not a cross-lens flat list).
+async function runPipelineItem(step: StepSpec, scope: Scope, ctx: LensContext, deps: LensDeps, item: unknown, as: string, index: number): Promise<SubjectFinding> {
+  const stepId = ctx.stepId
+  const panelId = panelCardId(stepId)
+  const roleId = resolveRole(step, ctx)
+  const kit = resolveKit(step) ?? ['Read', 'Grep', 'Glob', 'Bash'] // stages inherit the pipeline's read-only kit
+  let itemScope: Scope = { ...scope, item: { ...scope.item, [as]: item, index } }
+  let subject: SubjectFinding | undefined
+  for (const stage of step.stages ?? []) {
+    if (isFinderShape(stage)) {
+      subject = await runFinder(stage, itemScope, ctx, deps, item as { key: string; focus: string; why: string }, roleId, kit, stepId, panelId)
+      itemScope = { ...itemScope, steps: { ...itemScope.steps, [stage.id]: subject } } // expose to the refute stage
+    } else if (stage.type === 'refute') {
+      const cands = (resolveValue(stripRef(stage.over ?? ''), itemScope) as Finding[] | undefined) ?? []
+      const tok = await refuteCandidates(stage, ctx, deps, cands, roleId, kit, stepId, panelId)
+      if (subject) foldOne(subject, tok)
+    }
+  }
+  return subject ?? (droppedItem(finderStage(step) ?? step, item, as) as SubjectFinding)
+}
+
 // One finder lens — emits the Subject card, runs ≤2 attempts (non-contracted retry once), parses the findings
 // contract with the PASS-only empty-trust degrade, stamps focus/id onto each candidate. Result is a
 // SubjectFinding (pre-refute: passed is provisional, derived in the fold after verify).
@@ -495,32 +549,37 @@ async function runReader(step: StepSpec, deps: LensDeps, path: string, as: strin
   return { [as]: path, [emitAs]: summary }
 }
 
-// refute — the per-candidate adversarial filter. Fans `voters` skeptics over every candidate (barrier), tallies
-// majority/failVote, emits the Finding rows + SubjectRefute votes, then folds the SOURCE finder step's per-lens
-// verdicts in place (the §3⑤ verdict fold) and fans the refute token cost back to each lens (§3② key-join).
+// refute (BARRIER step) — fans skeptics over the WHOLE flat candidate list at once, folds the SOURCE finder
+// step's per-lens verdicts in place (§3⑤), key-joins the refute cost (§3②). Used by a two-phase find→verify
+// template + the engine tests; the shipped review.yaml refutes per-lens inside the `pipeline` (no find barrier),
+// but BOTH paths share the refute math via refuteCandidates so it lives in exactly one place.
 async function runRefute(step: StepSpec, scope: Scope, ctx: LensContext, deps: LensDeps): Promise<{ kept: Finding[] }> {
   const candidates = (resolveValue(stripRef(step.over ?? ''), scope) as Finding[] | undefined) ?? []
-  const stepId = ctx.stepId
-  const panelId = panelCardId(stepId)
-  // Refute DEPTH is per-candidate + model-decided: the finder's own `confidence` picks the skeptic count from the
-  // template's `votersByConfidence` map (low confidence → MORE skeptics, likelier a false alarm; high → fewer, it
-  // survives anyway). Falls back to a flat `voters` (default 3). majority = strict majority of the chosen count
-  // (floor(n/2)+1) unless the template pins `majority`. Replaces the engine's old flat `voters × every candidate`.
-  const votersFor = (c: Finding): number => step.votersByConfidence?.[c.confidence ?? 'med'] ?? step.voters ?? 3
-  const majorityFor = (n: number): number => step.majority ?? Math.floor(n / 2) + 1
-  if (candidates.length === 0) {
-    foldSource(step, scope, new Map())
-    return { kept: [] }
-  }
   const roleId = resolveRole(step, ctx)
   const kit = resolveKit(step) ?? ['Read', 'Grep', 'Glob', 'Bash']
+  const tokByLens = await refuteCandidates(step, ctx, deps, candidates, roleId, kit, ctx.stepId, panelCardId(ctx.stepId))
+  foldSource(step, scope, tokByLens) // fold every source lens (empty map still flips no-candidate lenses to passed)
+  return { kept: candidates }
+}
+
+// The shared refute engine: fan skeptics over a candidate SET (the whole flat list for the barrier step, or ONE
+// finder's candidates for the per-lens pipeline), set each candidate's refute verdict + tally IN PLACE, emit the
+// Finding rows + SubjectRefute votes, and return the per-lens refute token cost. DEPTH is per-candidate +
+// model-decided: the finder's own `confidence` picks the skeptic count from `votersByConfidence` (low confidence →
+// MORE skeptics, likelier a false alarm; high → fewer, it survives anyway). Falls back to a flat `voters` (3);
+// majority = strict majority of the chosen count (floor(n/2)+1) unless the template pins `majority`.
+async function refuteCandidates(step: StepSpec, ctx: LensContext, deps: LensDeps, candidates: Finding[], roleId: string, kit: readonly string[], stepId: string, panelId: string): Promise<Map<string, { inputTokens: number; outputTokens: number }>> {
+  const votersFor = (c: Finding): number => step.votersByConfidence?.[c.confidence ?? 'med'] ?? step.voters ?? 3
+  const majorityFor = (n: number): number => step.majority ?? Math.floor(n / 2) + 1
+  const tokByLens = new Map<string, { inputTokens: number; outputTokens: number }>()
+  if (candidates.length === 0) return tokByLens
 
   // open a Finding row per candidate
   for (const c of candidates) {
     deps.cb.onToolEvent?.(roleId, { type: 'sub_tool_start', toolUseId: candRowId(c.id, stepId), parentToolId: panelId, name: 'Finding', input: candRowInput(c) })
   }
 
-  // one read-only skeptic per (candidate × voter), all under the limiter
+  // one read-only skeptic per (candidate × votersFor(candidate)), all under the global limiter
   const jobs: Array<() => Promise<{ id: string; lens: string; refuted: boolean; inputTokens: number; outputTokens: number }>> = []
   for (const cand of candidates) {
     const n = votersFor(cand)
@@ -530,7 +589,6 @@ async function runRefute(step: StepSpec, scope: Scope, ctx: LensContext, deps: L
   }
   const votes = (await parallelExamineLimited(jobs)).filter((v): v is { id: string; lens: string; refuted: boolean; inputTokens: number; outputTokens: number } => v != null)
 
-  const tokByLens = new Map<string, { inputTokens: number; outputTokens: number }>()
   for (const cand of candidates) {
     const cv = votes.filter((v) => v.id === cand.id)
     const yes = cv.filter((v) => v.refuted).length
@@ -547,9 +605,7 @@ async function runRefute(step: StepSpec, scope: Scope, ctx: LensContext, deps: L
   for (const c of candidates) {
     deps.cb.onToolEvent?.(roleId, { type: 'sub_tool_done', toolUseId: candRowId(c.id, stepId), parentToolId: panelId, name: 'Finding', isError: !c.refuted, input: { ...candRowInput(c), verdict: c.refuted ? 'false-positive' : 'fail', refuted: c.refuted ?? false, refuteTally: c.refuteTotal ? `${c.refuteYes ?? 0}/${c.refuteTotal}` : '' }, result: c.mechanism })
   }
-
-  foldSource(step, scope, tokByLens)
-  return { kept: candidates }
+  return tokByLens
 }
 
 // One skeptic vote — refutePrompt persona, read-only self-fetch, REFUTE: YES/NO parse. Infra fail / no contract
@@ -587,27 +643,32 @@ function foldSource(step: StepSpec, scope: Scope, tokByLens: Map<string, { input
   const sourceId = (stripRef(step.over ?? '').split('.')[0] || '').trim()
   const source = scope.steps[sourceId] as SubjectFinding[] | undefined
   if (!Array.isArray(source)) return
-  for (const v of source) {
-    const tk = tokByLens.get(v.key)
-    if (tk) { v.inputTokens += tk.inputTokens; v.outputTokens += tk.outputTokens }
-    if (!v.produced) continue
-    const cands = v.candidates ?? []
-    const survived = cands.filter((c) => !c.refuted)
-    v.refuteYes = cands.length - survived.length
-    v.refuteTotal = cands.length
-    if (cands.length === 0) {
-      v.passed = true
-      v.refuted = false
-    } else if (survived.length === 0) {
-      v.passed = false
-      v.refuted = true
-      v.refuteEvidence = `adversarial refute: all ${cands.length} candidate(s) disproved → false positive`
-    } else {
-      v.passed = false
-      v.refuted = false
-      v.feedback = renderFindings(survived)
-      v.refuteEvidence = `adversarial refute: ${survived.length}/${cands.length} candidate(s) survived`
-    }
+  for (const v of source) foldOne(v, tokByLens)
+}
+
+// Fold ONE finder lens's verdict from its candidates' survival + add in its share of the refute token cost.
+// Shared by foldSource (the barrier path folds every source lens) and the per-lens pipeline (folds each lens as
+// its own refute completes). Mutates the SubjectFinding in place.
+function foldOne(v: SubjectFinding, tokByLens: Map<string, { inputTokens: number; outputTokens: number }>): void {
+  const tk = tokByLens.get(v.key)
+  if (tk) { v.inputTokens += tk.inputTokens; v.outputTokens += tk.outputTokens }
+  if (!v.produced) return
+  const cands = v.candidates ?? []
+  const survived = cands.filter((c) => !c.refuted)
+  v.refuteYes = cands.length - survived.length
+  v.refuteTotal = cands.length
+  if (cands.length === 0) {
+    v.passed = true
+    v.refuted = false
+  } else if (survived.length === 0) {
+    v.passed = false
+    v.refuted = true
+    v.refuteEvidence = `adversarial refute: all ${cands.length} candidate(s) disproved → false positive`
+  } else {
+    v.passed = false
+    v.refuted = false
+    v.feedback = renderFindings(survived)
+    v.refuteEvidence = `adversarial refute: ${survived.length}/${cands.length} candidate(s) survived`
   }
 }
 
