@@ -2,7 +2,7 @@
 # review lenses from the code itself (zero enum, the whole point of the refactor), the refute stage is the
 # backstop against a fabricated lens. Orchestration is data; the engine owns the domain projections (§3).
 name: review
-inputs: [paths, diff, content, baseRef, task, writtenFiles, floorVerdict]
+inputs: [paths, diff, content, baseRef, task, implementerSummary, writtenFiles, floorVerdict]
 enabledSetting: gateB.studioLens.enabled
 breadthInput: thorough                 # explicit entry = broad; Gate-B injects 'conservative' (Workflow scale-to-request)
 vars:
@@ -81,7 +81,15 @@ phases:
       name: Subject
       phase: find
       subject: "${lens.key}"
-    prompt: "Run your \"{{lens.key}}\" lens on the uncommitted change: {{lens.focus}}. Inspect it YOURSELF — `git diff {{baseRef}}` + `git status`, then Read the touched files for your lens — nothing is inlined."
+    prompt: |
+      Run your "{{lens.key}}" lens on the uncommitted change: {{lens.focus}}. Inspect it YOURSELF —
+      `git diff {{baseRef}}` + `git status`, then Read the touched files for your lens — nothing is inlined.
+
+      Original task:
+      {{task}}
+
+      Implementer's own summary (a claim to verify, not ground truth):
+      {{implementerSummary}}
     output:
       verdict: PASS|FAIL
       candidates:
@@ -121,6 +129,12 @@ phases:
       Candidate to refute:
       [{{cand.severity}}] {{cand.title}}
       Mechanism: {{cand.mechanism}}
+
+      Original task:
+      {{task}}
+
+      Implementer's own summary:
+      {{implementerSummary}}
 
   # SYNTHESIZE — the lead-reviewer turn (tool-less one-shot, the chatOnce seam): dedup the CONFIRMED findings
   # into one actionable report, severity-first. Only runs when a confirmed defect survived refute.

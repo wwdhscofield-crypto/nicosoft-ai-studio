@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process'
+import { readFile } from 'node:fs/promises'
+import { confineReal } from '../../agent/confine'
 import type { WrittenFile } from '../../agent/context'
 
 // Git helpers for the Studio Lens content trigger (moved verbatim from examine/diff.ts; logic unchanged):
@@ -111,4 +113,29 @@ export async function buildChangedSet(
   const combined = [gitDiff, eventDiff].filter(Boolean).join('\n')
   const diff = combined.length > maxChars ? `${combined.slice(0, maxChars)}\n…[diff truncated for lens trigger]` : combined
   return { changed, diff }
+}
+
+// Read the target files' content (capped) so the SELECT step can author lenses from the CODE itself, not only
+// the diff — essential for the explicit entry (no diff) and surgical changes (thin diff), where a diff-only
+// selector starves. Carved verbatim from examine/panel.ts (must-fix ②). Skips unreadable / out-of-bounds paths
+// (confineReal); caps per-file (8k) + total (24k) so a large target can't bloat the selection prompt.
+export async function readTargetContent(cwd: string | undefined, paths: readonly string[], maxTotal = 24_000): Promise<string> {
+  if (!cwd) return ''
+  const parts: string[] = []
+  let total = 0
+  for (const p of paths.slice(0, 40)) {
+    if (total >= maxTotal) break
+    try {
+      const abs = await confineReal(cwd, p)
+      let body = await readFile(abs, 'utf-8')
+      if (body.length > 8_000) body = body.slice(0, 8_000) + `\n…[${p} truncated]`
+      const block = `--- ${p} ---\n${body}`
+      parts.push(block)
+      total += block.length
+    } catch {
+      /* unreadable / out-of-bounds path — skip */
+    }
+  }
+  const out = parts.join('\n\n')
+  return out.length > maxTotal ? out.slice(0, maxTotal) + '\n…[content truncated for lens selection]' : out
 }

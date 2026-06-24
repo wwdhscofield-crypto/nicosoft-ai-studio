@@ -29,7 +29,7 @@ import { detectE2EIntent, disabledRoleIds, route, routeNeedsPlan } from './coord
 import { emitCoordinatorIntro, resetPipelineTodos, runRoleStep, type RunStepOptions } from './coordinator-step'
 import { runGatedRoleStep } from './coordinator-gate-b'
 import { chooseVerifierRole, runVerifierStep } from './examine/verifier'
-import { runConsolidatedReview } from './examine/agent-panel'
+import { runConsolidatedReview } from './lens/agent-lens'
 import type { PanelExamineResult } from '../agent/context'
 import { gitHead, changedPathsSince, diffSince } from './examine/diff'
 import { AGENT_ROLE_IDS } from './agent-dispatch'
@@ -117,7 +117,7 @@ async function runCollabReview(
         if (changed.length > 0) {
           const diff = await diffSince(cwd, base) // empty paths = whole-tree diff = all collaborators' accumulated changes
           const reviewer = chooseVerifierRole(roles)
-          const outcome = await runConsolidatedReview(opts, roles, { changed, diff }, input.prompt, reviewer)
+          const outcome = await runConsolidatedReview(opts, roles, { changed, diff }, input.prompt, reviewer, base || 'HEAD')
           const who = outcome.reviewer ? displayName(outcome.reviewer) : displayName(reviewer)
           if (!outcome.ok) {
             panelNote = `Consolidated independent panel review did NOT complete (${outcome.message}) — treat the combined result as NOT deep-reviewed.`

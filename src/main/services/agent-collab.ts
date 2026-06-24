@@ -28,7 +28,7 @@ import { agentEvents } from './event-bus'
 import { manager as skillManager } from './skill.service'
 import { DEV_ROLES, E2E_TOOLS, toolsForAgentRole } from './agent-tools'
 import { buildAgentSystem } from './agent-system'
-import { createPanelHandle } from './examine/agent-panel'
+import { createLensHandle } from './lens/agent-lens'
 import { setActiveServices, clearActiveServices, broadcastConvServices } from './active-services'
 import * as workspaceTasks from './workspace-tasks.service'
 
@@ -221,7 +221,7 @@ export async function runCollabSession(
           // tool in ctx.async for non-blocking launch + await_async suspend). Gated on the tool's presence —
           // recursion-guard parity with solo agent-dispatch: no tool → no handle.
           panel: tools.some((t) => t.name === 'panel_examine')
-            ? createPanelHandle({
+            ? createLensHandle({
                 convId,
                 callerRoleId: x.roleId,
                 cwd: x.cwd,

@@ -19,7 +19,7 @@ import { CORE_TOOLS } from '../agent/registry'
 import { ServiceRegistry } from '../agent/service-registry'
 import { AsyncSubAgentPool } from '../agent/sub-agent-pool'
 import { LSPManager } from '../agent/lsp/manager'
-import { createPanelHandle } from './examine/agent-panel'
+import { createLensHandle } from './lens/agent-lens'
 import { lspTool } from '../agent/tools/lsp'
 import { disposeE2ESessionsOwnedBy } from '../agent/tools/e2e-browser'
 import type { Tool } from '../agent/tool'
@@ -177,7 +177,7 @@ export async function runAgentLoop(
     // actually carries the panel_examine tool (every agent role now does; a fixed-kit verifier / sub-agent does
     // NOT). Handle-presence ⟺ tool-presence is the recursion guard: no tool → no handle, self-enforcing.
     panel: loop.tools.some((t) => t.name === 'panel_examine')
-      ? createPanelHandle({
+      ? createLensHandle({
           convId: loop.convId,
           callerRoleId: loop.roleId,
           cwd,
