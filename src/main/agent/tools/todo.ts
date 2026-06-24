@@ -36,7 +36,10 @@ export const todoTool = buildTool<typeof inputSchema, TodoOutput>({
   isReadOnly: () => true, // no filesystem write → no approval needed
   isConcurrencySafe: () => false, // mutates shared ctx.todos → serialize
   async call(input, ctx) {
-    ctx.todos = input.todos
+    // Mutate IN PLACE (not reassign): collab's per-expert getTodos() closure (agent-collab.ts) and the solo run's
+    // [...initialTodos] copy both ALIAS this same array — a reassign orphans them. That silently dead-wired 批H's
+    // hand-off park-gate (getTodos() stuck at the initial []). One source of truth → every reader stays live.
+    ctx.todos.splice(0, ctx.todos.length, ...input.todos)
     ctx.setTodos?.(input.todos) // propagate to the shared conv-level list so a pipeline's experts share ONE
     const done = input.todos.filter((t) => t.status === 'completed').length
     return { data: { count: input.todos.length, done } }

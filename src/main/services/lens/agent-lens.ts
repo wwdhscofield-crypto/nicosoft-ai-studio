@@ -157,7 +157,13 @@ export async function runConsolidatedReview(
   const header = `studio_lens (review by ${reviewer}) hunted ${produced.length} lens(es): ${confirmed.length} confirmed defect(s)${refutedCands.length ? `, ${refutedCands.length} dropped as false-positive` : ''}.`
   const lines = confirmed.length
     ? confirmed.map((c) => `- [${c.severity}] ${c.title}${firstFileRef(c)} — ${c.lens}`)
-    : ['- no candidate defect survived refutation']
+    // No confirmed defect → synth is skipped (review.yaml gates it on confirmed>0), so `report` is null. Build the
+    // coverage line LOCALLY (no extra LLM turn) so the clean/all-refuted case still names the lenses checked + what
+    // was dropped — restoring the old synthesizeReview coverage report's user-visible info (adversarial-review #4).
+    : [
+        `- no candidate defect survived refutation across ${produced.length} lens(es): ${produced.map((s) => s.key).join(', ')}`,
+        ...refutedCands.map((c) => `  · dropped as false-positive: [${c.severity}] ${c.title}${firstFileRef(c)} — ${c.lens}`),
+      ]
   const message = report ? `${header}\n\n${report}` : `${header}\n${lines.join('\n')}`
 
   // Workspace Tasks history: ONE row per candidate (confirmed + refuted); an all-clean review (lenses fired,

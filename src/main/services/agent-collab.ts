@@ -311,7 +311,10 @@ export async function runCollabSession(
     // 'panel' handle in the shared async registry. Extract it BEFORE the finally dispose so the coordinator
     // (runCollabReview) uses THIS result instead of self-running a second independent panel (批E). Last completed
     // panel handle = the driver's consolidated review (absent if the team never elected/ran one → 批E falls back).
-    const panelHandle = asyncRegistry.list().filter((h) => h.kind === 'lens' && h.status === 'done').pop()
+    // Filter to REVIEW mode: studio_lens also launches kind:'lens' for understand-mode (a file-map, not a verdict);
+    // without the `info` guard an understand handle landing last would .pop() in and masquerade as the review verdict
+    // (the launch label is `${mode} panel over …` from studio-lens.ts, so review handles start with 'review ').
+    const panelHandle = asyncRegistry.list().filter((h) => h.kind === 'lens' && h.status === 'done' && h.info?.startsWith('review ')).pop()
     const panelResult = panelHandle?.result as StudioLensResult | undefined
     const results = new Map(
       [...texts].map(([roleId, text]): [string, { text: string; reason: AgentResult['reason']; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number }] => [roleId, { text, reason: reasonByRole.get(roleId) ?? 'completed', inTokens: inTokensByRole.get(roleId) ?? 0, contextTokens: contextByRole.get(roleId) ?? 0, cacheReadTokens: cacheReadByRole.get(roleId) ?? 0, outTokens: outTokensByRole.get(roleId) ?? 0 }])

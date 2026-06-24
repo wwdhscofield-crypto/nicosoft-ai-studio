@@ -425,7 +425,7 @@ async function runFinder(
     const text = out.text.trim()
     const verdict = parseVerdict(text)
     const contracted = [...text.matchAll(VERDICT_RE)].length > 0
-    if (!contracted && attempt === 0) continue // retry once
+    if (!contracted) { if (attempt === 0) continue; else break } // retry once, then DROP — never fabricate a candidate from prose or trust a free-text PASS (parity with old examine/panel.ts; break falls to the drop-record below)
     if (!text) {
       deps.cb.onToolEvent?.(roleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: panelId, name: 'Subject', isError: true, result: 'Verifier returned no verdict.' })
       return { ...base, produced: false, passed: false, feedback: 'subject produced no parseable VERDICT after 2 attempts (dropped)', candidates: [], inputTokens: inTok, outputTokens: outTok }
