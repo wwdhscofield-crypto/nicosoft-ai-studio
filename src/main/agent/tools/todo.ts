@@ -32,7 +32,9 @@ export const todoTool = buildTool<typeof inputSchema, TodoOutput>({
     'pure conversation. Pass the FULL list each call (it replaces the previous). Set a task in_progress ' +
     'BEFORE starting it and completed the moment it is done — keep EXACTLY one in_progress at a time, and ' +
     'do not batch completions. Never mark something completed while its tests fail or the work is partial; ' +
-    'leave it in_progress and add a new item for what is blocking.',
+    'leave it in_progress and add a new item for what is blocking. ' +
+    'ALWAYS write todo text — both the task description and its activeForm — in ENGLISH, regardless of the ' +
+    'language the user writes in or the conversation otherwise uses.',
   isReadOnly: () => true, // no filesystem write → no approval needed
   isConcurrencySafe: () => false, // mutates shared ctx.todos → serialize
   async call(input, ctx) {
