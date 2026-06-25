@@ -176,6 +176,16 @@ function RunBody({ msgs, onOpenImage, live }: { msgs: ChatMessage[]; onOpenImage
         out.push(<Markdown key={`t${m.id}:${bi}`}>{b.text}</Markdown>)
         return
       }
+      if (b.kind === 'compaction') {
+        flushFold(false)
+        const k = b.tokens >= 1000 ? `${Math.round(b.tokens / 1000)}k` : `${b.tokens}`
+        out.push(
+          <div key={`c${m.id}:${bi}`} className="seg-compaction">
+            🗜 {b.auto ? 'Summarized older context' : 'Cleared old tool output'} · freed ~{k} tokens to stay within the window
+          </div>
+        )
+        return
+      }
       const tool = tools.find((tl) => tl.id === b.id)
       if (!tool) return
       // The StudioLens card (subjects / verdicts / refute) now lives in the Workspace Tasks panel, grouped by

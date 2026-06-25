@@ -148,6 +148,8 @@ export function registerCoordinatorHandlers(): void {
               }
               const ev: CoordinatorToolResults = { streamId, roleId, results }
               send('coordinator:results', ev)
+            } else if (evt.type === 'compaction') {
+              send('coordinator:compaction', { streamId, roleId, kind: evt.kind, freedTokens: evt.freedTokens })
             }
           },
           requestPermission: (roleId, req, signal) =>

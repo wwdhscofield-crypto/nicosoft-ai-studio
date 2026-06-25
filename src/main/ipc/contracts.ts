@@ -251,6 +251,12 @@ export interface AgentAssistant {
   streamId: string
   blocks: AgentBlockDto[]
 }
+// Context compaction surfaced to the UI: 'micro' = old tool-result bodies cleared; 'auto' = transcript summarized.
+export interface AgentCompaction {
+  streamId: string
+  kind: 'micro' | 'auto'
+  freedTokens: number
+}
 // Results of the tools the turn requested (one per tool_use, paired by toolUseId).
 export interface AgentToolResults {
   streamId: string
@@ -447,6 +453,13 @@ export interface CoordinatorAssistant {
   streamId: string
   roleId: string
   blocks: AgentBlockDto[]
+}
+// Context compaction surfaced per-expert to the UI (see AgentCompaction).
+export interface CoordinatorCompaction {
+  streamId: string
+  roleId: string
+  kind: 'micro' | 'auto'
+  freedTokens: number
 }
 export interface CoordinatorToolResults {
   streamId: string

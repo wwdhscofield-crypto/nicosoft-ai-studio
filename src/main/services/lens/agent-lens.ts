@@ -244,7 +244,7 @@ export function createLensHandle(deps: LensHandleDeps): PanelHandle {
         onDelta: () => {},
         onStepDone: () => {},
         onToolEvent: (_roleId, ev: AgentEvent | AgentLlmEvent) => {
-          if (ev.type !== 'assistant' && ev.type !== 'tool_results') deps.onStream(ev)
+          if (ev.type !== 'assistant' && ev.type !== 'tool_results' && ev.type !== 'compaction') deps.onStream(ev)
         },
         onToolImage: (att) => deps.onToolImage?.(att),
         requestPermission: (_roleId, req, sig) => deps.requestPermission(req, sig),

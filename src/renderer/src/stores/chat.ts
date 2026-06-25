@@ -329,6 +329,18 @@ export const useChat = create<ChatState>((set, get) => {
         return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
       })
     })
+    ag.onCompaction((d) => {
+      const meta = agentMeta.get(d.streamId)
+      if (!meta) return
+      set((s) => {
+        const msgs = (s.byConversation[meta.convId] ?? []).map((m) => ({ ...m }))
+        let i = -1
+        for (let k = msgs.length - 1; k >= 0; k--) if (msgs[k].role === 'assistant') { i = k; break }
+        if (i < 0) return s
+        msgs[i] = { ...msgs[i], blocks: [...(msgs[i].blocks ?? []), { kind: 'compaction', tokens: d.freedTokens, auto: d.kind === 'auto' }] }
+        return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
+      })
+    })
     ag.onPermission((d) => {
       const meta = agentMeta.get(d.streamId)
       if (!meta) return
@@ -712,6 +724,19 @@ export const useChat = create<ChatState>((set, get) => {
             }
           }
         }
+        return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
+      })
+    })
+    at.onCompaction((d) => {
+      const meta = coordinatorMeta.get(d.streamId)
+      if (!meta) return
+      set((s) => {
+        const msgs = (s.byConversation[meta.convId] ?? []).map((m) => ({ ...m }))
+        // anchor on this expert's latest segment — where the compaction happened
+        let i = -1
+        for (let k = msgs.length - 1; k >= 0; k--) if (msgs[k].expertId === d.roleId) { i = k; break }
+        if (i < 0) return s
+        msgs[i] = { ...msgs[i], blocks: [...(msgs[i].blocks ?? []), { kind: 'compaction', tokens: d.freedTokens, auto: d.kind === 'auto' }] }
         return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
       })
     })

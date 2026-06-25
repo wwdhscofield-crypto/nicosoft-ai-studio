@@ -72,6 +72,9 @@ export interface RunAgentParams {
 export type AgentEvent =
   | { type: 'assistant'; message: AgentMessage; usage: AssistantTurn['usage'] }
   | { type: 'tool_results'; message: AgentMessage }
+  // Surfaced to the UI so context compaction is VISIBLE (it was silent — only console). 'micro' = old tool-result
+  // bodies cleared this turn; 'auto' = the transcript was LLM-summarized. freedTokens ≈ context reclaimed.
+  | { type: 'compaction'; kind: 'micro' | 'auto'; freedTokens: number }
 
 // Cross-invocation compaction anchor. The autocompact estimate is normally seeded only by the running
 // loop's own API usage. In collab an expert runs as MANY short runAgent calls (one per mailbox wake), so
@@ -226,6 +229,7 @@ export async function* runAgent(
       }
       return
     }
+    if (step.type !== 'tool_results') return // compaction / non-message events have no .content to forward as sub-tools
     for (const block of step.message.content) {
       if (!isContentBlock(block) || block.type !== 'tool_result') continue
       const result = block as ToolResultBlock
@@ -431,6 +435,8 @@ export async function* runAgent(
     const mc = microcompact(messages)
     messages = mc.messages
     if (mc.freedChars > 0) compactions.micro++
+    // Surface a MEANINGFUL micro-compaction to the UI (skip tiny per-turn clears to avoid spam).
+    if (mc.freedChars > 8000) yield { type: 'compaction', kind: 'micro', freedTokens: Math.ceil(mc.freedChars / CHARS_PER_TOKEN) }
     // Layer 3: autocompact when the running estimate crosses the threshold. The estimate subtracts the
     // chars microcompact just freed (still counted inside lastUsage.inTokens until the next real send)
     // and adds a fixed reserve for the gateway-injected system prompt estimateTokens can't see — but
@@ -464,6 +470,7 @@ export async function* runAgent(
           prevAutoTurn = turns
           consecutiveAutoFails = 0 // a real compaction succeeded → reset the cross-wake breaker
           appendTodoSnapshot(messages)
+          yield { type: 'compaction', kind: 'auto', freedTokens: Math.max(0, estimate - estimateTokens(messages)) }
         } else {
           // B5/#10: autocompact returned the transcript UNCHANGED — the summary call failed (LLM error) or
           // produced nothing. Without advancing prevAutoTurn the estimate is still over threshold next turn,
@@ -575,6 +582,7 @@ export async function* runAgent(
           compactions.auto++
           consecutiveAutoFails = 0 // the summarizer just worked → reset the cross-wake breaker
           appendTodoSnapshot(messages)
+          yield { type: 'compaction', kind: 'auto', freedTokens: Math.max(0, estimate - estimateTokens(messages)) }
           continue
         }
       }

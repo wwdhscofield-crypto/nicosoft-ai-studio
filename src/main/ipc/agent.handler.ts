@@ -116,6 +116,8 @@ function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: { resum
                 // tool_result / image don't appear in an assistant turn — skip
               }
               send('agent:assistant', { streamId, blocks })
+            } else if (ev.type === 'compaction') {
+              send('agent:compaction', { streamId, kind: ev.kind, freedTokens: ev.freedTokens })
             } else {
               const results: AgentResultDto[] = []
               for (const b of ev.message.content) {
