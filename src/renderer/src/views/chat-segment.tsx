@@ -188,16 +188,12 @@ function RunBody({ msgs, onOpenImage, live }: { msgs: ChatMessage[]; onOpenImage
         return
       }
       if (b.kind === 'reasoning') {
-        // The model's VISIBLE thinking, rendered the way codex does it (ReasoningSummaryCell): dim + italic
-        // markdown, inline — NOT a labeled/collapsible block. Flush the tool fold first so it lands where the
-        // model paused to think, breaking a long silent tool streak (terse reasoning models) into readable chunks.
+        // The model's VISIBLE thinking (Anthropic extended thinking / OpenAI reasoning summary / any future
+        // protocol) renders EXACTLY like the answer text — ONE unified markdown path, no per-vendor styling.
+        // Flush the tool fold first so it lands where the model paused to think.
         if (!b.text.trim()) return
         flushFold(false)
-        out.push(
-          <div key={`r${m.id}:${bi}`} className="seg-reasoning">
-            <Markdown>{b.text}</Markdown>
-          </div>
-        )
+        out.push(<Markdown key={`r${m.id}:${bi}`}>{b.text}</Markdown>)
         return
       }
       if (b.kind === 'compaction') {

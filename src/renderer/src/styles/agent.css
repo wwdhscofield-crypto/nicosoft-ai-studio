@@ -40,18 +40,6 @@
   margin: 4px 0;
   opacity: 0.9;
 }
-/* Visible model thinking (extended thinking / reasoning summary), rendered like codex's ReasoningSummaryCell:
-   dim + italic markdown, inline, with a "•" gutter — NO label, NO collapse, just de-emphasized text. */
-.seg-reasoning {
-  margin: 7px 0; position: relative; padding-left: 16px;
-  color: var(--text-4); font-style: italic; font-size: 13px; line-height: 1.55;
-}
-.seg-reasoning::before { content: '•'; position: absolute; left: 3px; top: 0; opacity: 0.7; }
-.seg-reasoning > :first-child { margin-top: 0; }
-.seg-reasoning > :last-child { margin-bottom: 0; }
-.seg-reasoning p { margin: 0 0 6px; }
-.seg-reasoning strong { color: var(--text-3); font-weight: 600; }
-.seg-reasoning code, .seg-reasoning code.inline { font-style: normal; }
 .tr-chev { color: var(--text-5, var(--text-4)); display: inline-flex; flex: none; transition: transform 0.15s ease; opacity: 0.8; }
 .tr-chev.open { transform: rotate(90deg); }
 .tr-card {
