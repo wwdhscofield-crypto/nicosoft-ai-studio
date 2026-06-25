@@ -53,6 +53,25 @@ export const studioLensTool = buildTool<typeof inputSchema, StudioLensResult>({
       return { data: { ok: false, message: 'studio_lens is not available here — it cannot be run from inside a sub-agent or a panel reviewer.' } }
     }
     const mode = input.mode === 'understand' ? 'understand' : 'review'
+    // Collab REVIEW gate: in a 2+ collab the ONE consolidated review runs only AFTER everyone is done. A review
+    // launched while a teammate is still mid-change wastes the entire fan-out, so refuse it and tell the caller to
+    // self-check + wait. Solo / 1-expert collab → othersRunning is empty → allowed; 'understand' is exploratory →
+    // always allowed. This is the structural backstop behind the prompt rule (a soft instruction was jumped once).
+    if (mode === 'review') {
+      const busy = ctx.collab?.othersRunning() ?? []
+      if (busy.length > 0) {
+        return {
+          data: {
+            ok: false,
+            message:
+              `Hold the consolidated review — ${busy.join(', ')} ${busy.length > 1 ? 'are' : 'is'} still working. In a ` +
+              `team, studio_lens review runs ONCE, AFTER everyone is done. Self-check + fix your OWN part now, ` +
+              `send_message that you are done, and wait for the others; then the elected driver runs the review over ` +
+              `the whole combined change.`,
+          },
+        }
+      }
+    }
     // ASYNC drive (dogfood2 P1/P3/P5 + C3): when an async registry is present (a collaboration today; a solo run
     // once 批C2 wires it), launch the panel as a BACKGROUND handle instead of blocking this tool call. The agent
     // reports it started, MAY keep working, and calls await_async with the handle to pick up the verdict — deciding

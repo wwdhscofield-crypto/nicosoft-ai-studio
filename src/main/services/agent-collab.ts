@@ -73,7 +73,11 @@ export interface CollabHooks {
 // expert knows who to consult and to stay in its own area. Memories/summary are skipped — a collaboration
 // is a fresh shared task, not a continuation of the role's chat history.
 function buildCollabSystem(roleId: string, teammates: { id: string; name: string }[], cwd?: string): string {
-  const base = buildAgentSystem(roleId, [], null, skillManager.listingForRole(roleId), cwd, true) // collab=true: skip the SOLO "every agent self-runs studio_lens before done" discipline — in a collab only the ELECTED driver runs the ONE consolidated panel (批C), not each expert (the per-expert flood was P1)
+  // A single-expert "collab" (no teammates) behaves like SOLO: keep the solo studio_lens-before-done discipline
+  // and let it drive its own review ANYTIME — there is no one to elect among or wait for. The elected-driver /
+  // wait-for-everyone flow below only applies with ≥1 teammate (2+ experts).
+  if (teammates.length === 0) return buildAgentSystem(roleId, [], null, skillManager.listingForRole(roleId), cwd, false)
+  const base = buildAgentSystem(roleId, [], null, skillManager.listingForRole(roleId), cwd, true) // collab=true (2+ experts): skip the SOLO "every agent self-runs studio_lens before done" discipline — only the ELECTED driver runs the ONE consolidated panel AFTER everyone is done, not each expert and not early (the per-expert flood AND the premature drive were the bugs)
   const roster = teammates.map((t) => `- ${t.name} (roleId: ${t.id})`).join('\n')
   return (
     base +
@@ -92,29 +96,43 @@ function buildCollabSystem(roleId: string, teammates: { id: string; name: string
     "scaffolding a few files assuming the session keeps running: when every expert stops at once the whole " +
     "build ends right there, unfinished. Keep working — and consult teammates — until your piece is " +
     "genuinely, fully done; only then finish, and the coordinator collects everyone's results and reviews." +
-    // C2: open with a non-overlapping-scope handshake so two experts don't touch the same files (P4).
-    '\n\n## Align before you build — non-overlapping scope\n' +
-    'Before you start editing, sync with your teammates: use send_message / assign_task to AGREE the exact ' +
-    'boundary of who owns what — NON-overlapping files / areas (e.g. backend owns the main process / IPC / ' +
-    'services; frontend owns the renderer / UI) — and split your todos so they do NOT collide. Build only ' +
-    "within your agreed scope; never edit a teammate's files. This opening alignment is what prevents two of " +
-    'you touching the same files and duplicating or conflicting work.\n\n' +
-    // dogfood2 P1/§4.5: collab implementers KEEP studio_lens but do NOT each self-run it — they ELECT one driver.
-    '## Review in a collaboration — elect ONE of you to drive it\n' +
-    'You DO have studio_lens here — but you do NOT each run your own (N overlapping panels flood the work; that ' +
-    'was the bug). Instead, during your opening alignment (or as the work finishes), ELECT ONE of you — agree via ' +
-    'send_message, e.g. whoever owns the larger / riskier surface — to drive the team\'s ONE consolidated review. ' +
-    'Everyone else: self-check + fix after EACH batch (your own type-check / build + a careful re-read) and finish ' +
-    'your COMPLETE part clean, so the review has little left to catch. The ELECTED driver, AFTER every teammate has ' +
-    'finished, runs studio_lens ONCE over the WHOLE combined change (all of your files, review mode): it launches ' +
-    'as an async handle — REPORT that it started (name the handle + what it covers, like driving a workflow), then ' +
-    'await_async it to SUSPEND until the verdict lands, and report the result. The panel\'s own internal reviewers ' +
-    'are independent of all of you, so a single elected driver does not compromise the review\'s independence.\n' +
-    'If that review CONFIRMS defects, they MUST be FIXED, not just reported: the owning expert fixes its findings, ' +
-    'then the driver RE-RUNS the consolidated review over the fixed tree — repeat until it comes back clean. A build ' +
-    'that still carries confirmed defects is NOT done. (A closeout gate also routes any still-open confirmed defect ' +
-    'to its owner and re-reviews until clean, bounded — but close them yourselves; that gate is the backstop, not a ' +
-    'licence to stop at "found".)' +
+    // C2: open with a non-overlapping-scope handshake so two experts don't touch the same files (P4). The review
+    // driver is also decided HERE, up front (user spec) — not left for the end, so no one spins a premature panel.
+    '\n\n## Align before you build — FIRST divide the modules, THEN pick the review driver\n' +
+    'Before you write ANY code, sync with your teammates via send_message / assign_task and settle these IN ORDER:\n' +
+    'FIRST — divide the work into NON-overlapping modules: agree the exact boundary of who OWNS / IMPLEMENTS what ' +
+    '(e.g. backend owns the main process / IPC / services; frontend owns the renderer / UI) and split your todos so ' +
+    'they do NOT collide. Be explicit — every area has exactly one owner, no two of you touching the same files.\n' +
+    "THEN — now that you know who owns the bigger / riskier surface, DECIDE who will drive the team's ONE final " +
+    'consolidated studio_lens review (see below), and say it out loud so everyone agrees.\n' +
+    'Both are settled BEFORE the work starts — module ownership first, then the review driver; never leave the ' +
+    "driver for the end. Build only within your agreed scope; never edit a teammate's files.\n\n" +
+    // The collab review is TIMED + SINGLE-DRIVER: elect one, run it only AFTER everyone is done, finished-first
+    // self-checks + waits (never a premature panel — the dogfood waste), findings distributed to owners.
+    '## Review in a collaboration — ONE driver, ONLY after EVERY teammate is done\n' +
+    'You each have studio_lens, but on a team you do NOT each run it, and you do NOT run it early. The rules:\n' +
+    '1. The ONE driver was already DECIDED in your opening alignment, before any code (above) — that person, and ' +
+    "only that person, runs the team's ONE consolidated review at the END. If you are NOT that driver, you NEVER " +
+    'run the consolidated review — not your own, not ever; your ONLY review duty is to self-check your part and ' +
+    'tell the driver when you are done. So word your review-related todo as "self-check my part + confirm done to ' +
+    '<driver>" — do NOT give yourself a "drive the consolidated review" todo; only the one elected driver carries ' +
+    'that. (If you somehow did not settle the driver up front, settle it NOW via send_message before anyone ' +
+    'reviews — never just start a panel.)\n' +
+    '2. As you build, SELF-CHECK your own part: your own type-check / build + a careful re-read after each batch, and ' +
+    'FIX your own issues. That self-check IS your review of your own code — it is NOT a studio_lens run.\n' +
+    '3. If you FINISH FIRST while a teammate is still working: do NOT run studio_lens. Self-check and fix your own ' +
+    'part, then send_message that you are done and wait() / keep coordinating until the others finish. Driving a ' +
+    'panel over a half-built tree (a teammate still mid-change) wastes the ENTIRE fan-out — that is exactly the ' +
+    'waste to avoid.\n' +
+    '4. ONLY after EVERY teammate has confirmed their COMPLETE part is done does the ELECTED driver run studio_lens ' +
+    'ONCE over the WHOLE combined change (all files, review mode): launch it as an async handle, report it started ' +
+    '(name the handle + what it covers, like driving a workflow), await_async it to SUSPEND until the verdict, report it.\n' +
+    '5. DISTRIBUTE the findings: each confirmed defect goes to the expert who OWNS that file / area; that owner fixes ' +
+    'it, then the driver RE-RUNS the consolidated review over the fixed tree — repeat until it comes back clean. A ' +
+    'build that still carries confirmed defects is NOT done.\n' +
+    "(The panel's internal reviewers are independent of all of you, so one elected driver doesn't compromise the " +
+    'review\'s independence. A closeout gate also routes any still-open confirmed defect to its owner and re-reviews ' +
+    'until clean — the backstop, not a licence to stop at "found".)' +
     // C3 §6.7: tell the collab expert it can launch long ops async and suspend instead of blocking the turn.
     '\n\n## Long ops — launch async and suspend, don\'t block\n' +
     'Any long / event-driven op (a long check / analysis / probe script, a background task) you can run in the ' +

@@ -45,6 +45,10 @@ export interface CollabHandle {
   // tool was used) and the model re-calls await_async over and over within one turn (observed ×19, all the same
   // handle, zero progress between). Cleared by runExpert when it actually parks.
   parkRequested: () => boolean
+  // Names of the OTHER experts currently RUNNING a turn (not parked). The studio_lens REVIEW gate reads this: in
+  // a 2+ collab the ONE consolidated review must not run while a teammate is still mid-change (a panel over a
+  // half-built tree wastes the whole fan-out). Empty ⇒ everyone else is parked/idle, so the elected driver may go.
+  othersRunning: () => string[]
 }
 
 export interface ExpertSpec {
@@ -177,6 +181,8 @@ export class CollabSession {
         return `Waiting on ${inflightIds.length} async op(s) — your turn will end and resume when they complete (or a peer messages you).`
       },
       parkRequested: () => this.experts.get(self)!.waitRequested,
+      othersRunning: () =>
+        [...this.experts.values()].filter((e) => e.spec.roleId !== self && e.status === 'running').map((e) => e.spec.name),
     }
   }
 
