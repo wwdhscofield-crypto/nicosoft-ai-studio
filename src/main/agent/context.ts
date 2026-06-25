@@ -13,9 +13,25 @@ import type { AsyncRegistry } from './async-registry'
 // target (file paths). The handle (impl in services/examine/agent-panel.ts) captures the run's convId/cwd/signal
 // and adapts the agent's AgentCallbacks → the CoordinatorCallbacks the reviewer fan-out needs. `ok:false` carries
 // a clear reason (kill-switch off / no other bound reviewer role / no target) — NEVER a silent empty result.
+// One CONFIRMED defect from a review-mode panel (survived adversarial refutation). Layer-safe structural subset
+// of services/lens Finding (the agent layer must not import the services layer) — carries exactly what the
+// collaborate closure loop needs to route + dispatch a fix: where it is, how bad, and the concrete failure path.
+export interface LensReviewDefect {
+  lens: string // the risk dimension it came from
+  title: string // one-line defect title
+  file?: string // file the defect lives in
+  line?: number // line within the file
+  severity: string // Severity as a string (high | med | low) — no enum import across the layer boundary
+  mechanism: string // the concrete failure path — the evidence the fix handler acts on
+}
+
 export interface StudioLensResult {
   ok: boolean
   message: string
+  reviewer?: string // the independent reviewer role the panel elected (review mode) — for attribution in the note
+  // review mode only: the structured CONFIRMED defects (post-refute). Drives the collaborate closure loop —
+  // without it a review that flagged defects was advisory text the orchestration could not gate on. Empty = clean.
+  confirmed?: LensReviewDefect[]
   findings?: Array<{ subject: string; passed: boolean; refuted?: boolean; feedback: string }>
 }
 export interface PanelHandle {

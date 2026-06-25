@@ -27,11 +27,10 @@ import { LlmError, type ChatMessage } from '../llm/types'
 import { COORDINATOR_FACILITATOR_PROMPT, DISPATCHABLE_ROLE_IDS, displayName, roleIdFromName } from '../agent/roles/prompts'
 import { detectE2EIntent, disabledRoleIds, route, routeNeedsPlan } from './coordinator-route'
 import { emitCoordinatorIntro, resetPipelineTodos, runRoleStep, type RunStepOptions } from './coordinator-step'
-import { runGatedRoleStep } from './coordinator-gate-b'
+import { runGatedRoleStep, runCollabClosureLoop } from './coordinator-gate-b'
 import { chooseVerifierRole, runVerifierStep } from './lens/verifier'
-import { runConsolidatedReview } from './lens/agent-lens'
 import type { StudioLensResult } from '../agent/context'
-import { gitHead, changedPathsSince, diffSince } from './lens/diff'
+import { gitHead, changedPathsSince } from './lens/diff'
 import { AGENT_ROLE_IDS } from './agent-dispatch'
 import { submitGateC } from './coordinator-gate-c'
 import { runCollaboration } from './coordinator-collab'
@@ -64,7 +63,7 @@ async function runCollabReview(
   cb: CoordinatorCallbacks,
   signal: AbortSignal,
   panelResult?: StudioLensResult
-): Promise<string> {
+): Promise<{ note: string; inputTokens: number; outputTokens: number }> {
   // When verification can't run, we still return a note — an UNVERIFIED marker — so the synthesis closes HONESTLY
   // instead of presenting unchecked work as done (matching single/pipeline's explicit unverified beat). Returning
   // null here was the bug: synthesis got no note and Danny rounded it up to a normal done.
@@ -74,7 +73,7 @@ async function runCollabReview(
   // fallback — each attributes to its OWN real reviewer (N2: the old shared var misreported authorship). No early
   // UNVERIFIED return: if neither floor nor panel produces a note, the merge falls back to UNVERIFIED at the end.
   const cwd = input.cwdByRole?.[roles[0]] // collaborators share the project dir; the verifier git-diffs + builds it
-  if (!cwd) return UNVERIFIED // no project boundary → the floor verifier can't run git diff / the build
+  if (!cwd) return { note: UNVERIFIED, inputTokens: 0, outputTokens: 0 } // no project boundary → floor can't git diff / build
   const implementationText = outputs.map((o) => `### ${displayName(o.role)}\n${o.text}`).join('\n\n')
   const opts: RunStepOptions = {
     convId: input.convId,
@@ -93,52 +92,70 @@ async function runCollabReview(
     //    internally (N2 fix — the old shared `reviewer` var could misreport the verdict's author).
     const floorReviewer = chooseVerifierRole(roles)
     const v = await runVerifierStep(roles, opts, { originalPrompt: input.prompt, acceptance: [] }, implementationText, signal)
-    const floorNote = v.skipped || v.infraFailure
+    let floorNote = v.skipped || v.infraFailure
       ? null // ran but produced no verdict (no independent verifier / infra fault) → contributes no note
       : `Independent reviewer ${displayName(floorReviewer)} ran the project's own checks on the combined result — VERDICT: ${v.passed ? 'PASS' : 'FAIL'}.\n${v.feedback.slice(0, 2000)}`
 
-    // 2. CONSOLIDATED PANEL (dogfood2 P1): PREFER the panel the ELECTED COLLABORATOR drove from its OWN turn (批C),
-    //    threaded here via 批D — the user's design (a collaborator drives; independence lives in the panel's own
-    //    internal finders/skeptics, driver ≠ reviewers). Only when the team never elected/ran one do we fall back to
-    //    a coordinator-driven runConsolidatedReview. Best-effort: any fault leaves the floor verdict standing.
+    // 2. CONSOLIDATED PANEL + CLOSURE LOOP (decision #1 — "fix-until-clean before deliver"): the consolidated
+    //    review is no longer review-AND-REPORT. When it finds confirmed defects, runCollabClosureLoop dispatches a
+    //    consolidated fix to the owning implementer and RE-REVIEWS (bounded by MAX_FIX_ROUNDS), so a multi-role
+    //    build can no longer ship with defects studio_lens already caught (the regression this whole change fixes).
+    //    A driver panel WITH defects seeds round 1 (no re-run of the review the collaborator drove); a CLEAN driver
+    //    panel is advisory only (review #8 — its reviewer excluded just the driver, not every collaborator), so the
+    //    loop still runs one fresh review independent of EVERY implementer. Best-effort: any fault leaves the floor.
     let panelNote: string | null = null
+    let closureIn = 0
+    let closureOut = 0
     try {
-      if (panelResult) {
-        // The elected COLLABORATOR drove the panel from its OWN turn (批C/D). Its result is the tool-facing
-        // StudioLensResult ({ ok, message }) — the message IS the verdict summary (findings + refutations as text).
-        panelNote = panelResult.ok
-          ? `Consolidated panel review (driven by the team's elected reviewer over the full combined change):\n${panelResult.message}`
-          : `Consolidated panel review did NOT complete (${panelResult.message}) — treat the combined result as NOT deep-reviewed.`
-      } else {
-        // Fallback: the team never elected/ran one → the coordinator drives an independent panel (rich outcome with
-        // its own internal reviewer, independent of ALL collaborators).
-        const base = await gitHead(cwd)
-        const changed = base ? await changedPathsSince(cwd, base) : []
-        if (changed.length > 0) {
-          const diff = await diffSince(cwd, base) // empty paths = whole-tree diff = all collaborators' accumulated changes
-          const reviewer = chooseVerifierRole(roles)
-          const outcome = await runConsolidatedReview(opts, roles, { changed, diff }, input.prompt, reviewer, base || 'HEAD')
-          const who = outcome.reviewer ? displayName(outcome.reviewer) : displayName(reviewer)
-          if (!outcome.ok) {
-            panelNote = `Consolidated independent panel review did NOT complete (${outcome.message}) — treat the combined result as NOT deep-reviewed.`
-          } else if (outcome.confirmed.length > 0) {
-            panelNote = `Consolidated independent panel review by ${who} found ${outcome.confirmed.length} confirmed defect(s):\n${outcome.message}`
-          } else {
-            panelNote = `Consolidated independent panel review by ${who}: no defect survived adversarial refutation across the selected risk lenses (clean).`
+      const base = await gitHead(cwd)
+      const changed = base ? await changedPathsSince(cwd, base) : []
+      if (changed.length > 0) {
+        // Seeding rule (review #8 — independence): a driver result WITH defects always seeds round 1 (the fix path's
+        // round-2 re-review is full-independent anyway). A CLEAN driver panel is trustworthy ONLY if ITS reviewer was
+        // independent of EVERY collaborator — the driver's panel excludes just the driver, so its reviewer CAN be a
+        // co-author. If it was (reviewer ∈ roles), drop the seed so the loop runs ONE fresh review whose reviewer
+        // excludes every implementer before declaring the combined build clean; if it was already fully independent,
+        // trust the clean verdict (no redundant re-review). ok:false / understand / no panel → undefined → fresh review.
+        const driverReviewerIndependent = !!panelResult?.reviewer && !roles.includes(panelResult.reviewer)
+        const seed = panelResult?.ok && (panelResult.confirmed?.length || driverReviewerIndependent) ? panelResult.confirmed : undefined
+        const closure = await runCollabClosureLoop(roles, opts, input.prompt, base || 'HEAD', seed, signal)
+        closureIn = closure.inputTokens
+        closureOut = closure.outputTokens
+        // Attribute to the role that ACTUALLY produced the verdict (review #4): the loop's own fresh reviewer when it
+        // ran, else the driver's panel reviewer, else neutral — never a stale name the fresh review didn't use.
+        const who = closure.reviewer ? displayName(closure.reviewer) : panelResult?.reviewer ? displayName(panelResult.reviewer) : "the team's elected reviewer"
+        panelNote =
+          closure.outcome === 'unverified'
+            ? `Consolidated review could NOT run (${closure.note}) — treat the combined result as NOT deep-reviewed.`
+            : closure.outcome === 'unresolved'
+              ? `Consolidated review + closure did NOT fully close — ${closure.note}`
+              : closure.outcome === 'fixed'
+                ? `Consolidated review + closure (over the full combined change, ${who}): ${closure.note}`
+                : `Consolidated review (${who}): ${closure.note}`
+        // FLOOR RE-VERIFY (review #2): the floor build/typecheck verdict above was captured BEFORE the closure's fix
+        // rounds mutated the tree — stale if a fix landed (and the lens re-review does NOT run the build). Re-run the
+        // floor over the post-fix tree so the build gate covers the tree we actually deliver: a fix that broke the
+        // build is caught, not masked by a stale PASS. Only when fixes happened.
+        if (closure.rounds > 0) {
+          const reFloor = await runVerifierStep(roles, opts, { originalPrompt: input.prompt, acceptance: [] }, implementationText, signal)
+          if (!reFloor.skipped && !reFloor.infraFailure) {
+            floorNote = `Independent reviewer ${displayName(floorReviewer)} re-ran the project's own checks AFTER the ${closure.rounds} closure fix round(s) — VERDICT: ${reFloor.passed ? 'PASS' : 'FAIL'}.\n${reFloor.feedback.slice(0, 2000)}`
           }
         }
       }
     } catch (e) {
-      console.warn('[coordinator] collab consolidated panel failed (floor verdict stands):', e instanceof Error ? e.message : e)
+      if (signal.aborted) throw e // review #6: a user abort mid-closure must abort the turn, never fall through to a note
+      console.warn('[coordinator] collab closure loop failed (floor verdict stands):', e instanceof Error ? e.message : e)
     }
 
     // 3. Merge floor + panel into ONE reviewNote for synthesis. Both empty (floor couldn't run AND panel produced
     //    nothing usable) → UNVERIFIED, never a silent done.
     const merged = [floorNote, panelNote].filter(Boolean).join('\n\n---\n\n')
-    return merged || UNVERIFIED
+    return { note: merged || UNVERIFIED, inputTokens: closureIn, outputTokens: closureOut }
   } catch (e) {
+    if (signal.aborted) throw e // review #6: propagate a user abort, don't bury it as a UNVERIFIED done
     console.warn('[coordinator] collab independent review failed (synthesis flagged UNVERIFIED):', e instanceof Error ? e.message : e)
-    return UNVERIFIED
+    return { note: UNVERIFIED, inputTokens: 0, outputTokens: 0 }
   }
 }
 
@@ -382,8 +399,8 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
     // the experts produced. It streams as its own "<verifier> · Verifier" segment; Danny then closes WITH the
     // verdict in hand (honest closeout — a FAIL is reported, never silently reworked; no auto-fix loop, lighter
     // than full Gate-B). Best-effort: no independent role bound / no project cwd / infra fault → skip cleanly.
-    const reviewNote = await runCollabReview(input, decision.roles, fullChain, outputs, cb, signal, panelResult)
-    const synthInput = buildParallelSynthesisInput(input.prompt, outputs, reviewNote ?? undefined)
+    const review = await runCollabReview(input, decision.roles, fullChain, outputs, cb, signal, panelResult)
+    const synthInput = buildParallelSynthesisInput(input.prompt, outputs, review.note)
     const synth = await runRoleStep({
       convId: input.convId,
       roleId: 'coordinator',
@@ -396,8 +413,12 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
     })
     reasons.forEach(noteReason) // ALL experts' terminal reasons, incl. empty-text silent failures (not just outputs)
     noteReason(synth.reason)
-    fireSideEffects(input.convId, 'coordinator', synth.endpointId, synth.model, synth.inputTokens)
-    return { inputTokens: synth.inputTokens, outputTokens: synth.outputTokens, reason: runReason }
+    // review #3: fold the closure loop's fix-round tokens into the turn total + the compaction trigger. They were
+    // dropped before (billing-of-record is still written per runRoleStep, but the turn readout/threshold under-counted).
+    const turnIn = synth.inputTokens + review.inputTokens
+    const turnOut = synth.outputTokens + review.outputTokens
+    fireSideEffects(input.convId, 'coordinator', synth.endpointId, synth.model, turnIn)
+    return { inputTokens: turnIn, outputTokens: turnOut, reason: runReason }
   }
 
   // Pipeline: chain stored on each step = [...experts, 'coordinator']. The renderer's DispatchBadge prefixes

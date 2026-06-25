@@ -286,6 +286,11 @@ export function createLensHandle(deps: LensHandleDeps): PanelHandle {
       return {
         ok: outcome.ok,
         message: outcome.message,
+        reviewer: outcome.reviewer,
+        // Propagate the STRUCTURED confirmed defects (not just the prose message): the collaborate closure loop
+        // reuses these as round-1 so it doesn't re-run the driver's review, and routes/fixes from them. Mapped to
+        // the layer-safe LensReviewDefect shape (the agent layer can't import services/lens Finding).
+        confirmed: outcome.confirmed.map((f) => ({ lens: f.lens, title: f.title, file: f.file, line: f.line, severity: f.severity, mechanism: f.mechanism })),
         findings: outcome.produced.map((f) => ({ subject: f.key, passed: f.passed, refuted: f.refuted, feedback: f.feedback.slice(0, 1200) })),
       }
     },

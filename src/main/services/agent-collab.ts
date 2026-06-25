@@ -109,7 +109,12 @@ function buildCollabSystem(roleId: string, teammates: { id: string; name: string
     'finished, runs studio_lens ONCE over the WHOLE combined change (all of your files, review mode): it launches ' +
     'as an async handle — REPORT that it started (name the handle + what it covers, like driving a workflow), then ' +
     'await_async it to SUSPEND until the verdict lands, and report the result. The panel\'s own internal reviewers ' +
-    'are independent of all of you, so a single elected driver does not compromise the review\'s independence.' +
+    'are independent of all of you, so a single elected driver does not compromise the review\'s independence.\n' +
+    'If that review CONFIRMS defects, they MUST be FIXED, not just reported: the owning expert fixes its findings, ' +
+    'then the driver RE-RUNS the consolidated review over the fixed tree — repeat until it comes back clean. A build ' +
+    'that still carries confirmed defects is NOT done. (A closeout gate also routes any still-open confirmed defect ' +
+    'to its owner and re-reviews until clean, bounded — but close them yourselves; that gate is the backstop, not a ' +
+    'licence to stop at "found".)' +
     // C3 §6.7: tell the collab expert it can launch long ops async and suspend instead of blocking the turn.
     '\n\n## Long ops — launch async and suspend, don\'t block\n' +
     'Any long / event-driven op (a long check / analysis / probe script, a background task) you can run in the ' +
