@@ -296,6 +296,8 @@ export function detectNonDeterminism(scriptBody: string): string[] {
 // (min(16,cores-2)) is deliberately NOT here: it lives in the spawnAgent hook (批 5 → pool.ts), exactly like
 // the binary, where parallel/pipeline just fire the thunks and a semaphore wraps each individual agent spawn.
 export const LENS_MAX_AGENTS = 1000
+// The per-call fan-out cap (parallel thunks / pipeline items) — an oversized batch is rejected, not fired.
+export const LENS_MAX_FANOUT = 4096
 
 // The script-facing agent() options — the Workflow agent opts (label/phase/schema/model/effort/isolation/
 // agentType). Passed through to the spawnAgent hook; unknown keys are preserved.
@@ -318,6 +320,7 @@ export interface OrchestrationHooks {
   onLog?: (msg: string) => void
   onPhase?: (title: string) => void
   maxAgents?: number
+  signal?: AbortSignal // an aborted run stops fanning out new agents (in-flight ones abort via their own signal)
 }
 
 function reasonMessage(reason: unknown): string {
@@ -353,9 +356,16 @@ function vmBridge(ctx: vm.Context): VmBridge {
     filename: 'lens:settle',
   }) as VmBridge['settle']
   const vmClone = vm.runInContext('(s => JSON.parse(s))', ctx, { filename: 'lens:clone' }) as VmBridge['vmClone']
-  const wrapHost = vm.runInContext('(h => async (...a) => h(...a))', ctx, {
-    filename: 'lens:wrap',
-  }) as VmBridge['wrapHost']
+  // A host throw/rejection must NOT reach the script as a raw host object: its `.constructor.constructor` is the
+  // live host Function (codeGeneration:false only neuters the vm context), so `try { await agent() } catch (e) {
+  // e.constructor.constructor('return process')() }` would be host RCE. Catch it IN-realm and re-throw a vm-realm
+  // Error carrying only a cloned string message — mirroring how toVm clones the RESOLVE path. Covers both async
+  // rejections and synchronous throws of the host fn (e.g. the cap error, a validation TypeError).
+  const wrapHost = vm.runInContext(
+    '(h => async (...a) => { try { return await h(...a) } catch (e) { let m = "lens sub-agent error"; try { m = String(e && e.message != null ? e.message : e) } catch (_) {} throw new Error(m) } })',
+    ctx,
+    { filename: 'lens:wrap' },
+  ) as VmBridge['wrapHost']
   const toVm = (hostVal: unknown): unknown => (hostVal === undefined ? undefined : vmClone(JSON.stringify(hostVal)))
   return { call, settle, vmClone, wrapHost, toVm }
 }
@@ -377,18 +387,32 @@ function injectPrimitives(ctx: vm.Context, bridge: VmBridge, hooks: Orchestratio
       )
     }
   }
-  // Coerce a vm-realm array-like into a host array (the binary's Rqn intake clone): Array.from keeps element
-  // references (thunks stay callable) while giving the host a clean array to map over.
+  // Coerce a vm-realm array-like into a host array, capped at LENS_MAX_FANOUT (an oversized batch is rejected,
+  // not fired). Array.from keeps element references (thunks stay callable) while giving the host a clean array.
   const asArray = (v: unknown, what: string): unknown[] => {
     if (Array.isArray(v) || (v && typeof v === 'object' && typeof (v as { length?: unknown }).length === 'number')) {
-      return Array.from(v as ArrayLike<unknown>)
+      const arr = Array.from(v as ArrayLike<unknown>)
+      if (arr.length > LENS_MAX_FANOUT) throw new RangeError(`fan-out of ${arr.length} exceeds the ${LENS_MAX_FANOUT}-item cap`)
+      return arr
     }
     throw new TypeError(what)
   }
+  // A slot value that cannot cross the vm boundary as JSON (BigInt / Symbol / cyclic / throwing getter) becomes
+  // null in THAT slot rather than poisoning the whole batch's toVm clone.
+  const jsonSafe = (x: unknown): unknown => {
+    try {
+      JSON.stringify(x)
+      return x
+    } catch {
+      return null
+    }
+  }
+  const aborted = (): boolean => hooks.signal?.aborted === true
 
   // agent(prompt, opts) — spawn ONE read-only reviewer sub-agent (binary U). Counts toward the cap, threads
   // the current phase onto opts, returns the result cloned into the vm realm.
   const agent = async (prompt: unknown, opts?: unknown): Promise<unknown> => {
+    if (aborted()) throw new Error('review aborted')
     checkCap()
     agentCount++
     const o: AgentOpts = opts && typeof opts === 'object' ? { ...(opts as AgentOpts) } : {}
@@ -400,6 +424,7 @@ function injectPrimitives(ctx: vm.Context, bridge: VmBridge, hooks: Orchestratio
   // parallel(thunks) — concurrency barrier (binary V): fire every thunk; a fulfilled thunk → its value, a
   // thrown thunk → null (degrade, never reject the whole batch). Returns a vm-realm array.
   const parallel = async (vmArr: unknown): Promise<unknown> => {
+    if (aborted()) return toVm([])
     const thunks = asArray(vmArr, 'parallel() expects an array of functions')
     if (thunks.length === 0) return toVm([])
     checkCap()
@@ -418,13 +443,14 @@ function injectPrimitives(ctx: vm.Context, bridge: VmBridge, hooks: Orchestratio
       hooks.onLog?.(`parallel[${i}] failed: ${reasonMessage(r.reason)}`)
       return null
     })
-    return toVm(out)
+    return toVm(out.map(jsonSafe))
   }
 
   // pipeline(items, ...stages) — NO barrier (binary z): each item flows through all stages independently;
   // every stage receives (prevResult, originalItem, index); a null result short-circuits the item's remaining
   // stages; a thrown stage → null for that item. Returns a vm-realm array.
   const pipeline = async (vmItems: unknown, ...stages: unknown[]): Promise<unknown> => {
+    if (aborted()) return toVm([])
     const items = asArray(vmItems, 'pipeline() expects an array as the first argument')
     if (items.length === 0) return toVm([])
     checkCap()
@@ -448,7 +474,7 @@ function injectPrimitives(ctx: vm.Context, bridge: VmBridge, hooks: Orchestratio
       hooks.onLog?.(`pipeline[${i}] failed: ${reasonMessage(r.reason)}`)
       return null
     })
-    return toVm(out)
+    return toVm(out.map(jsonSafe))
   }
 
   const phaseFn = (t: unknown): void => {

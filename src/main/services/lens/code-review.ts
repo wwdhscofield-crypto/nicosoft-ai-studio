@@ -29,7 +29,10 @@ export function canAuthorScript(slug: string): boolean {
   // includes('mini') — that would also match "ge·mini" and deny Gemini for the wrong reason (a footgun if
   // Gemini is ever allowed). \bmini\b matches '-mini' but not the 'mini' inside 'gemini'.
   if (/\bmini\b/.test(s)) return false
-  const cl = /(opus|sonnet)-(\d+)(?:[.\-](\d+))?/.exec(s)
+  // `(\d{1,2})(?!\d)` — the major is 1-2 digits NOT followed by another digit, so a legacy date-suffixed slug
+  // (claude-3-5-sonnet-20241022 / claude-3-opus-20240229, where the version sits BEFORE the name) does not match
+  // `sonnet-<8-digit-date>` and fall through to deny. Modern claude-<name>-<major>-<minor>[-<date>] still parses.
+  const cl = /(opus|sonnet)-(\d{1,2})(?!\d)(?:[.\-](\d+))?/.exec(s)
   if (cl) {
     const major = parseInt(cl[2], 10)
     const minor = cl[3] ? parseInt(cl[3], 10) : 0
@@ -96,7 +99,7 @@ const VERDICT = { type: 'object', properties: { stands: { type: 'boolean' }, rea
 const tag = (lens) => (f) => ({ lens, file: f.file, line: f.line, summary: f.summary, severity: f.severity, evidence: f.evidence })
 // Pin the diff into every finder so a sub-agent REVIEWS this focused diff instead of self-reading the whole
 // repo (that blind self-read was the channel-killer maxTurns + diff-pinning fixed). diff.ts already char-caps it.
-const diffBlock = diff ? '\\n\\nThe pinned diff under review:\\n' + diff : ''
+const diffBlock = diff ? '\\n\\nThe pinned diff under review:\\n' + diff : '\\n\\n(No diff provided — read the target files directly for this lens.)'
 
 phase('Review')
 log('code-review: ' + target + ' — ' + angles.length + ' angle(s), <=' + candidateCap + ' candidates each, verify=' + verify + (sweep ? ' +sweep' : ''))
@@ -131,15 +134,19 @@ if (sweep) {
 }
 
 phase('Synthesize')
-const top = confirmed.slice(0, reportCap)
+// Severity-rank ALL confirmed (most-severe first); reportCap bounds only the REPORT TEXT, never the returned
+// structured confirmed[] — truncating that would make a lens whose findings fell past the cap read as clean.
+const rank = { critical: 0, high: 0, med: 1, medium: 1, low: 2 }
+const ranked = confirmed.slice().sort((a, b) => (rank[a.severity] ?? 1) - (rank[b.severity] ?? 1))
+const top = ranked.slice(0, reportCap)
 const report = await agent(
-  'Write the code-review report for ' + target + ': the ' + top.length + ' confirmed finding(s), most-severe-first, each citing file:line with a crisp explanation and a concrete fix. If there are none, say the change looks clean.\\n\\nConfirmed findings:\\n' + JSON.stringify(top),
+  'Write the code-review report for ' + target + ': the ' + top.length + ' most-severe confirmed finding(s), most-severe-first, each citing file:line with a crisp explanation and a concrete fix. If there are none, say the change looks clean.\\n\\nConfirmed findings:\\n' + JSON.stringify(top),
   { label: 'report', phase: 'Synthesize' },
 )
 
 return {
   report: typeof report === 'string' ? report : '',
-  confirmed: top,
+  confirmed: ranked,
   refuted,
   lenses: angles.map((a) => ({ key: a.key, focus: a.focus, found: candidates.filter((c) => c.lens === a.key).length })),
 }

@@ -4,7 +4,6 @@
 // old engine's value layer did — agent-lens (which DOES pull the runtime) imports these.
 
 import { normSeverity, renderFindings, type SubjectFinding, type Finding } from './types'
-import type { ReviewResult } from './code-review'
 
 // The normalized review the consumers read (replaces the old engine LensRun).
 export interface ScriptReview {
@@ -24,20 +23,43 @@ export function cardPhase(label: string): string {
   return 'find'
 }
 
+// Extract the FIRST balanced {...}/[...] literal (string-aware, depth-counted), ignoring any trailing prose —
+// a greedy first-bracket-to-last-bracket scan would swallow trailing text containing a `]`/`}` and fail to parse.
+function extractBalanced(text: string): string | null {
+  const start = text.search(/[[{]/)
+  if (start < 0) return null
+  const open = text[start]
+  const close = open === '{' ? '}' : ']'
+  let depth = 0
+  let inStr = false
+  let esc = false
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (inStr) {
+      if (esc) esc = false
+      else if (ch === '\\') esc = true
+      else if (ch === '"') inStr = false
+    } else if (ch === '"') inStr = true
+    else if (ch === open) depth++
+    else if (ch === close && --depth === 0) return text.slice(start, i + 1)
+  }
+  return null
+}
+
 // Extract a structured value from a sub-agent's text reply (a ```json / ```findings fence, else the first
-// {...}/[...] literal). Returns null when nothing parses.
+// BALANCED {...}/[...] literal). Returns null when nothing parses.
 export function parseStructured(text: string): unknown {
   const fence = /```(?:json|findings)?\s*([\s\S]*?)```/i.exec(text)
   const body = (fence ? fence[1] : text).trim()
   try {
     return JSON.parse(body)
   } catch {
-    /* fall through to a bracket scan */
+    /* fall through to a balanced-bracket scan */
   }
-  const obj = /[[{][\s\S]*[\]}]/.exec(text)
-  if (obj) {
+  const balanced = extractBalanced(text)
+  if (balanced) {
     try {
-      return JSON.parse(obj[0])
+      return JSON.parse(balanced)
     } catch {
       /* give up */
     }
@@ -62,9 +84,12 @@ const asCandidate = (c: Record<string, unknown>, i: number, refuted: boolean): F
 // Normalize a script's ReviewResult into the consumer contracts. Defensive: a malformed / partial result yields
 // empty arrays, never a throw — the consumers then report a failed/clean run, never a silent wrong all-clear.
 export function normalizeReviewResult(raw: unknown, reviewerRoleId: string): ScriptReview {
-  const r = (raw && typeof raw === 'object' ? raw : {}) as Partial<ReviewResult>
-  const confirmed = Array.isArray(r.confirmed) ? r.confirmed.map((c, i) => asCandidate(c as unknown as Record<string, unknown>, i, false)) : []
-  const refuted = Array.isArray(r.refuted) ? r.refuted.map((c, i) => asCandidate(c as unknown as Record<string, unknown>, i, true)) : []
+  const r = (raw && typeof raw === 'object' ? raw : {}) as { confirmed?: unknown; refuted?: unknown; lenses?: unknown; report?: unknown }
+  // Filter non-object slots BEFORE mapping — a null/primitive element (a malformed script result) would make
+  // asCandidate throw, and that throw escapes the unguarded consolidated path as an unhandled rejection.
+  const ok = (c: unknown): c is Record<string, unknown> => !!c && typeof c === 'object'
+  const confirmed = Array.isArray(r.confirmed) ? r.confirmed.filter(ok).map((c, i) => asCandidate(c, i, false)) : []
+  const refuted = Array.isArray(r.refuted) ? r.refuted.filter(ok).map((c, i) => asCandidate(c, i, true)) : []
   const byLens = new Map<string, Finding[]>()
   for (const f of [...confirmed, ...refuted]) {
     const arr = byLens.get(f.lens)

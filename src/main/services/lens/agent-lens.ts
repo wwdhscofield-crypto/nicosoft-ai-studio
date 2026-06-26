@@ -24,7 +24,7 @@ import { normalizeReviewResult, cardPhase, parseStructured, describeTarget, type
 import { panelCardId, subjectCardId, readerCardId, type LensDeps, type AgentSpec } from './contracts'
 import { buildChangedSet, gatherReviewDiff, gitHead } from './diff'
 import { endpointWithKey } from '../llm-once'
-import { parallelExamineLimited } from './pool'
+import { parallelExamineLimited, withLensSlot } from './pool'
 import { thinkingKnob, knobDepths, clampDepth, protocolFamily, type ThinkingChoice, type ThinkingDepth } from '@shared/thinking'
 import { LENS_STALL_MS, type SubjectFinding, type Finding } from './types'
 import type { WrittenFile } from '../../agent/context'
@@ -91,12 +91,15 @@ function makeSpawnAgent(deps: LensDeps, reviewerRoleId: string, panelId: string,
     const label = String(opts.label || `agent-${n}`)
     const toolId = subjectCardId(`${label}-${n++}`, stepId)
     const phase = cardPhase(label)
+    // Card name per phase so the renderer (lens-card.tsx) partitions correctly: finders → Subject, skeptics →
+    // SubjectRefute, the synth → Synth (emitting everything as 'Subject' mis-rendered the verify + synth rows).
+    const name = phase === 'verify' ? 'SubjectRefute' : phase === 'synth' ? 'Synth' : 'Subject'
     deps.cb.onToolEvent?.(reviewerRoleId, {
       type: 'sub_tool_start',
       toolUseId: toolId,
       parentToolId: panelId,
-      name: 'Subject',
-      input: { subject: label, lens: label, phase, mode: 'review' },
+      name,
+      input: { subject: label, lens: label, findingId: label, phase, mode: 'review' },
     })
     try {
       const spec: AgentSpec = {
@@ -107,12 +110,14 @@ function makeSpawnAgent(deps: LensDeps, reviewerRoleId: string, panelId: string,
         stallTimeoutMs: LENS_STALL_MS,
         progressCard: { toolUseId: toolId, parentToolId: panelId },
       }
-      const out = await deps.runAgent(spec)
+      // Acquire the global pool slot (min(16,cores-2), Workflow parity) AROUND the spawn — parallel()/pipeline()
+      // fire all thunks at once, so the concurrency cap MUST live here at the leaf, not in the fan-out primitives.
+      const out = await withLensSlot(() => deps.runAgent(spec))
       deps.cb.onToolEvent?.(reviewerRoleId, {
         type: 'sub_tool_done',
         toolUseId: toolId,
         parentToolId: panelId,
-        name: 'Subject',
+        name,
         isError: false,
         result: out.text,
         input: { tokens: out.outputTokens },
@@ -123,7 +128,7 @@ function makeSpawnAgent(deps: LensDeps, reviewerRoleId: string, panelId: string,
         type: 'sub_tool_done',
         toolUseId: toolId,
         parentToolId: panelId,
-        name: 'Subject',
+        name,
         isError: true,
         result: e instanceof Error ? e.message : String(e),
       })
@@ -150,6 +155,15 @@ async function authorScript(deps: LensDeps, reviewerRoleId: string, target: stri
     console.warn('[studio-lens] author step failed, using fallback template:', e instanceof Error ? e.message : e)
     return null
   }
+}
+
+// A script that runs OK but returns the wrong shape (a string / array / no findings fields) is NOT a valid
+// review — treat it like a failure (fall back to the template, then mark failed) so it never normalizes to a
+// silent all-clear.
+function isReviewResult(v: unknown): boolean {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false
+  const o = v as Record<string, unknown>
+  return Array.isArray(o.confirmed) || Array.isArray(o.refuted) || Array.isArray(o.lenses) || typeof o.report === 'string'
 }
 
 // Run the review through the script-executor: open the panel card, author-or-template, execute, normalize.
@@ -180,7 +194,7 @@ async function runReviewViaScript(
   let review: ScriptReview = { subjects: [], confirmed: [], refuted: [], report: null, reviewerRoleId }
   try {
     const spawnAgent = makeSpawnAgent(deps, reviewerRoleId, panelId, stepId)
-    const orchestration = { spawnAgent }
+    const orchestration = { spawnAgent, signal: opts.signal }
     // args serve BOTH the template (angles/caps/…) and an authored script (diff/paths/target).
     const args = { ...codeReviewArgs(shape, targetDesc), diff: target.diff, paths: target.changed, baseRef, target: targetDesc }
 
@@ -191,16 +205,16 @@ async function runReviewViaScript(
       if (authored) src = authored
     }
     let result = await runScript({ src, args, orchestration })
-    if (!result.ok && src !== CODE_REVIEW_TEMPLATE) {
-      // An authored script failed at runtime → fall back to the built-in template (the floor still reviews).
-      console.warn('[studio-lens] authored script failed, falling back to template:', result.error)
+    // An authored script that FAILED or returned an unusable shape → fall back to the built-in template.
+    if (src !== CODE_REVIEW_TEMPLATE && (!result.ok || !isReviewResult(result.value))) {
+      console.warn(`[studio-lens] authored script unusable (${result.ok ? 'bad shape' : result.error}), falling back to template`)
       result = await runScript({ src: CODE_REVIEW_TEMPLATE, args, orchestration })
     }
-    if (result.ok) review = normalizeReviewResult(result.value, reviewerRoleId)
+    if (result.ok && isReviewResult(result.value)) review = normalizeReviewResult(result.value, reviewerRoleId)
     else {
-      // Both the authored script AND the fallback template failed to execute → mark FAILED so the consumer
-      // reports a failed run, never a silent all-clear (a failed review must not read as "looks clean").
-      console.warn('[studio-lens] review script failed:', result.error)
+      // The script failed OR returned a non-ReviewResult shape → mark FAILED so the consumer reports a failed
+      // run, never a silent all-clear (a failed / garbage review must not read as "looks clean").
+      console.warn('[studio-lens] review script failed or returned an unusable shape:', result.ok ? typeof result.value : result.error)
       review = { subjects: [], confirmed: [], refuted: [], report: null, reviewerRoleId, failed: true }
     }
   } finally {
@@ -231,6 +245,7 @@ export async function runLensReview(
     if (target.changed.length === 0) return []
     const reviewOpts: RunStepOptions = { ...opts, signal: signal ?? opts.signal }
     const run = await runReviewViaScript(reviewOpts, reviewer, target, baseRef, 'conservative', stepId)
+    if (run.failed) console.warn('[studio-lens] gate-b review script failed — floor verdict stands (no lens amplification)')
     return run.subjects
   } catch (e) {
     console.warn('[studio-lens] gate-b review failed (non-blocking, floor stands):', e instanceof Error ? e.message : e)
