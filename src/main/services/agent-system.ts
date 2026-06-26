@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CODING_DISCIPLINE, PANEL_REVIEW_DISCIPLINE, ENGINEER_SYSTEM_PROMPT } from '../agent/system-prompt'
 import { buildRolePrompt } from '../agent/roles/prompts'
+import { COMMON_PREAMBLE, SAFETY_PREAMBLE } from '../agent/roles/common-preamble'
 import type { MemoryRow } from '../repos/memory.repo'
 import { DEV_PROMPT, DEV_ROLES } from './agent-tools'
 
@@ -83,10 +84,16 @@ export function buildAgentSystem(
 ): string {
   // toolless:false — this is the agent-loop path (the role really has a tool kit), so buildRolePrompt must
   // NOT prepend the "no tools to call" chat-mode note. TOOL_AWARENESS below tells non-dev roles they can act.
-  const base = DEV_ROLES.has(roleId) ? DEV_PROMPT[roleId] : (buildRolePrompt(roleId, { toolless: false }) ?? ENGINEER_SYSTEM_PROMPT)
+  // DEV roles (engineer/shuri) use ENGINEER/SHURI_SYSTEM_PROMPT which — unlike buildRolePrompt — does NOT
+  // carry COMMON_PREAMBLE, so they were missing the "reply in the user's language / no filler / own mistakes"
+  // baseline on the agent + collab paths (the dogfood Flynn-in-English-filler bug). Prepend it for DEV roles;
+  // the buildRolePrompt branch already includes it.
+  const base = DEV_ROLES.has(roleId) ? `${COMMON_PREAMBLE}\n\n${DEV_PROMPT[roleId]}` : (buildRolePrompt(roleId, { toolless: false }) ?? ENGINEER_SYSTEM_PROMPT)
   // Verify-before-done + stay-in-scope discipline applies to EVERY tool-wielding expert, not just the dev
   // roles — a non-dev expert (e.g. the translator editing source files) must verify + stay in scope too.
-  const parts = [PLAN_FIRST, base, CODING_DISCIPLINE]
+  // SAFETY_PREAMBLE rides at the very front of every user-facing agent (all roles, incl. collab via
+  // buildCollabSystem which calls this) — the release red lines for a general-audience open-source product.
+  const parts = [SAFETY_PREAMBLE, PLAN_FIRST, base, CODING_DISCIPLINE]
   // Panel self-review + orient discipline is SOLO-only: those steps drive the studio_lens tool, which solo runs
   // carry but collab implementers do NOT (批3 filters it + nulls ctx.panel). For collab, buildCollabSystem adds
   // its own review note (one consolidated post-completion review by an independent reviewer) instead.

@@ -270,10 +270,16 @@ export async function* callWithToolsOpenAI(
             content.push({ ...it } as ServerBlock) // round-trip verbatim (encrypted_content)
           } else if (it.type === 'web_search_call') {
             // Server-executed search (doc 16 §4.2): carry verbatim as a server block, never re-execute.
-            // Strip the output-only id so the round-trip to input matches what the API accepts.
-            const rest = { ...it }
-            delete rest.id
-            content.push(rest as ServerBlock)
+            // GATE empty calls: nicosoft gpt-5.5 emits a bare {type, status:'completed'} with NO query/
+            // results (web_search usage num_requests:0) — carrying it draws a ghost "Searched the web" card
+            // for a search that never happened. Only carry a call with substantive content (any field beyond
+            // type/status/id). Strip the output-only id so the round-trip to input matches what the API accepts.
+            const substantive = Object.keys(it).some((k) => k !== 'type' && k !== 'status' && k !== 'id')
+            if (substantive) {
+              const rest = { ...it }
+              delete rest.id
+              content.push(rest as ServerBlock)
+            }
           }
           break
         }

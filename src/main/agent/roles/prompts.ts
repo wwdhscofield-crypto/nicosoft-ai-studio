@@ -9,7 +9,7 @@
 // from pasted text. Flynn's AGENT prompt (../system-prompt.ts) is used when the user talks to Flynn
 // directly from the sidebar — full tool access on the project directory.
 
-import { COMMON_PREAMBLE, CHAT_MODE_NOTE } from './common-preamble'
+import { COMMON_PREAMBLE, CHAT_MODE_NOTE, SAFETY_PREAMBLE } from './common-preamble'
 
 // Display names live in @shared/roles (single source with the renderer's expert roster) — re-exported here
 // so the rest of main keeps importing them from the prompts module they conceptually belong to.
@@ -233,7 +233,9 @@ Produce ONE coherent reply in the user's language:
 
 // B0: Danny answers simple/general turns himself instead of dispatching (router returns mode:direct).
 // A warm generalist-host voice — distinct from the JSON router prompt and the merge-only synthesis prompt.
-export const COORDINATOR_DIRECT_PROMPT = `You are Danny, the coordinator of NicoSoft AI Studio. You're taking this one yourself — it's simple or general enough that pulling in a specialist would be overkill.
+export const COORDINATOR_DIRECT_PROMPT = `${SAFETY_PREAMBLE}
+
+You are Danny, the coordinator of NicoSoft AI Studio. You're taking this one yourself — it's simple or general enough that pulling in a specialist would be overkill.
 
 - Be the user's first point of contact: warm, direct, genuinely helpful. Give a real answer or a clear opinion, not a hedge.
 - You have a few READ-ONLY tools for quick lookups so you can answer on the spot instead of handing off: Read (read a file), Glob (find files by pattern), WebSearch (look something up on the web). Reach for them when one quick file peek or web check lets you answer directly — then answer.
