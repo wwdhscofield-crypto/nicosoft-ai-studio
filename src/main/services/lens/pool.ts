@@ -8,17 +8,17 @@
 // min(16, cores−2) and has NO per-endpoint sub-cap. Studio Lens mirrors that — a single global semaphore
 // governs every finder + refute skeptic + reader; excess QUEUES (never dropped) and runs as slots free.
 
-import { availableParallelism } from 'node:os'
+import { cpus } from 'node:os'
 
 function globalConcurrency(): number {
   let cores = 4
   try {
-    cores = availableParallelism()
+    cores = cpus().length
   } catch {
     cores = 4
   }
-  // EXACT Workflow-tool form (verified in cc 2.1.186: `Math.min(16,Math.max(2,cpus-2))`) — clamp to [2,16],
-  // a floor of 2 (not 1) so even a 1-2 core box still fans two agents out.
+  // EXACT Workflow-tool form (verified in cc 2.1.186: `Math.min(16,Math.max(2,os.cpus().length-2))`) — clamp to
+  // [2,16], a floor of 2 (not 1) so even a 1-2 core box still fans two agents out.
   return Math.min(16, Math.max(2, cores - 2))
 }
 

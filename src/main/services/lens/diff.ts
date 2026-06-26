@@ -46,6 +46,26 @@ export async function diffSince(cwd: string | undefined, base: string, paths: re
   return diff.length > maxChars ? `${diff.slice(0, maxChars)}\n…[diff truncated for lens trigger]` : diff
 }
 
+// Gather the review-scope diff exactly like Workflow code-review Phase 0 (`amt`): the COMMITTED range diff
+// (`@{upstream}...HEAD`, fallback `main...HEAD` / `master...HEAD` / `HEAD~1`) UNIONed with the uncommitted
+// `git diff HEAD`, scoped to `paths`, truncated. Used by the standalone (agent-tool) review entry, where a
+// committed-but-unpushed change is invisible to a plain `git diff HEAD` (the prior gap). '' when not a repo /
+// nothing in scope. Best-effort: every git call degrades to '' on error, never throws.
+export async function gatherReviewDiff(cwd: string | undefined, paths: readonly string[] = [], maxChars = 24_000): Promise<string> {
+  if (!cwd) return ''
+  if ((await git(cwd, ['rev-parse', '--is-inside-work-tree'])) !== 'true') return ''
+  const pathArgs = paths.length ? ['--', ...paths] : []
+  // Committed range: prefer the tracking branch, then main/master, then the previous commit (first-commit case).
+  let range = ''
+  for (const base of ['@{upstream}', 'main', 'master', 'HEAD~1']) {
+    range = await git(cwd, ['diff', `${base}...HEAD`, ...pathArgs])
+    if (range) break
+  }
+  const working = await git(cwd, ['diff', 'HEAD', ...pathArgs]) // uncommitted working-tree changes
+  const combined = [range, working].filter(Boolean).join('\n')
+  return combined.length > maxChars ? `${combined.slice(0, maxChars)}\n…[diff truncated for review scope]` : combined
+}
+
 // --- Git-free change event bus (subject-trigger event-bus) -------------------------------------------------
 // THE fix for greenfield / non-git triggering: a brand-new project is all-untracked, so `git diff base` emits
 // ZERO bytes for every file even though 100+ files were created — the semantic trigger then sees an empty diff

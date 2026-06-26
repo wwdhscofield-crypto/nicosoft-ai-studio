@@ -15,7 +15,6 @@ import { resolveValue, interpolate, evalWhen, type Scope } from './value'
 import {
   parseFindings,
   renderFindings,
-  normSeverity,
   SEV_ORDER,
   LENS_STALL_MS,
   type Finding,
@@ -65,8 +64,7 @@ export interface StepSpec {
   stages?: StepSpec[] // pipeline ONLY: the per-item stages (e.g. [finder, refute]) each item flows through with NO cross-item barrier
   voters?: number
   majority?: number
-  by?: string[] // dedup step ONLY: the candidate fields that define a near-duplicate (Workflow Phase-2 "same defect, same location") — e.g. [file, line]; the most-severe representative of each group is kept, the rest removed in place
-  votersByConfidence?: Record<string, number> // refute DEPTH per candidate: finder-confidence → skeptic count (model-decided depth vs a flat `voters`); majority derives from the count unless `majority` is set
+  by?: string[] // dedup step ONLY: the candidate fields that define a near-duplicate (Workflow Phase-2 "same defect, same location, same reason") — e.g. [file, line, title]; the most-concrete representative of each group is kept, the rest removed in place
   failVote?: 'uphold' | 'refute'
   retries?: number // finder: EXTRA attempts on a non-contracted reply before DROP (default 4 → 5 attempts total, = Workflow's retry cap OBp/GKa=5); a template knob, not a welded constant
   stallMs?: number // per-step liveness budget (delta-stall watchdog ms): overrides the run-level ctx.stallTimeoutMs, then the LENS_STALL_MS default
@@ -147,7 +145,6 @@ const candRowInput = (c: Finding): Record<string, unknown> => ({
   lens: c.lens,
   title: c.title,
   severity: c.severity,
-  confidence: c.confidence,
   file: c.file ? `${c.file}${c.line ? `:${c.line}` : ''}` : undefined,
 })
 
@@ -539,17 +536,14 @@ async function runFinder(
       deps.cb.onToolEvent?.(roleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: panelId, name: 'Subject', isError: true, result: 'Verifier returned no verdict.' })
       return { ...base, produced: false, passed: false, feedback: `subject produced no parseable VERDICT after ${retries + 1} attempt(s) (dropped)`, candidates: [], inputTokens: inTok, outputTokens: outTok }
     }
-    // contracted (or final attempt with text) → parse the findings contract with the trustEmptyOn-PASS degrade
+    // contracted (or final attempt with text) → parse the ```findings array, capped to the tier's candidate cap.
+    // Workflow finder contract: the value is the array; an empty/absent array = [] (clean). NO synthesizing a
+    // candidate from prose — Workflow has no prose-fallback, so a contracted reply with no parseable array yields
+    // no candidate, exactly like its "return []" (the old prose-fallback fabricated a junk candidate from text).
     const passed = verdict === true
-    const parsed = parseFindings(text, lens.key)
-    const firstLine = (text.split('\n').map((s) => s.trim()).find(Boolean) ?? '').slice(0, 160)
-    const trustEmpty = step.emit?.trustEmptyOn === 'PASS'
-    const candidates: Finding[] =
-      parsed && parsed.length
-        ? parsed
-        : trustEmpty && passed
-          ? []
-          : [{ lens: lens.key, id: `${lens.key}-0`, title: firstLine || `${lens.key} concern`, severity: normSeverity(undefined), mechanism: text.slice(0, 1600) }]
+    const cap = typeof ctx.candidateCap === 'number' ? ctx.candidateCap : 6
+    const parsed = parseFindings(text, lens.key, cap)
+    const candidates: Finding[] = parsed && parsed.length ? parsed : []
     for (const c of candidates) c.focus = focus // carry the lens focus for the refute persona
     // tokens: this finder's output tokens → shown on its card row (Workflow /workflows parity: a per-agent token
     // count). Merged onto the start input (lens/focus) by the renderer, never summed into the header (no balloon).
@@ -612,8 +606,9 @@ function runDedup(step: StepSpec, scope: Scope): { total: number; kept: number; 
   const keep = new Set<Finding>()
   for (const g of groups.values()) {
     if (g.length === 1) { keep.add(g[0].cand); continue }
-    // representative = most severe (SEV_ORDER asc: high=0), tie-break on the most concrete (longest) mechanism
-    g.sort((a, b) => (SEV_ORDER[a.cand.severity] - SEV_ORDER[b.cand.severity]) || (b.cand.mechanism.length - a.cand.mechanism.length))
+    // representative = "the one with the most concrete failure scenario" (Workflow AZa) — longest mechanism;
+    // severity is only the tie-break.
+    g.sort((a, b) => (b.cand.mechanism.length - a.cand.mechanism.length) || (SEV_ORDER[a.cand.severity] - SEV_ORDER[b.cand.severity]))
     keep.add(g[0].cand)
   }
 
@@ -637,14 +632,13 @@ async function runRefute(step: StepSpec, scope: Scope, ctx: LensContext, deps: L
   return { kept: candidates }
 }
 
-// The shared refute engine: fan skeptics over a candidate SET (the whole flat deduped list for the barrier step,
-// or ONE finder's candidates for the per-item pipeline), set each candidate's refute verdict + tally IN PLACE,
-// emit the Finding rows + SubjectRefute votes, and return the per-angle refute token cost. The SHIPPED review sets
-// `voters: 1` — Workflow's "Verify (1-vote, recall-biased)": ONE skeptic per candidate, majority = floor(1/2)+1 = 1.
-// `votersByConfidence` (confidence → skeptic count) + a flat `voters` default (3) remain as generic engine knobs
-// (e.g. a deep-research-style N-vote template), but code-review uses 1. majority = floor(n/2)+1 unless `majority` is set.
+// The shared refute engine: fan skeptics over a candidate SET (the deduped flat list), set each candidate's refute
+// verdict + tally IN PLACE, emit the Finding rows + SubjectRefute votes, and return the per-angle refute token
+// cost. Workflow code-review verify is ONE skeptic per candidate (`voters: 1`, the default here) — NOT majority
+// voting (the 3-vote scheme is deep-research over web claims). `voters`/`majority` stay as generic engine knobs;
+// majority = floor(n/2)+1 unless `majority` is set (so 1 voter → 1 = the single skeptic decides).
 async function refuteCandidates(step: StepSpec, ctx: LensContext, deps: LensDeps, candidates: Finding[], roleId: string, kit: readonly string[], stepId: string, panelId: string): Promise<Map<string, { inputTokens: number; outputTokens: number }>> {
-  const votersFor = (c: Finding): number => step.votersByConfidence?.[c.confidence ?? 'med'] ?? step.voters ?? 3
+  const voters = step.voters ?? 1 // Workflow code-review = ONE verifier per candidate (NOT majority voting)
   const majorityFor = (n: number): number => step.majority ?? Math.floor(n / 2) + 1
   const tokByLens = new Map<string, { inputTokens: number; outputTokens: number }>()
   if (candidates.length === 0) return tokByLens
@@ -657,7 +651,7 @@ async function refuteCandidates(step: StepSpec, ctx: LensContext, deps: LensDeps
   // one read-only skeptic per (candidate × votersFor(candidate)), all under the global limiter
   const jobs: Array<() => Promise<{ id: string; lens: string; refuted: boolean; inputTokens: number; outputTokens: number }>> = []
   for (const cand of candidates) {
-    const n = votersFor(cand)
+    const n = voters
     for (let i = 0; i < n; i++) {
       jobs.push(() => runRefuteVote(step, ctx, deps, cand, roleId, kit, i, stepId, panelId).then((r) => ({ id: cand.id, lens: cand.lens, ...r })))
     }
@@ -667,7 +661,7 @@ async function refuteCandidates(step: StepSpec, ctx: LensContext, deps: LensDeps
   for (const cand of candidates) {
     const cv = votes.filter((v) => v.id === cand.id)
     const yes = cv.filter((v) => v.refuted).length
-    cand.refuted = yes >= majorityFor(votersFor(cand))
+    cand.refuted = yes >= majorityFor(voters)
     cand.refuteYes = yes
     cand.refuteTotal = cv.length
     const tk = tokByLens.get(cand.lens) ?? { inputTokens: 0, outputTokens: 0 }
@@ -690,9 +684,10 @@ async function runRefuteVote(step: StepSpec, ctx: LensContext, deps: LensDeps, c
   const toolId = refuteVoteId(cand.id, voter, stepId)
   deps.cb.onToolEvent?.(roleId, { type: 'sub_tool_start', toolUseId: toolId, parentToolId: panelId, name: 'SubjectRefute', input: { phase: 'verify', findingId: cand.id, subject: cand.lens, lens: cand.lens, title: cand.title.slice(0, 120), severity: cand.severity, voter } })
   const candScope: Scope = { steps: {}, ctx, item: { cand } }
-  // Refute persona: honor the YAML `system: refutePrompt(${cand.focus})`; default rebuilds the FULL refutePrompt
-  // persona with the candidate's carried focus (H-5), falling back to the lens key (matches panel.ts).
-  const system = step.system ? personaFor(step.system, candScope, deps) : deps.persona('refutePrompt', cand.focus || cand.lens)
+  // Refute persona: the lean is the effort tier's (Workflow medium = precision/eyo; high/xhigh/max = recall/tyo),
+  // picked from ctx.verifyBias. An explicit YAML `system:` still wins (none today). focus falls back to the lens key.
+  const personaName = (ctx as { verifyBias?: string }).verifyBias === 'precision' ? 'refutePromptPrecision' : 'refutePrompt'
+  const system = step.system ? personaFor(step.system, candScope, deps) : deps.persona(personaName, cand.focus || cand.lens)
   const prompt = interpolate(step.prompt ?? '', candScope)
   // failVote (template knob): how a FAILED / unparseable skeptic vote is counted. 'uphold' (default) → this vote
   // does NOT refute (a broken vote never drops a real defect — the original behavior); 'refute' → it counts as a

@@ -13,10 +13,13 @@ import * as settingsService from '../settings.service'
 import * as workspaceTasks from '../workspace-tasks.service'
 import { chooseVerifierRole } from './verifier'
 import { runLens, type LensContext, type LensRun } from './engine'
-import { REVIEW_ANGLES } from './angles'
+import { SWEEP_ANGLE } from './angles'
+import { shapeFor, tierFromDepth } from './tiers'
 import { reviewTemplate, understandTemplate } from './templates'
 import { makeLensDeps } from './step'
-import { buildChangedSet, gitHead, diffSince } from './diff'
+import { buildChangedSet, gatherReviewDiff, gitHead } from './diff'
+import { endpointWithKey } from '../llm-once'
+import { thinkingKnob, knobDepths, clampDepth, protocolFamily, type ThinkingChoice, type ThinkingDepth } from '@shared/thinking'
 import type { SubjectFinding, Finding } from './types'
 import type { WrittenFile } from '../../agent/context'
 import type { RunStepOptions } from '../coordinator-step'
@@ -43,6 +46,28 @@ export function lensEnabled(): boolean {
   return settingsService.get<boolean>('gateB.panelExamine.enabled') !== false
 }
 
+// The reviewer's EFFECTIVE thinking depth (same resolution as llm/thinking.resolveDepth: an explicit choice, else
+// the model's TOP tier; clamped to what the model supports — Workflow's "after any silent downgrade"). A
+// non-thinking model → no effort signal. Returns the depth NAME (low/medium/high/xhigh/max), not the API param.
+function reviewerEffectiveDepth(protocol: string, slug: string, depth: string | null | undefined): string | undefined {
+  const knob = thinkingKnob(protocolFamily(protocol), slug)
+  if (knob.kind === 'none') return undefined
+  const tiers = knobDepths(knob)
+  if (tiers.length === 0) return undefined
+  const choice = (depth || undefined) as ThinkingChoice | undefined
+  const want: ThinkingDepth = choice && choice !== 'adaptive' ? choice : tiers[tiers.length - 1]
+  return clampDepth(want, tiers) ?? tiers[tiers.length - 1]
+}
+
+// The review's effort tier = the reviewer role's effective thinking depth → a Workflow code-review tier. The
+// finders/skeptics already run at this effort (step.ts resolveDepth on the same binding), so the review SHAPE
+// riding the same effort is what makes Lens match Workflow's "review shape = current effort" — not a hardcoded tier.
+function reviewShapeFor(reviewerRoleId: string): ReturnType<typeof shapeFor> {
+  const rb = rolesService.getBinding(reviewerRoleId)
+  const ep = rb?.endpointId ? endpointWithKey(rb.endpointId)?.ep : undefined
+  return shapeFor(tierFromDepth(reviewerEffectiveDepth(ep?.protocol ?? '', rb?.model ?? '', rb?.thinkingDepth)))
+}
+
 // Build the review ctx + run the engine. The reviewer is already chosen + verified independent by the caller.
 async function runReviewEngine(
   opts: RunStepOptions,
@@ -65,13 +90,14 @@ async function runReviewEngine(
     return { steps: {}, result: {}, subjects: [], reviewerRoleId }
   }
   const callerId = Array.isArray(implementers) ? implementers[0] : implementers
+  // The review SHAPE is a function of the reviewer's effort, exactly like Workflow code-review (low/medium/high/
+  // xhigh/max). reviewShapeFor resolves the reviewer's effective thinking depth → tier → {angles, candidateCap,
+  // verify bias, sweep, reportCap}. NOTHING is hardcoded — change the reviewer role's thinking and the shape moves.
+  const shape = reviewShapeFor(reviewerRoleId)
   // PIN the diff ONCE (Workflow "Scope: pin the diff command") and inline it into every finder/skeptic — they
   // REVIEW this focused diff instead of blindly self-reading the whole codebase. `target.diff` is already
-  // truncated to a hard char cap by diff.ts (buildChangedSet/diffSince — Workflow "diff = the change, bounded"),
-  // so inlining it is cheap and bounded. The full FILE CONTENT is still NOT inlined (that 60k read — the old
-  // select-step blunder — is what actually blew per-channel TPM); a finder reads a target file's enclosing code
-  // only when its angle needs it, bounded by maxTurns=50. Empty diff (already-committed target) → the finder
-  // reads the LISTED target files only (still scoped, still maxTurns-bounded).
+  // truncated to a hard char cap by diff.ts. Full FILE CONTENT is NOT inlined (the old 60k select read is what
+  // blew per-channel TPM); a finder reads a target file's enclosing code only when its angle needs it (maxTurns=50).
   const ctx: LensContext = {
     stepId,
     roleBySlot: { reviewer: reviewerRoleId, caller: callerId },
@@ -83,9 +109,14 @@ async function runReviewEngine(
     writtenFiles,
     floorVerdict,
     breadthInput,
-    // The FIXED review-angle taxonomy the panel fans over (Workflow runs a fixed angle set, not model-authored
-    // lenses). review.yaml reads it as `over: ${angles}`.
-    angles: REVIEW_ANGLES,
+    // Effort-tiered review shape (Workflow parity), all read by review.yaml — never hardcoded:
+    tier: shape.tier,
+    angles: shape.angles, // 1 combined angle (low) · 8 (medium/high) · 10 (xhigh/max)
+    candidateCap: shape.candidateCap, // per-finder ≤4/≤6/≤8
+    verifyBias: shape.verify, // 'none' (low: skip dedup+verify) | 'precision' (medium) | 'recall' (high/xhigh/max)
+    runSweep: shape.sweep, // gate the gap-sweep phases (xhigh/max). NB: NOT named `sweep` — that's the sweep STEP id; a ctx field of the same name would shadow `${sweep.pluck(...)}` in the result projection.
+    sweepAngle: shape.sweep ? [SWEEP_ANGLE] : [],
+    reportCap: shape.reportCap, // most-severe-first cap 4/8/10/15
   }
   return runLens(reviewTemplate, ctx, makeLensDeps(opts))
 }
@@ -277,11 +308,12 @@ export function createLensHandle(deps: LensHandleDeps): PanelHandle {
         }
       }
 
-      // REVIEW: the caller's own uncommitted changes to these paths (working tree vs HEAD). Compute the diff
-      // ONCE here and pin it — the engine inlines it into every finder/skeptic (Workflow's "Scope: pin the diff"),
-      // so they review the focused change instead of self-reading the whole repo. diffSince truncates to a cap.
+      // REVIEW: gather the review scope diff exactly like Workflow Phase 0 — the COMMITTED range (@{upstream}...
+      // HEAD, fallback main...HEAD / HEAD~1) UNIONed with `git diff HEAD` (uncommitted). Pinned once + inlined
+      // into every finder/skeptic (Workflow "Scope: pin the diff"). This fixes the prior gap where a committed-
+      // but-unpushed change produced an empty `git diff HEAD` and the finders fell back to whole-file reads.
       const base = await gitHead(deps.cwd)
-      const diff = base ? await diffSince(deps.cwd, base, paths) : ''
+      const diff = await gatherReviewDiff(deps.cwd, paths)
       const outcome = await runConsolidatedReview(
         opts,
         deps.callerRoleId,

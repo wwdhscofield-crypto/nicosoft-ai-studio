@@ -13,7 +13,7 @@ import * as rolesService from '../roles.service'
 import { runRoleStep, LensStallError, type RunStepOptions } from '../coordinator-step'
 import { chatOnce, endpointWithKey } from '../llm-once'
 import { resolveDepth } from '../../llm/thinking'
-import { subjectExaminePrompt, refutePrompt, reverifyPrompt, COORDINATOR_VERIFIER_PROMPT } from '../../agent/roles/prompts'
+import { subjectExaminePrompt, refutePrompt, refutePromptPrecision, reverifyPrompt, COORDINATOR_VERIFIER_PROMPT } from '../../agent/roles/prompts'
 import { lensRunStepOptions } from './runstep'
 import type { LensDeps } from './engine'
 
@@ -28,6 +28,7 @@ function buildPersona(name: string, focus: string): string {
   switch (name) {
     case 'subjectExaminePrompt': return subjectExaminePrompt(focus)
     case 'refutePrompt': return refutePrompt(focus)
+    case 'refutePromptPrecision': return refutePromptPrecision(focus)
     case 'reverifyPrompt': return reverifyPrompt(focus)
     case 'READER_SYSTEM': return READER_SYSTEM
     case 'COORDINATOR_VERIFIER_PROMPT': return COORDINATOR_VERIFIER_PROMPT

@@ -22,8 +22,7 @@ export interface Finding {
   file?: string // file the defect lives in
   line?: number // line within the file
   severity: Severity
-  confidence?: Severity // the finder's self-assessed confidence this candidate is REAL (NOT severity = how bad IF real) — drives refute DEPTH: low → more skeptics, high → fewer
-  mechanism: string // the concrete failure path (the finder's evidence for this candidate)
+  mechanism: string // the concrete failure path (the finder's evidence for this candidate; the wire field is `failure_scenario`)
   refuted?: boolean // per-candidate refute: a majority of skeptics could not confirm it → dropped as a false alarm
   refuteYes?: number // skeptics who could NOT confirm the candidate (→ refute)
   refuteTotal?: number // total skeptic votes that landed for this candidate
@@ -61,22 +60,12 @@ export function normSeverity(s: unknown): Severity {
   return 'med'
 }
 
-// The finder's self-assessed confidence a candidate is a REAL defect (distinct from severity = how bad IF real).
-// Drives how hard the refute stage vets it: low confidence → MORE skeptics (likelier a false alarm), high → fewer
-// (it will survive anyway). 'med' when the finder omits it (a safe middle). Same high/med/low scale as severity.
-export function normConfidence(s: unknown): Severity {
-  const v = String(s ?? '').toLowerCase()
-  if (v === 'high' || v === 'certain' || v === 'sure') return 'high'
-  if (v === 'low' || v === 'unsure' || v === 'tentative' || v === 'maybe') return 'low'
-  return 'med'
-}
-
 // Parse the finder's machine contract: a fenced ```findings JSON array of candidate defects. Returns null when
-// no parseable block is present (the caller then DEGRADES to the binary VERDICT). Caps the list at 6 (the
-// Workflow `code-review` finder cap — "up to 6 candidate findings", cc 2.1.186) so a runaway reply can't bloat
-// the candidate × skeptic fan-out; each field is length-capped too. The finder persona already asks for ≤6
-// most-severe-first, so this is the structural backstop, not the primary bound.
-export function parseFindings(text: string, lens: string): Finding[] | null {
+// no parseable block is present (the caller then DEGRADES to the binary VERDICT). `cap` is the effort tier's
+// per-finder candidate cap (Workflow: ≤4 low / ≤6 medium-high / ≤8 xhigh-max) so a runaway reply can't bloat the
+// candidate × skeptic fan-out. WIRE FIELDS match Workflow's finder shape — `summary` + `failure_scenario` — and
+// map to the internal `title` + `mechanism` (older `title`/`mechanism` keys still accepted for robustness).
+export function parseFindings(text: string, lens: string, cap = 6): Finding[] | null {
   const m = /```findings\s*([\s\S]*?)```/i.exec(text)
   if (!m) return null
   let arr: unknown
@@ -87,9 +76,9 @@ export function parseFindings(text: string, lens: string): Finding[] | null {
   }
   if (!Array.isArray(arr)) return null
   const out: Finding[] = []
-  for (let i = 0; i < arr.length && out.length < 6; i++) {
+  for (let i = 0; i < arr.length && out.length < cap; i++) {
     const x = arr[i] as Record<string, unknown>
-    const title = String(x?.title ?? '').trim().slice(0, 240)
+    const title = String(x?.summary ?? x?.title ?? '').trim().slice(0, 240)
     if (!title) continue
     out.push({
       lens,
@@ -98,8 +87,7 @@ export function parseFindings(text: string, lens: string): Finding[] | null {
       file: typeof x?.file === 'string' ? x.file.trim().slice(0, 240) : undefined,
       line: typeof x?.line === 'number' && Number.isFinite(x.line) ? x.line : undefined,
       severity: normSeverity(x?.severity),
-      confidence: normConfidence(x?.confidence),
-      mechanism: String(x?.mechanism ?? '').trim().slice(0, 1600)
+      mechanism: String(x?.failure_scenario ?? x?.mechanism ?? '').trim().slice(0, 1600)
     })
   }
   return out
