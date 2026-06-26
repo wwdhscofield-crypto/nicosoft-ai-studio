@@ -432,6 +432,14 @@ function LiveCard({ tool }: { tool: ToolCall }): ReactElement {
                     <CandidateRow key={c.id} cand={c} skeptics={skepticsByFinding.get(subjInput(c).findingId ?? '') ?? []} />
                   ))}
                 </>
+              ) : allSkeptics.length > 0 ? (
+                // No separate 'Finding' candidate cards are emitted (a script's findings are data, not agents), so the
+                // verify skeptics have no CandidateRow to nest under — render them DIRECTLY here, else they're counted
+                // in the header (agentN) but never shown (header said 11 agents while the body listed only 9).
+                <>
+                  <PhaseHeader label="Verify" done={allSkeptics.filter(isDone).length} total={allSkeptics.length} />
+                  {allSkeptics.map((s, i) => <SkepticLine key={s.id} tool={s} idx={i} />)}
+                </>
               ) : null}
               {synth ? (
                 <>
