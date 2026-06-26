@@ -110,7 +110,7 @@ function verbDone(t: ToolCall): string {
     case 'StudioLens': return 'Examined across perspectives'
     case 'Subject': return 'Reviewed a perspective'
     case 'SubjectRefute': return 'Cross-checked a finding'
-    case 'studio_lens': return 'Ran a panel review'
+    case 'studio_lens': return 'Ran a Studio Lens review'
     default: return t.name
   }
 }
@@ -138,7 +138,7 @@ function verbLive(t: ToolCall): string {
     case 'StudioLens': return 'Examining across perspectives'
     case 'Subject': return 'Reviewing a perspective'
     case 'SubjectRefute': return 'Cross-checking a finding'
-    case 'studio_lens': return 'Running a panel review'
+    case 'studio_lens': return 'Running a Studio Lens review'
     default: return `Running ${t.name}`
   }
 }
