@@ -11,6 +11,12 @@ import type { ChatSendInput, ChatCompressInput } from './contracts'
 // The boundary owns stream lifecycle (id + AbortController); it never touches the DB.
 const streams = new Map<string, AbortController>()
 
+// Abort every in-flight chat stream on app quit — see index.ts before-quit (clean teardown of live LLM streams so
+// the process exits instead of hanging on open sockets and being SIGKILL'd).
+export function abortAllChatRuns(): void {
+  for (const controller of streams.values()) controller.abort()
+}
+
 export function registerChatHandlers(): void {
   ipcMain.handle('chat:send', (e, input: ChatSendInput): { streamId: string } => {
     const streamId = ulid()

@@ -3,7 +3,7 @@ import { join } from 'path'
 import { existsSync, renameSync, readFileSync, writeFileSync } from 'node:fs'
 import { getDb } from './db/connection'
 import * as settingsService from './services/settings.service'
-import { registerIpc } from './ipc/register'
+import { registerIpc, abortAllRuns } from './ipc/register'
 import { registerMediaProtocol, MEDIA_PRIVILEGED_SCHEME } from './media/protocol'
 import { startMemoryMaintenance } from './services/memory.service'
 import { connectEnabled as connectMcpServers } from './services/mcp.service'
@@ -252,6 +252,12 @@ app.on('window-all-closed', () => {
 // Backstop for e2e_browser sessions on quit: per-run reclaim (agent.service finally) covers normal run
 // endings; this covers quitting mid-run so no Playwright child outlives the app.
 app.on('before-quit', () => {
+  // FIRST: abort every in-flight run (chat + solo-agent + coordinator/collab) so its live LLM fetch streams tear
+  // down at once. Those open sockets are active libuv handles that otherwise keep the process alive past the quit
+  // → the app hangs and is SIGKILL'd (dogfood57: quit during a 128-min Studio Lens fan-out → 2s hang → SIGKILL).
+  // Before this, teardown relied solely on the renderer's window-`destroyed` firing each stream's abort — which a
+  // busy renderer delays. Proactively aborting here makes the main process release everything and exit cleanly.
+  abortAllRuns()
   void disposeAllE2ESessions()
   disposeAllTerminals() // kill any live pty so no shell outlives the app
   disposeAllActiveServices() // tree-kill detached dev servers so none outlive the app holding ports

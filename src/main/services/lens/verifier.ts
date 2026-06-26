@@ -117,9 +117,6 @@ export async function runVerifierStep(implementerRoleId: string | string[], opts
       // into that segment as a PanelCard row (via the sub_tool card above), never a separate prose segment.
       segmentKind: subject ? undefined : 'verifier',
       quiet: Boolean(subject),
-      // Stream the subject finder's reasoning live onto its card row (workflow parity); the floor verifier
-      // (no card) and the quiet integrator re-verify (no card) pass none.
-      streamCard: emitCard ? { toolUseId: toolId, parentToolId } : undefined,
       // P4 watchdog: bound a panel SUBJECT (finder/skeptic) run so a frozen LLM stream can't hang the find/refute
       // barrier forever. The FLOOR verifier (no subject) is exempt — it may run a long, silent build.
       stallTimeoutMs: subject ? EXAMINE_SUBJECT_STALL_MS : undefined,

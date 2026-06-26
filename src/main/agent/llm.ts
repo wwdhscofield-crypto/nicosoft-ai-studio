@@ -61,7 +61,8 @@ export type AgentLlmEvent =
   | { type: 'tool_use_input'; id: string; delta: string }
   | { type: 'sub_tool_start'; parentToolId: string; toolUseId: string; name: string; input?: Record<string, unknown>; subAgentId?: string }
   | { type: 'sub_tool_done'; parentToolId: string; toolUseId: string; name: string; result?: unknown; isError?: boolean; input?: Record<string, unknown>; subAgentId?: string }
-  | { type: 'sub_tool_delta'; parentToolId: string; toolUseId: string; delta: string; subAgentId?: string } // a quiet sub-agent's live text (panel finder/skeptic/reader) → streamed onto its card row (workflow /workflows parity)
+  | { type: 'sub_tool_delta'; parentToolId: string; toolUseId: string; delta: string; subAgentId?: string } // DORMANT (no producer): a quiet sub-agent's live text. Removed because Workflow's real contract RETURNS a subagent's output to the script, never streams it token-by-token to the UI (verified in cc 2.1.186) — the lens firehose is gone (coordinator-step.ts). Type + forwarders/consumer remain inert; safe to strip wholesale.
+  | { type: 'sub_tool_progress'; parentToolId: string; toolUseId: string; tool: string; summary?: string } // COARSE per-tool liveness for a quiet sub-agent's card row — the Workflow `lastToolName`/`lastToolSummary` parity: ONE event per tool call (e.g. "Read foo.ts"), NOT per token. Replaces the removed per-token firehose as the lens card's live signal.
   | { type: 'usage'; inputTokens: number; outputTokens: number; cachedTokens?: number } // in-flight request's REAL usage per chunk; cachedTokens = cache-read share of inputTokens (cache-aware split in the ↑ readout)
   | { type: 'turn-final'; usage: FinalUsage } // exactly-once final usage for accumulation
   | { type: 'reasoning'; delta: string } // the model's VISIBLE thinking — Anthropic extended-thinking text / OpenAI reasoning-summary text — streamed to a distinct UI "Thinking" block (parity with the 'text' channel)

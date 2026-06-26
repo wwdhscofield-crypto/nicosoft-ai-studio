@@ -66,7 +66,7 @@ export interface StepSpec {
   majority?: number
   votersByConfidence?: Record<string, number> // refute DEPTH per candidate: finder-confidence → skeptic count (model-decided depth vs a flat `voters`); majority derives from the count unless `majority` is set
   failVote?: 'uphold' | 'refute'
-  retries?: number // finder: extra attempts on a non-contracted reply before DROP (default 1 → 2 attempts total); a template knob, not a welded constant
+  retries?: number // finder: EXTRA attempts on a non-contracted reply before DROP (default 4 → 5 attempts total, = Workflow's retry cap OBp/GKa=5); a template knob, not a welded constant
   stallMs?: number // per-step liveness budget (delta-stall watchdog ms): overrides the run-level ctx.stallTimeoutMs, then the LENS_STALL_MS default
   loop?: LoopSpec
 }
@@ -87,7 +87,7 @@ export interface AgentSpec {
   system: string
   toolNames: readonly string[]
   stallTimeoutMs?: number
-  streamCard?: { toolUseId: string; parentToolId: string }
+  progressCard?: { toolUseId: string; parentToolId: string } // #8: card id for COARSE per-tool liveness (lastToolName) on this agent's row
 }
 export interface AgentOut {
   text: string
@@ -508,14 +508,17 @@ async function runFinder(
   // subjectExaminePrompt(focus); honor an explicit `system:` if a future template sets one.
   const system = step.system ? personaFor(step.system, itemScope, deps) : deps.persona('subjectExaminePrompt', focus)
   const prompt = interpolate(step.prompt ?? '', itemScope)
-  const retries = step.retries ?? 1 // extra attempts on a non-contracted reply before DROP (default 1 → 2 attempts); template knob
+  // #10 Workflow parity: a finder gets up to 5 ATTEMPTS on a non-contracted reply before DROP — matching Workflow's
+  // retry cap of 5 (cc 2.1.186: MAX_STRUCTURED_OUTPUT_RETRIES `OBp=5`, the same 5 as the stall `GKa`). `retries` is
+  // EXTRA attempts beyond the first, so 4 → 5 total. Still a template knob (review.yaml doesn't set it → this default).
+  const retries = step.retries ?? 4
   let inTok = 0
   let outTok = 0
   for (let attempt = 0; attempt <= retries; attempt++) {
     let out: AgentOut
     try {
       // P4 watchdog applies to finders by default (LENS_STALL_MS) — never rely on the caller to set it.
-      out = await deps.runAgent({ roleId, prompt, system, toolNames: kit, stallTimeoutMs: stallFor(step), streamCard: { toolUseId: toolId, parentToolId: panelId } })
+      out = await deps.runAgent({ roleId, prompt, system, toolNames: kit, stallTimeoutMs: stallFor(step), progressCard: { toolUseId: toolId, parentToolId: panelId } })
     } catch (e) {
       const feedback = `subject verifier infra failure: ${e instanceof Error ? e.message : e}`
       deps.cb.onToolEvent?.(roleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: panelId, name: 'Subject', isError: true, result: feedback })
@@ -543,7 +546,9 @@ async function runFinder(
           ? []
           : [{ lens: lens.key, id: `${lens.key}-0`, title: firstLine || `${lens.key} concern`, severity: normSeverity(undefined), mechanism: text.slice(0, 1600) }]
     for (const c of candidates) c.focus = focus // carry the lens focus for the refute persona
-    deps.cb.onToolEvent?.(roleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: panelId, name: 'Subject', isError: !passed, result: text })
+    // tokens: this finder's output tokens → shown on its card row (Workflow /workflows parity: a per-agent token
+    // count). Merged onto the start input (lens/focus) by the renderer, never summed into the header (no balloon).
+    deps.cb.onToolEvent?.(roleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: panelId, name: 'Subject', isError: !passed, result: text, input: { tokens: outTok } })
     return { ...base, produced: true, passed: candidates.length === 0, feedback: text, candidates, inputTokens: inTok, outputTokens: outTok }
   }
   // both attempts non-contracted with no usable text
@@ -556,13 +561,15 @@ async function runReader(step: StepSpec, deps: LensDeps, path: string, as: strin
   const toolId = readerCardId(index, stepId)
   deps.cb.onToolEvent?.(roleId, { type: 'sub_tool_start', toolUseId: toolId, parentToolId: panelId, name: 'Subject', input: { subject: path, phase: 'read', mode: 'understand' } })
   let summary = ''
+  let readerTokens = 0
   try {
-    const out = await deps.runAgent({ roleId, prompt, system: step.system ? personaFor(step.system, { steps: {}, ctx: {} }, deps) : prompt, toolNames: kit, stallTimeoutMs: stallFor(step), streamCard: { toolUseId: toolId, parentToolId: panelId } })
+    const out = await deps.runAgent({ roleId, prompt, system: step.system ? personaFor(step.system, { steps: {}, ctx: {} }, deps) : prompt, toolNames: kit, stallTimeoutMs: stallFor(step), progressCard: { toolUseId: toolId, parentToolId: panelId } })
     summary = out.text.trim()
+    readerTokens = out.outputTokens
   } catch (e) {
     summary = `(could not read — ${e instanceof Error ? e.message : String(e)})`
   }
-  deps.cb.onToolEvent?.(roleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: panelId, name: 'Subject', isError: false, input: { subject: path, phase: 'read', mode: 'understand', verdict: 'read' }, result: summary || '(no summary)' })
+  deps.cb.onToolEvent?.(roleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: panelId, name: 'Subject', isError: false, input: { subject: path, phase: 'read', mode: 'understand', verdict: 'read', tokens: readerTokens }, result: summary || '(no summary)' })
   const emitAs = step.emit?.as ?? 'summary'
   return { [as]: path, [emitAs]: summary }
 }
@@ -643,7 +650,7 @@ async function runRefuteVote(step: StepSpec, ctx: LensContext, deps: LensDeps, c
   const failRefuted = step.failVote === 'refute'
   let out: AgentOut
   try {
-    out = await deps.runAgent({ roleId, prompt, system, toolNames: kit, stallTimeoutMs: stallFor(step), streamCard: { toolUseId: toolId, parentToolId: panelId } })
+    out = await deps.runAgent({ roleId, prompt, system, toolNames: kit, stallTimeoutMs: stallFor(step), progressCard: { toolUseId: toolId, parentToolId: panelId } })
   } catch (e) {
     deps.cb.onToolEvent?.(roleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: panelId, name: 'SubjectRefute', isError: true, input: { phase: 'verify', findingId: cand.id, voter, vote: 'failed' }, result: `refute vote failed: ${e instanceof Error ? e.message : e}` })
     return { refuted: failRefuted, inputTokens: 0, outputTokens: 0 }
@@ -651,7 +658,7 @@ async function runRefuteVote(step: StepSpec, ctx: LensContext, deps: LensDeps, c
   const text = out.text.trim()
   const contracted = [...text.matchAll(REFUTE_RE)].pop()?.[1]
   const refuted = contracted ? contracted.toUpperCase() === 'YES' : failRefuted
-  deps.cb.onToolEvent?.(roleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: panelId, name: 'SubjectRefute', isError: false, input: { phase: 'verify', findingId: cand.id, voter, vote: refuted ? 'refute' : 'uphold' }, result: text || 'no vote' })
+  deps.cb.onToolEvent?.(roleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId: panelId, name: 'SubjectRefute', isError: false, input: { phase: 'verify', findingId: cand.id, voter, vote: refuted ? 'refute' : 'uphold', tokens: out.outputTokens }, result: text || 'no vote' })
   return { refuted, inputTokens: out.inputTokens, outputTokens: out.outputTokens }
 }
 

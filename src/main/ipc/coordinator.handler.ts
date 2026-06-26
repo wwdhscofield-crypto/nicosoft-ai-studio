@@ -41,6 +41,10 @@ import type {
 } from './contracts'
 
 const streams = new StreamRegistry()
+// Abort every in-flight coordinator run on app quit — see index.ts before-quit (clean teardown of live LLM streams).
+export function abortAllCoordinatorRuns(): void {
+  streams.abortAll()
+}
 // Dispatched-tool approvals (phase 2 still pop to the user — doc 19 §14), mirroring agent.handler: one
 // settle() per permissionId + the set of ids per run, so a terminal event can deny any prompt the
 // renderer never answered.
@@ -121,6 +125,8 @@ export function registerCoordinatorHandlers(): void {
               send('coordinator:sub-tool:done', { streamId, roleId, ...evt })
             } else if (evt.type === 'sub_tool_delta') {
               send('coordinator:sub-tool:delta', { streamId, roleId, ...evt })
+            } else if (evt.type === 'sub_tool_progress') {
+              send('coordinator:sub-tool:progress', { streamId, roleId, ...evt })
             } else if (evt.type === 'assistant') {
               const blocks: AgentBlockDto[] = []
               for (const b of evt.message.content) {

@@ -32,6 +32,26 @@ import {
 import { coordinatorApproval } from './coordinator-approvals'
 import type { CoordinatorCallbacks } from './coordinator-types'
 
+// #6 Workflow parity (cc 2.1.186 `GKa=5`): the P4 stall-watchdog abort is RETRYABLE — Workflow re-runs a stalled
+// agent up to 5× before giving up. runRoleStep surfaces a stall (the watchdog fired, NOT a real user/run abort) as
+// this typed throw so the lens chokepoint (makeLensDeps.runAgent) can catch + retry; any other error/abort is terminal.
+export class LensStallError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'LensStallError'
+  }
+}
+
+// #8: a short hint from a tool's input for the coarse card row (Workflow's lastToolSummary) — the first non-empty
+// string field, clipped. Read→file_path, Grep→pattern, Bash→command, Glob→pattern. Best-effort; undefined if none.
+function toolInputHint(input: unknown): string | undefined {
+  if (!input || typeof input !== 'object') return undefined
+  for (const v of Object.values(input as Record<string, unknown>)) {
+    if (typeof v === 'string' && v.trim()) return v.trim().replace(/\s+/g, ' ').slice(0, 60)
+  }
+  return undefined
+}
+
 // Pipeline-shared todos, keyed by convId: a coordinator turn's dispatched experts (Flynn → Shuri → …) all
 // read + write this ONE list, so the team's TodoWrite progress is continuous instead of each expert keeping a
 // private list that strands the others' tasks (Shuri's run inherits Flynn's items + updates the SAME ones).
@@ -103,9 +123,11 @@ export interface RunStepOptions {
   // renders the work via an explicit sub_tool card instead (panel subjects / refute votes fold into the
   // verifier segment as PanelCard rows, never as their own prose segments). Usage is still recorded (billing).
   quiet?: boolean
-  // When a quiet step represents a panel sub-agent (a card row), stream its TEXT deltas to that card as
-  // sub_tool_delta events (workflow /workflows parity — watch each finder/skeptic reason live). Absent → no stream.
-  streamCard?: { toolUseId: string; parentToolId: string }
+  // #8 Workflow parity: a quiet sub-agent's (lens finder/skeptic/reader) card row gets COARSE per-tool liveness —
+  // each time its turn calls a tool we emit ONE sub_tool_progress with the tool name + a short input hint (the
+  // Workflow `lastToolName`/`lastToolSummary`), so the row reads "Read foo.ts" while it works. NOT per-token (that
+  // was the removed firehose). Absent → no live signal (static "finding…"). The card id the engine assigned.
+  progressCard?: { toolUseId: string; parentToolId: string }
   // Delta-stall watchdog (P4): abort this run if it emits NO stream event for this many ms (a frozen LLM stream
   // would otherwise hang the examine Promise.all barrier forever — examine/ has no timeout anywhere). Resets on
   // every stream event, so a slow-but-active run is never killed — only a truly frozen one. Set by examine
@@ -123,7 +145,7 @@ export function withCoordinatorContext(base: string, memories: MemoryRow[], summ
 }
 
 export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; reason: AgentResult['reason']; inputTokens: number; outputTokens: number; endpointId: string; model: string; writtenFiles: WrittenFile[] }> {
-  const { convId, roleId, prompt, dispatch, cb, signal, cwd, includeHistory = false, isSynthesis = false, isDirect = false, isParallelSynthesis = false, isCouncilSynthesis = false, quiet = false, segmentKind, streamCard } = opts
+  const { convId, roleId, prompt, dispatch, cb, signal, cwd, includeHistory = false, isSynthesis = false, isDirect = false, isParallelSynthesis = false, isCouncilSynthesis = false, quiet = false, segmentKind, progressCard } = opts
   const binding = rolesService.getBinding(roleId)
   if (!binding?.endpointId || !binding.model) {
     throw new LlmError('bad_request', `role "${roleId}" has no endpoint binding`)
@@ -174,23 +196,33 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
     const stallMs = opts.stallTimeoutMs
     const stallCtrl = stallMs ? new AbortController() : undefined
     let stallTimer: ReturnType<typeof setTimeout> | undefined
+    // #5 Workflow parity (cc 2.1.186): PAUSE the stall watchdog while tools execute. Workflow clears its stall
+    // timer the instant an assistant turn calls a tool and re-arms only when the tool_result returns (its `rt`
+    // in-flight set) — so a long read-only tool (a big-repo `git diff`/grep) is never miscounted as a frozen
+    // stream. Without this a finder/skeptic whose tool ran > stallMs was wrongly killed.
+    let toolsInFlight = 0
     const armStall = (): void => {
       if (!stallMs) return
       if (stallTimer) clearTimeout(stallTimer)
+      if (toolsInFlight > 0) { stallTimer = undefined; return } // paused: a tool is executing, not a frozen stream
       stallTimer = setTimeout(() => stallCtrl!.abort(new Error(`examine stall: no stream activity for ${stallMs}ms`)), stallMs)
     }
     armStall()
     const runSignal = stallCtrl ? AbortSignal.any([signal, stallCtrl.signal]) : signal
     const agentCb: agentService.AgentCallbacks = {
       onStream: (ev) => {
-        armStall() // any stream activity = the run is alive → reset the delta-stall watchdog
-        // quiet (closure-loop): card-only step — accumulate text for the return value (it becomes the caller's
-        // sub_tool card result) but forward NOTHING to the renderer (no segment to stream into; the inner loop's
-        // deltas + its own tool cards must not leak onto the verifier segment).
+        if (ev.type === 'tool_use_start') toolsInFlight++ // #5: a tool call began → armStall() below keeps the watchdog PAUSED
+        armStall() // stream activity = the run is alive → reset the watchdog (or, while tools execute, hold it paused)
+        // quiet (lens sub-agent / panel finder·skeptic·reader): accumulate text into the RETURN value only — it
+        // becomes the engine's parsed finder/skeptic verdict — and forward NOTHING to the renderer. This is the
+        // Workflow contract (verified against the real Workflow tool in cc 2.1.186): a workflow subagent's output
+        // is RETURNED to the orchestration script, NEVER streamed token-by-token to the UI; /workflows shows only
+        // COARSE per-agent status. The lens card renders start→done + verdict from the engine's own sub_tool
+        // events. (Removed: the per-token sub_tool_delta firehose — 190 sub-agents × every token through IPC was
+        // a studio-only divergence from Workflow, and the most likely cause of the renderer freeze on big reviews.)
         if (ev.type === 'text') {
           text += ev.delta
           if (!quiet) cb.onDelta(roleId, ev.delta)
-          else if (streamCard) cb.onToolEvent?.(roleId, { type: 'sub_tool_delta', parentToolId: streamCard.parentToolId, toolUseId: streamCard.toolUseId, delta: ev.delta })
         } else if (ev.type === 'reasoning') {
           // VISIBLE thinking → its own Thinking block; never folded into `text` (the answer) and never leaked onto a quiet verifier segment.
           if (!quiet) cb.onReasoning?.(roleId, ev.delta)
@@ -206,7 +238,17 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
           cb.onTurnFinalUsage?.(ev.usage)
         }
       },
-      onEvent: (ev) => { if (!quiet) cb.onToolEvent?.(roleId, ev) },
+      onEvent: (ev) => {
+        if (ev.type === 'tool_results') { toolsInFlight = 0; armStall() } // #5: this turn's tools all returned → resume the stall watchdog
+        // #8: coarse per-tool liveness — when a QUIET sub-agent's assistant turn calls a tool, surface that tool's
+        // name + a short input hint on its card row (Workflow lastToolName/lastToolSummary; ONE event per turn).
+        if (ev.type === 'assistant' && quiet && progressCard) {
+          const blocks = ev.message.content as Array<{ type?: string; name?: string; input?: unknown }>
+          const lastTool = [...blocks].reverse().find((b) => b?.type === 'tool_use')
+          if (lastTool?.name) cb.onToolEvent?.(roleId, { type: 'sub_tool_progress', parentToolId: progressCard.parentToolId, toolUseId: progressCard.toolUseId, tool: lastTool.name, summary: toolInputHint(lastTool.input) })
+        }
+        if (!quiet) cb.onToolEvent?.(roleId, ev)
+      },
       onUsage: (inputTokens) => { if (!quiet) cb.onUsage?.(roleId, inputTokens) }, // bridge the agent loop's live ↑ to this segment's readout
       onToolImage: (att) => cb.onToolImage?.(att), // a dispatched Georgia generated an image → surface it live
       // phase 4: coordinator self-approves via the safety classifier instead of popping the user (doc §8) —
@@ -253,6 +295,12 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
       agentCb,
       runSignal
     ).finally(() => { if (stallTimer) clearTimeout(stallTimer) })
+    // #6: the P4 stall watchdog fired (stallCtrl aborted) while the caller's OWN signal did not → surface a
+    // retryable LensStallError so the lens chokepoint re-runs this finder/skeptic (Workflow GKa=5). A real
+    // user/run abort (signal.aborted) is terminal and falls through to the normal aborted-result handling below.
+    if (stallCtrl?.signal.aborted && !signal.aborted) {
+      throw new LensStallError(`examine stall: no stream activity for ${stallMs}ms`)
+    }
     text = res.text
     // The loop guard wound this step down after repeated identical failures (loop.ts thrash guard).
     // Label the text so every downstream reader — the persisted message, synthesis, Gate B's verifier

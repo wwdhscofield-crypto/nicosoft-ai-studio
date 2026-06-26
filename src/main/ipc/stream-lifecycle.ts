@@ -57,6 +57,15 @@ export class StreamRegistry {
     this.streams.get(streamId)?.controller.abort()
   }
 
+  // Abort EVERY in-flight run at once. Called from app `before-quit` so a quit proactively tears down all live
+  // agent loops + their LLM fetch streams (open sockets = active libuv handles that otherwise keep the process
+  // alive). Without this, a quit while a big fan-out is in flight (8 concurrent streams + a parked collab expert)
+  // relied solely on the renderer's window-`destroyed` event to fire each onGone — which a busy renderer can
+  // delay — so the process hung past the quit and was SIGKILL'd. Aborting here unblocks a clean exit immediately.
+  abortAll(): void {
+    for (const { controller } of this.streams.values()) controller.abort()
+  }
+
   // Remove the registry entry early (e.g. an explicit :stop) — finish() later is a harmless no-op delete.
   drop(streamId: string): void {
     this.streams.delete(streamId)

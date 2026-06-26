@@ -1,11 +1,11 @@
-import { registerAgentHandlers } from './agent.handler'
-import { registerCoordinatorHandlers } from './coordinator.handler'
+import { registerAgentHandlers, abortAllAgentRuns } from './agent.handler'
+import { registerCoordinatorHandlers, abortAllCoordinatorRuns } from './coordinator.handler'
 import { registerConversationHandlers } from './conversations.handler'
 import { registerEndpointHandlers } from './endpoints.handler'
 import { registerProjectHandlers } from './project.handler'
 import { registerRoleHandlers } from './roles.handler'
 import { registerSettingsHandlers } from './settings.handler'
-import { registerChatHandlers } from './chat.handler'
+import { registerChatHandlers, abortAllChatRuns } from './chat.handler'
 import { registerMemoryHandlers } from './memory.handler'
 import { registerMediaHandlers } from './media.handler'
 import { registerFsHandlers } from './fs.handler'
@@ -43,4 +43,15 @@ export function registerIpc(): void {
   registerAnalyticsHandlers()
   registerServiceHandlers()
   registerUpdateHandlers()
+}
+
+// app `before-quit`: proactively abort EVERY in-flight run (chat + solo-agent + coordinator/collab) so a quit
+// taken mid-fan-out tears down its live LLM fetch streams immediately. Those open sockets are active libuv handles
+// that otherwise keep the process alive past the quit → the app hangs and gets SIGKILL'd (dogfood57: a 128-min
+// Studio Lens review with 8 concurrent streams + a parked collab expert; quit → 2s hang → SIGKILL). Synchronous +
+// idempotent; safe to call once on before-quit.
+export function abortAllRuns(): void {
+  abortAllChatRuns()
+  abortAllAgentRuns()
+  abortAllCoordinatorRuns()
 }

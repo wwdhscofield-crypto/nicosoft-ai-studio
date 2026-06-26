@@ -10,8 +10,9 @@
 //   • PERSISTED result view (findingsCard, rebuilt from history) — one row per CONFIRMED/refuted candidate
 //     with its verdict + skeptic tally. The live streams aren't persisted, so the durable card is the result.
 //
-// Token discipline (studio-lens §4.4): the header shows ONLY agent COUNTS, never a token sum — that summing
-// was the "↑48.1m" balloon root. No per-row token readout either, so the card structurally cannot balloon.
+// Token discipline (studio-lens §4.4): the header shows ONLY agent COUNTS, never a token SUM — that summing was
+// the "↑48.1m" balloon root. Per-ROW token counts ARE shown (Workflow /workflows parity: a per-agent token
+// readout) — one agent's own output count cannot balloon, and the header still never sums them.
 
 import { useState } from 'react'
 import type { ReactElement } from 'react'
@@ -38,15 +39,18 @@ interface SubjectInput {
   findingId?: string // groups a candidate's refute skeptics to it (live verify phase)
   voter?: number // skeptic index (live verify phase)
   vote?: string // refute | uphold | failed (a single skeptic's verdict, live)
+  tokens?: number // this agent's output-token count, set on its done event — the Workflow per-agent token readout
+  lastTool?: string // #8: the tool this agent is CURRENTLY running (Workflow lastToolName) — coarse per-tool liveness
+  lastToolSummary?: string // #8: a short hint of that tool's input (Workflow lastToolSummary), e.g. the file/pattern/command
 }
 const subjInput = (t: ToolCall | undefined): SubjectInput => ((t?.input ?? {}) as SubjectInput)
 const firstLine = (s?: string): string => (s ?? '').split('\n').map((x) => x.trim()).find(Boolean) ?? ''
-// The live tail of a streaming sub-agent (last non-empty line, clipped) — shown while it runs so each finder /
-// skeptic / reader is watchable as it reasons, like the Workflow /workflows view. '' until the first delta lands.
-const streamTail = (t?: ToolCall): string => {
-  const line = (t?.stream ?? '').split('\n').map((x) => x.trim()).filter(Boolean).pop() ?? ''
-  return line.length > 140 ? '…' + line.slice(-138) : line
-}
+// Per-agent token readout (Workflow /workflows parity: "a status line + token count per agent"). Per-ROW only —
+// never summed into the header (that header SUM was the old "↑48.1m" balloon; one agent's own count cannot balloon).
+const fmtTokens = (n?: number): string => (n && n > 0 ? (n >= 1000 ? `${(n / 1000).toFixed(1)}k tok` : `${n} tok`) : '')
+// #8 Workflow lastToolName/lastToolSummary — the agent's live "what it's doing now" (e.g. "Read foo.ts"), shown
+// while the row runs in place of a static "finding…". '' until its first tool call lands.
+const toolHint = (inp: SubjectInput): string => (inp.lastTool ? (inp.lastToolSummary ? `${inp.lastTool} ${inp.lastToolSummary}` : inp.lastTool) : '')
 
 // A subject's display state: queued (no event yet) → examining (running) → its PASS/FAIL, refined to the
 // final verdict (fixed / false-positive / unresolved / unverified) once closure re-emits it.
@@ -224,7 +228,7 @@ function FinderRow({ lens, tool, cands }: { lens: string; tool?: ToolCall; cands
       ? `found ${cands.length} candidate${cands.length === 1 ? '' : 's'}`
       : `${cands.length} candidate${cands.length === 1 ? '' : 's'} · ${confirmed} confirmed${refuted ? `, ${refuted} refuted` : ''}`
   const summary = examining
-    ? streamTail(tool) || 'finding…'
+    ? (toolHint(inp) || 'finding…')
     : queued
       ? 'queued'
       : hasVerdict
@@ -238,6 +242,7 @@ function FinderRow({ lens, tool, cands }: { lens: string; tool?: ToolCall; cands
         {examining ? <span className="tr-dot pe-row-dot" /> : null}
         <span className="pe-subject">{lens}</span>
         <span className="pe-summary">{summary}</span>
+        {done && inp.tokens ? <span className="pe-meta">{fmtTokens(inp.tokens)}</span> : null}
         {done && hasVerdict ? <span className={'pe-verdict ' + verdictClass(state)}>{VERDICT_LABEL[state]}</span> : null}
         {done && tool?.result ? <button className="pe-viewfull" onClick={() => setOpen((o) => !o)}>{open ? 'Hide' : 'View full'}</button> : null}
       </div>
@@ -284,7 +289,8 @@ function SkepticLine({ tool, idx }: { tool: ToolCall; idx: number }): ReactEleme
         {running ? <span className="tr-dot pe-row-dot" /> : null}
         <span className="pe-skeptic-n">skeptic {idx + 1}</span>
         <span className={'pe-vote ' + voteCls}>{voteLabel}</span>
-        <span className="pe-summary">{running ? streamTail(tool) : firstLine(tool.result)}</span>
+        <span className="pe-summary">{running ? toolHint(inp) : firstLine(tool.result)}</span>
+        {!running && inp.tokens ? <span className="pe-meta">{fmtTokens(inp.tokens)}</span> : null}
         {tool.result && !running ? <button className="pe-viewfull" onClick={() => setOpen((o) => !o)}>{open ? 'Hide' : 'why'}</button> : null}
       </div>
       {open && tool.result ? <div className="tb-md pe-payload"><Markdown>{tool.result}</Markdown></div> : null}
@@ -321,7 +327,8 @@ function ReaderRow({ path, tool }: { path: string; tool?: ToolCall }): ReactElem
       <div className={'pe-row pe-read' + (queued ? ' queued' : '')}>
         {examining ? <span className="tr-dot pe-row-dot" /> : null}
         <span className="pe-subject">{path}</span>
-        <span className="pe-summary">{examining ? streamTail(tool) || 'reading…' : queued ? 'queued' : firstLine(tool?.result)}</span>
+        <span className="pe-summary">{examining ? (toolHint(subjInput(tool)) || 'reading…') : queued ? 'queued' : firstLine(tool?.result)}</span>
+        {done && subjInput(tool).tokens ? <span className="pe-meta">{fmtTokens(subjInput(tool).tokens)}</span> : null}
         {done && tool?.result ? <button className="pe-viewfull" onClick={() => setOpen((o) => !o)}>{open ? 'Hide' : 'View'}</button> : null}
       </div>
       {open && tool?.result ? <div className="tb-md pe-payload"><Markdown>{tool.result}</Markdown></div> : null}

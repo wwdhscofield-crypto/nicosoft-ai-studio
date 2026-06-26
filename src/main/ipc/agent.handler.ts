@@ -17,6 +17,10 @@ import type { AgentBlockDto, AgentPermissionResponse, AgentQuestionResponse, Age
 // results) / `agent:done` / `agent:error`. A tool needing approval pauses on `agent:permission`
 // until the renderer answers via `agent:permission:respond`. `agent:stop` aborts.
 const streams = new StreamRegistry()
+// Abort every in-flight solo-agent run on app quit — see index.ts before-quit (clean teardown of live LLM streams).
+export function abortAllAgentRuns(): void {
+  streams.abortAll()
+}
 // pending approvals keyed by permissionId; settle() resolves the loop's requestPermission promise.
 const pendingPermissions = new Map<string, (d: PermissionDecision) => void>()
 // permissionIds belonging to each run, so a terminal event can deny + clear any still-open prompts.
@@ -81,6 +85,7 @@ function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: { resum
             else if (ev.type === 'sub_tool_start') send('agent:sub-tool:start', { streamId, ...ev })
             else if (ev.type === 'sub_tool_done') send('agent:sub-tool:done', { streamId, ...ev })
             else if (ev.type === 'sub_tool_delta') send('agent:sub-tool:delta', { streamId, ...ev })
+            else if (ev.type === 'sub_tool_progress') send('agent:sub-tool:progress', { streamId, ...ev })
             // Streaming usage: the in-flight request's own prompt size + running output (overwrite
             // semantics, see ConvUsage) → the live ↑ tracks current context in real time.
             else if (ev.type === 'usage') broadcastUsage(sender, input.convId, 'live', ev.inputTokens, ev.outputTokens, ev.cachedTokens)

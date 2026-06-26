@@ -299,6 +299,15 @@ export interface AgentSubToolDelta {
   delta: string
   subAgentId?: string
 }
+// #8: COARSE per-tool liveness for a quiet sub-agent's card row (Workflow lastToolName/lastToolSummary parity) —
+// one event per tool call (tool name + a short input hint), NOT per token. The lens card shows it while the row runs.
+export interface AgentSubToolProgress {
+  streamId: string
+  parentToolId: string
+  toolUseId: string
+  tool: string
+  summary?: string
+}
 export interface AgentResultDto {
   toolUseId: string
   content: string
@@ -490,6 +499,9 @@ export interface CoordinatorSubToolDone extends AgentSubToolDone {
   roleId: string
 }
 export interface CoordinatorSubToolDelta extends AgentSubToolDelta {
+  roleId: string
+}
+export interface CoordinatorSubToolProgress extends AgentSubToolProgress {
   roleId: string
 }
 // A dispatched-tool approval (phase 2 still pops to the user — doc 19 §14). The response reuses

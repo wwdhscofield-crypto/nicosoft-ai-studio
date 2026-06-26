@@ -10,7 +10,7 @@
 //   • persona   → the name→builder table (subjectExaminePrompt / refutePrompt / reverifyPrompt / READER_SYSTEM).
 
 import * as rolesService from '../roles.service'
-import { runRoleStep, type RunStepOptions } from '../coordinator-step'
+import { runRoleStep, LensStallError, type RunStepOptions } from '../coordinator-step'
 import { chatOnce, endpointWithKey } from '../llm-once'
 import { resolveDepth } from '../../llm/thinking'
 import { subjectExaminePrompt, refutePrompt, reverifyPrompt, COORDINATOR_VERIFIER_PROMPT } from '../../agent/roles/prompts'
@@ -36,26 +36,54 @@ function buildPersona(name: string, focus: string): string {
 
 // Build the production LensDeps from a coordinator RunStepOptions (the bridge/Gate-B already owns convId / cb /
 // signal / cwd / permissionMode). The engine owns all card events; runRoleStep runs quiet (no segment of its own).
+// Workflow parity (verified in cc 2.1.186): "Total agent count across a workflow's lifetime is capped at 1000 — a
+// runaway-loop backstop set far above any real workflow." The lens is a model-driven 3-level fan-out (lenses ×
+// candidates × skeptics) with no human-authored shape, so it needs the SAME backstop: a pathological selection (a
+// finder emitting dozens of candidates across many lenses) can't spawn unboundedly. Counted per review (the closure
+// lives per makeLensDeps == per examine() call, mirroring Workflow's per-workflow lifetime) and only over runAgent
+// (finder/skeptic/reader = the agent() equivalent; select/synth are tool-less orchestration turns, not agents). A
+// real review is dozens of agents — 1000 is the far-above-normal runaway ceiling, never a normal throttle.
+const LENS_MAX_AGENTS = 1000
+// #6 Workflow parity (cc 2.1.186 `GKa=5`): re-run a STALLED agent up to this many times before giving up.
+const LENS_STALL_RETRIES = 5
+
 export function makeLensDeps(opts: RunStepOptions): LensDeps {
+  let agentCount = 0
   return {
     cb: opts.cb,
 
     async runAgent(spec) {
-      const res = await runRoleStep({
-        ...opts,
-        roleId: spec.roleId,
-        prompt: spec.prompt,
-        dispatch: [...(opts.dispatch ?? []), spec.roleId],
-        includeHistory: false,
-        toolNames: spec.toolNames,
-        systemPromptOverride: spec.system,
-        quiet: true, // card-only: the engine renders finders/skeptics/readers as panel-card rows
-        streamCard: spec.streamCard,
-        stallTimeoutMs: spec.stallTimeoutMs,
-        signal: opts.signal,
-      })
-      // inputTokens = runRoleStep's contextTokens (current context), never the cumulative billing total (§3②).
-      return { text: res.text, inputTokens: res.inputTokens, outputTokens: res.outputTokens, writtenFiles: res.writtenFiles, reason: res.reason }
+      if (++agentCount > LENS_MAX_AGENTS) {
+        throw new Error(`studio_lens exceeded the ${LENS_MAX_AGENTS}-agent lifetime cap (runaway fan-out backstop) — this agent is dropped and the review folds with what completed.`)
+      }
+      // #6 Workflow parity (GKa=5): re-run a STALLED finder/skeptic up to 5× (a frozen stream that the watchdog
+      // aborted — a fresh attempt usually lands). Only LensStallError is retried; a real abort / any other error is
+      // terminal. The 1000-cap counts the logical agent ONCE (above), not each stall-retry — same as Workflow
+      // (retries accrue under one agent). After 5 stalls, propagate → the engine's catch drops it / counts an uphold.
+      let lastStall: unknown
+      for (let attempt = 0; attempt <= LENS_STALL_RETRIES; attempt++) {
+        try {
+          const res = await runRoleStep({
+            ...opts,
+            roleId: spec.roleId,
+            prompt: spec.prompt,
+            dispatch: [...(opts.dispatch ?? []), spec.roleId],
+            includeHistory: false,
+            toolNames: spec.toolNames,
+            systemPromptOverride: spec.system,
+            quiet: true, // card-only: the engine renders finders/skeptics/readers as panel-card rows
+            stallTimeoutMs: spec.stallTimeoutMs,
+            progressCard: spec.progressCard, // #8: coarse per-tool liveness on the row (Workflow lastToolName)
+            signal: opts.signal,
+          })
+          // inputTokens = runRoleStep's contextTokens (current context), never the cumulative billing total (§3②).
+          return { text: res.text, inputTokens: res.inputTokens, outputTokens: res.outputTokens, writtenFiles: res.writtenFiles, reason: res.reason }
+        } catch (e) {
+          if (e instanceof LensStallError && attempt < LENS_STALL_RETRIES && !opts.signal?.aborted) { lastStall = e; continue }
+          throw e
+        }
+      }
+      throw lastStall
     },
 
     async runChat({ roleId, prompt }) {

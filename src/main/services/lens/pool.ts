@@ -17,7 +17,9 @@ function globalConcurrency(): number {
   } catch {
     cores = 4
   }
-  return Math.max(1, Math.min(16, cores - 2))
+  // EXACT Workflow-tool form (verified in cc 2.1.186: `Math.min(16,Math.max(2,cpus-2))`) — clamp to [2,16],
+  // a floor of 2 (not 1) so even a 1-2 core box still fans two agents out.
+  return Math.min(16, Math.max(2, cores - 2))
 }
 
 export const GLOBAL_MAX = globalConcurrency()

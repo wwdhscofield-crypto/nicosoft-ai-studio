@@ -3,7 +3,7 @@ import { STUDIO_DATA } from '@/data/studio-data'
 import { useCustomRoles } from '@/stores/custom-roles'
 import { useWorkspace } from '@/stores/workspace'
 import { attachVerifyListeners } from '@/stores/verify'
-import { roleHasAgent, roleIsCoordinator, uid, applySubToolStart, applySubToolDone, applySubToolDelta, locateSubToolMsgIndex, SHOWN_SERVER_BLOCKS } from './chat-helpers'
+import { roleHasAgent, roleIsCoordinator, uid, applySubToolStart, applySubToolDone, applySubToolDelta, applySubToolProgress, locateSubToolMsgIndex, SHOWN_SERVER_BLOCKS } from './chat-helpers'
 import type { ApprovalCard, ChatMessage, ChatState, MsgBlock } from './chat-types'
 
 // Unified per-conversation chat store (L3). A conversation is a real DB row; messages persist to the
@@ -311,6 +311,16 @@ export const useChat = create<ChatState>((set, get) => {
         const msgs = (s.byConversation[meta.convId] ?? []).map((m) => ({ ...m }))
         const i = locateSubToolMsgIndex(msgs, '', d.parentToolId, d.toolUseId)
         if (i >= 0) msgs[i] = applySubToolDelta(msgs[i], d.parentToolId, d.toolUseId, d.delta)
+        return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
+      })
+    })
+    ag.onSubToolProgress((d) => {
+      const meta = agentMeta.get(d.streamId)
+      if (!meta) return
+      set((s) => {
+        const msgs = (s.byConversation[meta.convId] ?? []).map((m) => ({ ...m }))
+        const i = locateSubToolMsgIndex(msgs, '', d.parentToolId, d.toolUseId)
+        if (i >= 0) msgs[i] = applySubToolProgress(msgs[i], d.parentToolId, d.toolUseId, d.tool, d.summary)
         return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
       })
     })
@@ -710,6 +720,16 @@ export const useChat = create<ChatState>((set, get) => {
         const msgs = (s.byConversation[meta.convId] ?? []).map((m) => ({ ...m }))
         const i = locateSubToolMsgIndex(msgs, d.roleId, d.parentToolId, d.toolUseId)
         if (i >= 0) msgs[i] = applySubToolDelta(msgs[i], d.parentToolId, d.toolUseId, d.delta)
+        return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
+      })
+    })
+    at.onSubToolProgress((d) => {
+      const meta = coordinatorMeta.get(d.streamId)
+      if (!meta) return
+      set((s) => {
+        const msgs = (s.byConversation[meta.convId] ?? []).map((m) => ({ ...m }))
+        const i = locateSubToolMsgIndex(msgs, d.roleId, d.parentToolId, d.toolUseId)
+        if (i >= 0) msgs[i] = applySubToolProgress(msgs[i], d.parentToolId, d.toolUseId, d.tool, d.summary)
         return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
       })
     })

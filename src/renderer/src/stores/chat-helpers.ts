@@ -61,7 +61,10 @@ const updateSubTool = (
       result: patch.result,
     }
     const nextSubTools = idx >= 0
-      ? subTools.map((t, i) => i === idx ? { ...t, ...patch } : t)
+      // MERGE the done event's input onto the start input (don't REPLACE): a sub-tool's done carries verdict /
+      // token-count fields that must ADD to its start input (lens / focus / title), so a finder·skeptic·reader
+      // row keeps its label AND gains its result. (Replacing dropped the start label whenever done set input.)
+      ? subTools.map((t, i) => i === idx ? { ...t, ...patch, input: patch.input !== undefined ? { ...(t.input as Record<string, unknown> | undefined), ...(patch.input as Record<string, unknown>) } : t.input } : t)
       : [...subTools, fallback]
     changed = true
     return { ...tool, subTools: nextSubTools }
@@ -163,6 +166,29 @@ const appendSubToolStream = (tools: ToolCall[] | undefined, parentToolId: string
 
 export const applySubToolDelta = (message: ChatMessage, parentToolId: string, toolUseId: string, delta: string): ChatMessage => {
   const tools = appendSubToolStream(message.tools, parentToolId, toolUseId, delta)
+  return tools !== message.tools ? { ...message, tools } : message
+}
+
+// #8 COARSE per-tool liveness (Workflow lastToolName/lastToolSummary parity) — set the row's CURRENT tool name + a
+// short input hint into its input, so the lens card shows "Read foo.ts" while the agent works. ONE event per tool
+// call, never per token (that was the removed firehose). No-op for an unknown sub-tool (start lost the IPC race);
+// merges onto the existing input so the row keeps its lens/focus/title.
+const setSubToolProgress = (tools: ToolCall[] | undefined, parentToolId: string, toolUseId: string, tool: string, summary?: string): ToolCall[] | undefined => {
+  if (!tools) return tools
+  let changed = false
+  const next = tools.map((t) => {
+    if (t.id !== parentToolId) return t
+    const subTools = t.subTools ?? []
+    const idx = subTools.findIndex((st) => st.id === toolUseId)
+    if (idx < 0) return t
+    changed = true
+    return { ...t, subTools: subTools.map((st, i) => (i === idx ? { ...st, input: { ...(st.input as Record<string, unknown> | undefined), lastTool: tool, lastToolSummary: summary } } : st)) }
+  })
+  return changed ? next : tools
+}
+
+export const applySubToolProgress = (message: ChatMessage, parentToolId: string, toolUseId: string, tool: string, summary?: string): ChatMessage => {
+  const tools = setSubToolProgress(message.tools, parentToolId, toolUseId, tool, summary)
   return tools !== message.tools ? { ...message, tools } : message
 }
 
