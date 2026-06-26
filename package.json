@@ -20,7 +20,7 @@
     "e2e:engineer": "node e2e/engineer-agent.mjs",
     "e2e:title-memory": "node e2e/title-memory.mjs",
     "test:collab": "node --experimental-transform-types e2e/collab-scheduler.mts",
-    "test:lens": "node --experimental-transform-types --import ./e2e/_register.mjs e2e/lens-value.mts && node --experimental-transform-types --import ./e2e/_register.mjs e2e/lens-engine.mts && node --experimental-transform-types --import ./e2e/_register.mjs e2e/lens-template.mts && node --experimental-transform-types --import ./e2e/_register.mjs e2e/lens-maxturns.mts && node --experimental-transform-types --import ./e2e/_register.mjs e2e/lens-tiers.mts && node --experimental-transform-types --import ./e2e/_register.mjs e2e/lens-script-executor.mts && node --experimental-transform-types --import ./e2e/_register.mjs e2e/lens-code-review.mts",
+    "test:lens": "node --experimental-transform-types --import ./e2e/_register.mjs e2e/lens-maxturns.mts && node --experimental-transform-types --import ./e2e/_register.mjs e2e/lens-tiers.mts && node --experimental-transform-types --import ./e2e/_register.mjs e2e/lens-script-executor.mts && node --experimental-transform-types --import ./e2e/_register.mjs e2e/lens-code-review.mts && node --experimental-transform-types --import ./e2e/_register.mjs e2e/lens-agent-lens.mts",
     "rebuild:native": "electron-rebuild --only node-pty --force",
     "postinstall": "node scripts/ensure-electron.mjs && node scripts/rebuild-native.mjs"
   },

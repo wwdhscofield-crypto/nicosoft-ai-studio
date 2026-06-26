@@ -4,7 +4,7 @@
 // Type-only imports erase at runtime, so this module pulls in NOTHING heavy — the test imports it directly.
 
 import type { RunStepOptions } from '../coordinator-step'
-import type { AgentSpec } from './engine'
+import type { AgentSpec } from './contracts'
 
 // Per-agent turn cap — Workflow's `FORKED_AGENT_DEFAULT_MAX_TURNS` (cc 2.1.186: `dbo = 50`). WITHOUT this,
 // runRoleStep inherits maxTurns = undefined → the agent loop is UNBOUNDED (loop.ts), and a lens finder ran ~300

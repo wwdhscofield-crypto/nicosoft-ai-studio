@@ -1,10 +1,12 @@
 // Studio Lens — the built-in code-review: the model GATE (who may author a script) + the fixed-taxonomy
 // FALLBACK script (what runs when a model may not author, or its author attempt fails). This mirrors real
 // Claude Code, which ships a built-in `code-review` workflow AND lets the strong driving model author its own
-// — the two coexist, and the model/engine picks. 批 3 of the lens rewrite.
+// — the two coexist, and the model/engine picks. 批 3/4 of the lens rewrite.
 //
-// Parallel track: this module is PURE (gate is a slug check; the template is a string; the args helper maps a
-// TierShape) and touches NO existing lens path — it unit-tests off-Electron and is wired into agent-lens in 批 5.
+// Both the fallback template and an authored script return the SAME result contract (ReviewResult below) so
+// agent-lens normalizes either into the three consumer contracts (SubjectFinding[] / confirmed / refuted /
+// report). This module is PURE (gate is a slug check; the template/prompt are strings; the args helper maps a
+// TierShape) and touches NO runtime — it unit-tests off-Electron and is wired into agent-lens in 批 5.
 
 import type { TierShape } from './tiers'
 
@@ -39,21 +41,41 @@ export function canAuthorScript(slug: string): boolean {
   return !!(gpt && parseInt(gpt[1], 10) >= 5) // gpt-5+ (5.x / future 6.0 …)
 }
 
+// ── result contract ─────────────────────────────────────────────────────────────────────────────────────
+
+// What every review script (the template OR an authored one) returns. agent-lens normalizes this into the
+// three consumer contracts. A candidate carries the lens it came from so the per-lens SubjectFinding rows can
+// be rebuilt; everything is plain JSON (it crosses the vm-realm boundary as data).
+export interface ReviewCandidate {
+  lens: string
+  file?: string
+  line?: number
+  summary: string
+  severity?: string
+  evidence?: string
+}
+export interface ReviewResult {
+  report: string
+  confirmed: ReviewCandidate[]
+  refuted: ReviewCandidate[]
+  lenses: { key: string; focus?: string; found: number }[]
+}
+
 // ── built-in fallback template ──────────────────────────────────────────────────────────────────────────
 
 // A generic code-review orchestration script. The review SHAPE (which angles, the candidate cap, the verify
-// bias, the gap-sweep, the report cap) is NOT hardcoded here — it arrives as `args`, resolved by the caller
-// from the reviewer's effort tier (codeReviewArgs below), exactly as Workflow's code-review reads its shape
-// from the effort tier at runtime. So this ONE template serves every tier: a non-authoring model still gets a
-// real, tier-appropriate review, with the fan-out bounded by data (angles.length × candidateCap) — never by
-// author freedom. The script uses only the injected primitives (agent/parallel/phase/log) + args.
+// bias, the gap-sweep, the report cap) is NOT hardcoded — it arrives as `args`, resolved by the caller from the
+// reviewer's effort tier (codeReviewArgs below), exactly as Workflow's code-review reads its shape from the
+// effort tier at runtime. So this ONE template serves every tier: a non-authoring model still gets a real,
+// tier-appropriate review, bounded by data (angles.length × candidateCap) — never by author freedom. It uses
+// only the injected primitives (agent/parallel/phase/log) + args, and returns the ReviewResult contract.
 export const CODE_REVIEW_TEMPLATE = `export const meta = {
   name: 'code-review',
   description: 'Built-in fixed-taxonomy code review: a finder per angle, adversarial verify, a synthesized most-severe-first report.',
   phases: [{ title: 'Review' }, { title: 'Verify' }, { title: 'Synthesize' }],
 }
 
-const { target = 'the changes', angles = [], candidateCap = 6, verify = 'recall', sweep = false, reportCap = 10 } = args ?? {}
+const { target = 'the changes', angles = [], candidateCap = 6, verify = 'recall', sweep = false, reportCap = 10, diff = '' } = args ?? {}
 
 const FINDINGS = {
   type: 'object',
@@ -62,7 +84,7 @@ const FINDINGS = {
       type: 'array',
       items: {
         type: 'object',
-        properties: { file: { type: 'string' }, line: { type: 'number' }, summary: { type: 'string' }, severity: { type: 'string' } },
+        properties: { file: { type: 'string' }, line: { type: 'number' }, summary: { type: 'string' }, severity: { type: 'string' }, evidence: { type: 'string' } },
         required: ['file', 'summary'],
       },
     },
@@ -71,25 +93,32 @@ const FINDINGS = {
 }
 const VERDICT = { type: 'object', properties: { stands: { type: 'boolean' }, reason: { type: 'string' } }, required: ['stands'] }
 
+const tag = (lens) => (f) => ({ lens, file: f.file, line: f.line, summary: f.summary, severity: f.severity, evidence: f.evidence })
+// Pin the diff into every finder so a sub-agent REVIEWS this focused diff instead of self-reading the whole
+// repo (that blind self-read was the channel-killer maxTurns + diff-pinning fixed). diff.ts already char-caps it.
+const diffBlock = diff ? '\\n\\nThe pinned diff under review:\\n' + diff : ''
+
 phase('Review')
 log('code-review: ' + target + ' — ' + angles.length + ' angle(s), <=' + candidateCap + ' candidates each, verify=' + verify + (sweep ? ' +sweep' : ''))
-const found = await parallel(angles.map((a) => () =>
+const perAngle = await parallel(angles.map((a) => () =>
   agent(
-    'Review ' + target + ' through ONE lens:\\n' + a.focus + '\\n\\nFind up to ' + candidateCap + ' REAL issues this lens catches. For each: the file and line, a one-line summary, the severity, and concrete evidence. Pin only the changed code; do not invent issues.',
+    'Review ' + target + diffBlock + '\\n\\nThrough ONE lens:\\n' + a.focus + '\\n\\nFind up to ' + candidateCap + ' REAL issues this lens catches in the diff above (read the enclosing code only if the diff is not self-contained). For each: the file and line, a one-line summary, the severity, and concrete evidence. Do not invent issues.',
     { label: 'find:' + a.key, phase: 'Review', schema: FINDINGS },
-  )))
-const candidates = found.filter(Boolean).flatMap((f) => (f && f.findings) || [])
+  ).then((r) => ((r && r.findings) || []).slice(0, candidateCap).map(tag(a.key)))))
+const candidates = perAngle.filter(Boolean).flat()
 
-let confirmed = candidates.map((c) => ({ ...c, stands: true }))
+let confirmed = candidates
+let refuted = []
 if (verify !== 'none' && candidates.length > 0) {
   phase('Verify')
   const recall = verify === 'recall'
-  const verdicts = await parallel(candidates.map((c) => () =>
+  const judged = (await parallel(candidates.map((c) => () =>
     agent(
       'Adversarially check this finding against the code. ' + (recall ? 'KEEP it unless you can refute it from the code (recall bias).' : 'DROP it unless you can confirm it from the code (precision bias).') + '\\n\\n' + c.summary + ' @ ' + c.file + ':' + (c.line || '?'),
-      { label: 'verify:' + c.file, phase: 'Verify', schema: VERDICT },
-    ).then((v) => ({ ...c, stands: v && typeof v.stands === 'boolean' ? v.stands : recall }))))
-  confirmed = verdicts.filter(Boolean).filter((c) => c.stands)
+      { label: 'verify:' + c.lens, phase: 'Verify', schema: VERDICT },
+    ).then((v) => ({ ...c, stands: v && typeof v.stands === 'boolean' ? v.stands : recall }))))).filter(Boolean)
+  confirmed = judged.filter((c) => c.stands)
+  refuted = judged.filter((c) => !c.stands)
 }
 
 if (sweep) {
@@ -98,15 +127,22 @@ if (sweep) {
     'Gap sweep: re-read ' + target + ' and surface any REAL issue the angle-finders missed (up to ' + candidateCap + '). Same evidence bar.',
     { label: 'sweep', phase: 'Verify', schema: FINDINGS },
   )
-  if (extra && extra.findings) confirmed = confirmed.concat(extra.findings.map((f) => ({ ...f, stands: true })))
+  if (extra && extra.findings) confirmed = confirmed.concat(extra.findings.slice(0, candidateCap).map(tag('gap-sweep')))
 }
 
 phase('Synthesize')
 const top = confirmed.slice(0, reportCap)
-return await agent(
+const report = await agent(
   'Write the code-review report for ' + target + ': the ' + top.length + ' confirmed finding(s), most-severe-first, each citing file:line with a crisp explanation and a concrete fix. If there are none, say the change looks clean.\\n\\nConfirmed findings:\\n' + JSON.stringify(top),
   { label: 'report', phase: 'Synthesize' },
 )
+
+return {
+  report: typeof report === 'string' ? report : '',
+  confirmed: top,
+  refuted,
+  lenses: angles.map((a) => ({ key: a.key, focus: a.focus, found: candidates.filter((c) => c.lens === a.key).length })),
+}
 `
 
 // ── shape → args ────────────────────────────────────────────────────────────────────────────────────────
@@ -180,9 +216,22 @@ After meta the body runs in an async context (use await directly). The sandbox g
   refute it from the code — keep it unless it is refuted (recall bias).
 - SCALE TO THE TASK: a small focused change wants a few finders; only a large or heterogeneous scope warrants
   many groups. Do not spawn agents you would yourself think excessive.
-- Synthesize at the end: one agent that writes the report, most-severe-first, each finding citing file:line.
+- Tag each finding with the lens/dimension it came from, and synthesize at the end: one agent that writes the
+  report, most-severe-first, each finding citing file:line.
+- INLINE args.diff into your finder prompts so each sub-agent reviews the PINNED diff rather than self-reading
+  the whole repo — that is what keeps every sub-agent bounded (self-reading is the cost/latency killer).
 - If the diff is simple and homogeneous, a minimal script that just reviews it directly is fine — author what
   the change actually needs, not ceremony.
+
+# Return value (REQUIRED — the engine maps it to the review result)
+Your script MUST \`return\` an object of exactly this shape:
+
+  return {
+    report,                                              // string: the synthesized report (most-severe-first)
+    confirmed,                                           // [{ lens, file, line, summary, severity, evidence }] — survived verify
+    refuted,                                             // [{ lens, file, line, summary, severity, evidence }] — dropped on verify
+    lenses,                                              // [{ key, focus, found }] — one per review dimension you ran
+  }
 
 # Hard limits (engine-enforced backstops, not budgets to spend)
 Concurrency is auto-capped; each sub-agent is bounded to 50 turns; the whole review may spawn at most 1000

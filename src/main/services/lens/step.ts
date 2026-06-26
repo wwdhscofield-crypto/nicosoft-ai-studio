@@ -15,7 +15,7 @@ import { chatOnce, endpointWithKey } from '../llm-once'
 import { resolveDepth } from '../../llm/thinking'
 import { subjectExaminePrompt, refutePrompt, refutePromptPrecision, reverifyPrompt, COORDINATOR_VERIFIER_PROMPT } from '../../agent/roles/prompts'
 import { lensRunStepOptions } from './runstep'
-import type { LensDeps } from './engine'
+import type { LensDeps } from './contracts'
 
 // READER persona for understand mode (carved verbatim from examine/understand.ts — lens-owned now).
 export const READER_SYSTEM =
