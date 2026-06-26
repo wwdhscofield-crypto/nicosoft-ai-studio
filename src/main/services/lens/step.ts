@@ -14,6 +14,7 @@ import { runRoleStep, LensStallError, type RunStepOptions } from '../coordinator
 import { chatOnce, endpointWithKey } from '../llm-once'
 import { resolveDepth } from '../../llm/thinking'
 import { subjectExaminePrompt, refutePrompt, reverifyPrompt, COORDINATOR_VERIFIER_PROMPT } from '../../agent/roles/prompts'
+import { lensRunStepOptions } from './runstep'
 import type { LensDeps } from './engine'
 
 // READER persona for understand mode (carved verbatim from examine/understand.ts — lens-owned now).
@@ -37,15 +38,17 @@ function buildPersona(name: string, focus: string): string {
 // Build the production LensDeps from a coordinator RunStepOptions (the bridge/Gate-B already owns convId / cb /
 // signal / cwd / permissionMode). The engine owns all card events; runRoleStep runs quiet (no segment of its own).
 // Workflow parity (verified in cc 2.1.186): "Total agent count across a workflow's lifetime is capped at 1000 — a
-// runaway-loop backstop set far above any real workflow." The lens is a model-driven 3-level fan-out (lenses ×
-// candidates × skeptics) with no human-authored shape, so it needs the SAME backstop: a pathological selection (a
-// finder emitting dozens of candidates across many lenses) can't spawn unboundedly. Counted per review (the closure
-// lives per makeLensDeps == per examine() call, mirroring Workflow's per-workflow lifetime) and only over runAgent
-// (finder/skeptic/reader = the agent() equivalent; select/synth are tool-less orchestration turns, not agents). A
-// real review is dozens of agents — 1000 is the far-above-normal runaway ceiling, never a normal throttle.
+// runaway-loop backstop set far above any real workflow." The lens fan-out is now a FIXED 8-angle taxonomy ×
+// ≤6 candidates × 1 skeptic (a real review is ~32-40 agents), but a pathological finder reply could still emit
+// many candidates, so the SAME backstop applies: nothing spawns unboundedly. Counted per review (the closure lives
+// per makeLensDeps == per examine() call, mirroring Workflow's per-workflow lifetime) and only over runAgent
+// (finder/skeptic/reader = the agent() equivalent; synth/escalate are tool-less orchestration turns, not agents).
+// 1000 is the far-above-normal runaway ceiling, never a normal throttle.
 const LENS_MAX_AGENTS = 1000
 // #6 Workflow parity (cc 2.1.186 `GKa=5`): re-run a STALLED agent up to this many times before giving up.
 const LENS_STALL_RETRIES = 5
+// LENS_MAX_TURNS (the per-agent turn cap, Workflow FORKED_AGENT_DEFAULT_MAX_TURNS=50) + the runRoleStep option
+// shape now live in ./runstep so the wiring unit-tests off-Electron (e2e/lens-maxturns.mts).
 
 export function makeLensDeps(opts: RunStepOptions): LensDeps {
   let agentCount = 0
@@ -63,19 +66,9 @@ export function makeLensDeps(opts: RunStepOptions): LensDeps {
       let lastStall: unknown
       for (let attempt = 0; attempt <= LENS_STALL_RETRIES; attempt++) {
         try {
-          const res = await runRoleStep({
-            ...opts,
-            roleId: spec.roleId,
-            prompt: spec.prompt,
-            dispatch: [...(opts.dispatch ?? []), spec.roleId],
-            includeHistory: false,
-            toolNames: spec.toolNames,
-            systemPromptOverride: spec.system,
-            quiet: true, // card-only: the engine renders finders/skeptics/readers as panel-card rows
-            stallTimeoutMs: spec.stallTimeoutMs,
-            progressCard: spec.progressCard, // #8: coarse per-tool liveness on the row (Workflow lastToolName)
-            signal: opts.signal,
-          })
+          // The lens sub-agent's runRoleStep options (maxTurns cap, quiet/card-only, kit, dispatch) are built by
+          // the pure lensRunStepOptions so the wiring is unit-tested (e2e/lens-maxturns.mts) off-Electron.
+          const res = await runRoleStep(lensRunStepOptions(opts, spec))
           // inputTokens = runRoleStep's contextTokens (current context), never the cumulative billing total (§3②).
           return { text: res.text, inputTokens: res.inputTokens, outputTokens: res.outputTokens, writtenFiles: res.writtenFiles, reason: res.reason }
         } catch (e) {

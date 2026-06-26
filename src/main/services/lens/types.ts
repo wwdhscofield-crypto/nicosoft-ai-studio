@@ -72,8 +72,10 @@ export function normConfidence(s: unknown): Severity {
 }
 
 // Parse the finder's machine contract: a fenced ```findings JSON array of candidate defects. Returns null when
-// no parseable block is present (the caller then DEGRADES to the binary VERDICT). Caps the list + each field so
-// a runaway reply can't bloat.
+// no parseable block is present (the caller then DEGRADES to the binary VERDICT). Caps the list at 6 (the
+// Workflow `code-review` finder cap — "up to 6 candidate findings", cc 2.1.186) so a runaway reply can't bloat
+// the candidate × skeptic fan-out; each field is length-capped too. The finder persona already asks for ≤6
+// most-severe-first, so this is the structural backstop, not the primary bound.
 export function parseFindings(text: string, lens: string): Finding[] | null {
   const m = /```findings\s*([\s\S]*?)```/i.exec(text)
   if (!m) return null
@@ -85,7 +87,7 @@ export function parseFindings(text: string, lens: string): Finding[] | null {
   }
   if (!Array.isArray(arr)) return null
   const out: Finding[] = []
-  for (let i = 0; i < arr.length && out.length < 24; i++) {
+  for (let i = 0; i < arr.length && out.length < 6; i++) {
     const x = arr[i] as Record<string, unknown>
     const title = String(x?.title ?? '').trim().slice(0, 240)
     if (!title) continue

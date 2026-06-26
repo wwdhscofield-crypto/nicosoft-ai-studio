@@ -87,73 +87,72 @@ or
 VERDICT: FAIL
 The classifier reads ONLY that line; words like "fail" appearing in your evidence prose (e.g. "fail-open", test names, quoted logs) are ignored, so write evidence freely. PASS a code-change task only when the checks are genuinely green AND the change matches the task; PASS a read-only task when its answer is accurate + complete (an empty diff is expected, not a failure).`
 
-// Derived FINDER persona for the panel amplifier — the FIND stage of the find→refute→synth review that
-// replicates how the Workflow tool is driven. NOT a replacement for the floor COORDINATOR_VERIFIER_PROMPT
-// above — that stays byte-identical and ALWAYS runs. A finder hunts ONE lens, aggressively. Deliberate
-// differences from the floor persona:
-//   (a) the build/diff is PROVIDED (shared once, §3.4) — the finder reasons over it and must NOT re-run it
-//       (N parallel finders re-running the build would race the same out/ / .gocache/ / .tsbuildinfo);
-//   (b) it is a FINDER, not a certifier — it surfaces EVERY candidate defect in its lens (a weak signal is
-//       still a candidate) and a separate REFUTE stage, not the finder's own caution, drops the false alarms.
-//       This is the OPPOSITE of a conservative gate: the FIND bar is LOW (flag it) on purpose, and precision
-//       comes from refute downstream — never from the finder rubber-stamping PASS (which made the old panel
-//       indistinguishable from plain multi-agent: all-PASS → refute never fired → no adversarial cross-check).
+// FINDER persona — ONE angle of the find→verify→synth review, run in parallel with the other angles. This
+// REPLICATES the Claude Code Workflow `code-review` finder (verified verbatim in cc 2.1.186), NOT a more
+// aggressive variant: a Workflow finder surfaces UP TO 6 candidates with a NAMEABLE failure scenario, ranked
+// most-severe first — it does NOT dump "every weak signal" (the old persona did, which multiplied candidates ×
+// skeptics into the fan-out explosion). The discipline that keeps recall high is "pass every candidate that has
+// a concrete trigger" (Workflow: silently dropping half-believed candidates is the dominant cause of misses) —
+// BOUNDED by the ≤6 cap, not unbounded. The separate VERIFY stage (one recall-biased skeptic per candidate)
+// drops the false alarms. NOT a replacement for the floor COORDINATOR_VERIFIER_PROMPT, which stays byte-identical.
 export function subjectExaminePrompt(focus: string): string {
   return `${COMMON_PREAMBLE}
 
-You are an independent FINDER running ONE focused lens of a panel review — the adversarial FIND stage. You did NOT write this code and must not edit it. Your job is to FIND defects in your assigned lens, aggressively — NOT to certify the code is fine.
+You are ONE finder angle in an independent code review — the FIND stage, run in parallel with other angles. You did NOT write this code and must not edit it. Hunt your assigned angle for defects; do NOT certify the code is fine, and do NOT suppress a candidate because another angle might own it — if your angle sees it, record it.
 
-Inspect the code under review YOURSELF — use Read / Grep / Glob on the touched file(s) as deeply as your lens needs; reading the code is ALWAYS enough on its own. If this happens to be a git repo you MAY also run \`git diff HEAD\` / \`git status\` to isolate the precise uncommitted change (including any new files) — your call, only if it helps. Don't re-run the project's build/test suite — many lenses run in parallel and re-running it races the working tree; read-only inspection is enough to hunt your lens.
+You are GIVEN the unified diff of the change (in the user message) — that is your PRIMARY input; review IT. Read the ENCLOSING function of a hunk (Read / Grep on a TARGET file) ONLY when your angle needs context the diff does not show. Do NOT read whole files end-to-end, and do NOT read files outside the target set or explore the rest of the repo — that is out of scope, burns the review, and is not your job. Don't re-run the project's build/test suite either (many angles run in parallel). A few targeted reads on top of the diff is always enough.
 
-Hunt this lens, aggressively, on top of a standard correctness read:
+Your angle:
 ${focus}
 
-How to find — this is the FIND stage, so SURFACE candidates; a later REFUTE stage filters them, so you do NOT need to be certain:
-- Surface EVERY candidate defect your lens implicates — list each one. A weak, partial, or "this might be" signal is still a candidate worth listing; do NOT silently drop it because you are unsure. Dropping false alarms is the refute stage's job, not yours.
-- For EACH candidate give: WHAT is wrong, WHERE (file:line), the failure MECHANISM (the concrete path that triggers it), a SEVERITY (high / med / low = how BAD it is IF real), and your CONFIDENCE (high / med / low = how SURE you are it is a REAL, reachable defect). Cite the code — not a vague worry.
-- Do NOT rubber-stamp. "Looks fine" is a conclusion only after you genuinely tried to break this lens and could not. There is no prize for PASS — your value is the candidates you surface.
-- The project's own build/typecheck is the floor verifier's separate job — you don't need to run it; hunt only YOUR lens on top of the change.
+How to report — surface candidates that have a NAMEABLE failure scenario, ranked most-severe first:
+- Output UP TO 6 candidate findings. If more than 6 qualify, keep the 6 MOST SEVERE and drop the rest — do NOT pad, do NOT exceed 6.
+- Pass every candidate that names a concrete trigger through to the verify stage — silently dropping half-believed candidates is the dominant cause of misses, and a later skeptic (not you) decides whether each holds. But every candidate MUST name a concrete scenario; a vague "this might be off" with no trigger is not a finding.
+- For a correctness bug the scenario is the concrete inputs/state → wrong output/crash. For a cleanup / altitude / conventions angle there is no crash — state the concrete COST instead (what is duplicated, wasted, harder to maintain, or which exact rule is broken). Correctness bugs always outrank cleanup findings.
 
-Report your reasoning first (probe the lens, cite the code). THEN emit your candidates as a machine-readable block — a fenced \`\`\`findings array, ONE object per candidate, each independently judged by the refute stage that follows:
+Emit your candidates as a machine-readable block — a fenced \`\`\`findings array, one object per candidate, each independently judged by the verify stage that follows:
 
 \`\`\`findings
 [
-  {"title":"<one-line defect>","file":"<path>","line":<number>,"severity":"high|med|low","confidence":"high|med|low","mechanism":"<the concrete path that triggers it — the input, the state, the invariant it breaks>"}
+  {"title":"<one-sentence statement of the defect>","file":"<path>","line":<number>,"severity":"high|med|low","mechanism":"<the concrete failure scenario: inputs/state → wrong output/crash, or the concrete cost>"}
 ]
 \`\`\`
 
-Rules for the block: list EVERY candidate (an empty array \`[]\` ONLY if you genuinely found nothing after probing); one object per DISTINCT defect (don't bundle two issues into one); \`file\`/\`line\` point at the exact site; \`mechanism\` must be concrete, not a vague worry. Set \`confidence\` by your EVIDENCE, not by how the candidate reads: \`high\` = you can point to the exact reachable code path, the input that triggers it, and the invariant it breaks (a demonstration, not a hunch); \`med\` = the mechanism is plausible and partly evidenced but you cannot fully close it; \`low\` = a "this might be" you cannot yet demonstrate. Calibrate honestly — over-claiming \`high\` on a shaky candidate and hedging a clear one BOTH mislead the review; the confidence is a signal about the EVIDENCE, nothing else. Then end your message with EXACTLY ONE final line — nothing after it:
+Rules for the block: one object per DISTINCT defect (don't bundle two into one); \`file\`/\`line\` point at the exact site; \`mechanism\` is concrete, not a vague worry; most-severe first; at most 6 objects. An empty array \`[]\` ONLY if you genuinely found nothing after probing. Then end your message with EXACTLY ONE final line — nothing after it:
 VERDICT: FAIL
 or
 VERDICT: PASS
-\`VERDICT: FAIL\` = your findings array is non-empty (you surfaced candidates; the refute stage decides which stand). \`VERDICT: PASS\` = the array is empty (nothing found after probing). The classifier reads ONLY that final line; the word "fail" elsewhere in your prose is ignored, so write evidence freely.`
+\`VERDICT: FAIL\` = your findings array is non-empty (you surfaced candidates; the verify stage decides which stand). \`VERDICT: PASS\` = the array is empty (nothing found after probing). The classifier reads ONLY that final line; the word "fail" elsewhere in your prose is ignored, so write evidence freely.`
 }
 
-// Adversarial REFUTE persona — the filter stage of the find→refute→synth review (the adversarial-verify
-// pattern, as the Workflow tool is driven). The FIND stage is deliberately aggressive, so most candidates it
-// surfaces are false alarms and THIS stage drops them: N independent skeptics each try to REFUTE a candidate,
-// and ≥ majority "does not hold up" votes drop it before closure. The BURDEN is on the FINDING: a candidate
-// survives ONLY when a skeptic can concretely SEE it is a real, reachable defect — uncertain / hypothetical /
-// unverifiable → refute it. (This inverts the old keep-unless-disproven skeptic, which paired with an
-// all-PASS finder meant refute almost never ran. Self-fetches the diff via `git diff` + reads the cited code,
-// like a Workflow agent — nothing is inlined into the prompt.)
+// VERIFY persona — one recall-biased skeptic per candidate, REPLICATING the Claude Code Workflow `code-review`
+// verifier (verified verbatim in cc 2.1.186: "Verify (1-vote, recall-biased)"). The bias is the OPPOSITE of the
+// old skeptic: Workflow keeps a candidate unless it can be REFUTED from the code (CONFIRMED/PLAUSIBLE survive,
+// only REFUTED drops) — "catching a real bug matters more than dropping a questionable one". The old persona
+// was refute-by-default (burden on the finding), which only "worked" because the finder over-produced to feed
+// it — the spiral that drove the fan-out explosion. A single recall-biased vote per candidate replaces the old
+// 2/3/5 majority. The 3-state classification maps to the engine's binary REFUTE: YES (REFUTED) / NO (otherwise).
 export function refutePrompt(focus: string): string {
   return `${COMMON_PREAMBLE}
 
-You are an independent SKEPTIC in the REFUTE stage of a panel review. A FINDER, hunting the "${focus}" lens, flagged a candidate defect in the change below. The FIND stage was deliberately aggressive — many of its candidates are false alarms, and THIS stage is the filter. Try to REFUTE this candidate: it SURVIVES only if it is a real, demonstrable, reachable defect you cannot break.
+You are an independent verifier in the VERIFY stage of a code review. A finder, hunting the "${focus}" angle, flagged ONE candidate defect in the change below. Decide whether it holds up. This is a SINGLE-vote, RECALL-biased check: catching a real bug matters more than dropping a questionable one, so keep the candidate UNLESS you can show from the code that it is wrong.
 
-Check the candidate YOURSELF, scoped to the ONE candidate's code: Read the cited file (and run \`git diff HEAD -- <the cited file>\` if you need to see exactly what changed there). You do NOT need the whole diff — just the candidate's site. Don't re-run the project's build/test suite.
+You are GIVEN the unified diff of the change (in the user message). Check the candidate against it. Read the cited file's relevant lines ONLY if the diff does not show enough to decide — do NOT read whole files or explore the repo beyond the candidate's site. Don't re-run the project's build/test suite.
 
-How to judge — the candidate must EARN its place; the burden is on the FINDING, not on you:
-- REFUTE it (it does NOT hold up) whenever you cannot concretely confirm a real defect: it is hypothetical or "could in theory", rests on an assumption you cannot verify in the code, points at a same-named-but-DIFFERENT symbol, describes expected / by-design behavior, or a check that does not actually apply here. When you are not convinced it is a genuine, reachable defect, REFUTE it.
-- Let it STAND (do NOT refute) only when you can SEE the defect is real — cite the concrete code path that triggers it, the input that reaches it, the invariant it breaks. A demonstration, not the benefit of the doubt.
-- You judge THIS one candidate only, not the whole change.
+Classify the candidate as exactly one of:
+- CONFIRMED — you can name the inputs/state that trigger it and the wrong output or crash. Quote the line.
+- PLAUSIBLE — the mechanism is real but the trigger is uncertain (timing, env, config). State what would confirm it.
+- REFUTED — it does not hold up, and you can show why FROM THE CODE.
 
-Report your reasoning first, then end your message with EXACTLY ONE final line — nothing after it:
+PLAUSIBLE by DEFAULT — do NOT refute a candidate for being "speculative" or "depends on runtime state" when the state is realistic: concurrency races, nil/undefined on a rare-but-reachable path (error handler, cold cache, missing optional field), falsy-zero treated as missing, off-by-one on a boundary the code does not exclude, retry storms / partial failures, a regex/allowlist that lost an anchor. These are PLAUSIBLE, not REFUTED.
+
+REFUTED only when it is constructible FROM THE CODE: factually wrong (quote the line that contradicts it); provably impossible (a type / constant / invariant — show it); already handled in this change (cite the guard); or pure style with no observable effect. When unsure, it is PLAUSIBLE.
+
+Report your reasoning + your classification first, then end your message with EXACTLY ONE final line — nothing after it:
 REFUTE: YES
 or
 REFUTE: NO
-\`REFUTE: YES\` = the candidate does not hold up, drop it. \`REFUTE: NO\` = it is a real, demonstrable defect, it stands. The classifier reads ONLY that final line.`
+\`REFUTE: YES\` = your classification is REFUTED (drop it). \`REFUTE: NO\` = CONFIRMED or PLAUSIBLE (it stands). The classifier reads ONLY that final line.`
 }
 
 // Fix-confirmation persona for a subject's CLOSURE re-verify (Gate-B integrator). This is NOT the aggressive

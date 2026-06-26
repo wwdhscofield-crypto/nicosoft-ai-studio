@@ -16,6 +16,7 @@ import {
   parseFindings,
   renderFindings,
   normSeverity,
+  SEV_ORDER,
   LENS_STALL_MS,
   type Finding,
   type SubjectFinding,
@@ -47,7 +48,7 @@ export interface LoopSpec {
 export interface StepSpec {
   id: string
   phase?: string
-  type: 'agent' | 'parallel' | 'pipeline' | 'refute' | 'loop'
+  type: 'agent' | 'parallel' | 'pipeline' | 'refute' | 'dedup' | 'loop'
   role?: string // caller | reviewer | <slot>
   kit?: 'none' | 'read-only' | string[]
   model?: string
@@ -64,6 +65,7 @@ export interface StepSpec {
   stages?: StepSpec[] // pipeline ONLY: the per-item stages (e.g. [finder, refute]) each item flows through with NO cross-item barrier
   voters?: number
   majority?: number
+  by?: string[] // dedup step ONLY: the candidate fields that define a near-duplicate (Workflow Phase-2 "same defect, same location") — e.g. [file, line]; the most-severe representative of each group is kept, the rest removed in place
   votersByConfidence?: Record<string, number> // refute DEPTH per candidate: finder-confidence → skeptic count (model-decided depth vs a flat `voters`); majority derives from the count unless `majority` is set
   failVote?: 'uphold' | 'refute'
   retries?: number // finder: EXTRA attempts on a non-contracted reply before DROP (default 4 → 5 attempts total, = Workflow's retry cap OBp/GKa=5); a template knob, not a welded constant
@@ -197,7 +199,7 @@ export async function runLens(template: Template, ctx: LensContext, deps: LensDe
   const scope: Scope = { steps: {}, ctx }
 
   // The StudioLens parent card (StudioLens until L3 renames it) wraps the fan-out rows. It opens just before
-  // the first fan-out phase — once the roster is known (review: select.lenses; understand: paths) — so the card
+  // the first fan-out phase — once the roster is known (review: angles → keys; understand: paths) — so the card
   // shows queued rows + a stable N, and closes (even on a throw) so it never spins 'running' forever.
   const mode = template.name === 'understand' ? 'understand' : 'review'
   const { finderId } = classifySteps(template)
@@ -212,7 +214,7 @@ export async function runLens(template: Template, ctx: LensContext, deps: LensDe
   const openPanelBefore = (step: StepSpec): void => {
     if (panelOpened || !opensSubjects(step)) return
     panelRole = ctx.roleBySlot[step.role ?? 'reviewer'] ?? panelRole
-    // roster = the fan-out's OWN `over` list (review: select.lenses → keys; understand: paths), resolved
+    // roster = the fan-out's OWN `over` list (review: angles → keys; understand: paths), resolved
     // generically — the panel never hard-codes the producing step's id (orchestration is data).
     const roster = (resolveValue(stripRef(step.over ?? ''), scope) as unknown[] | undefined) ?? []
     const subjects = roster.map((it) => (typeof it === 'string' ? it : String((it as { key?: unknown })?.key ?? '')))
@@ -292,6 +294,8 @@ async function runStep(step: StepSpec, scope: Scope, ctx: LensContext, deps: Len
       return runPipeline(step, scope, ctx, deps)
     case 'refute':
       return runRefute(step, scope, ctx, deps)
+    case 'dedup':
+      return runDedup(step, scope)
     case 'loop':
       return runLoop(step, scope, ctx, deps)
     default:
@@ -386,11 +390,11 @@ function sanitizeLenses(arr: unknown[]): Array<{ key: string; focus: string; why
   return out
 }
 
-// parallel / pipeline fan-out. The faithful review path uses `parallel` (a barrier) for the finder fan-out:
-// every finder completes before the refute barrier reads `find.pluck(findings).flat` (matches panel.ts). Each
-// item runs the step's inline body; its result auto-carries the over/as binding (§2.2). `pipeline` runs the
-// same per-item body but is reserved for future streamed stages — for the two shipped templates it is a barrier
-// too (the review fold needs every lens before refute).
+// parallel / pipeline fan-out. The shipped review uses `parallel` (a BARRIER) for the finder fan-out: every
+// finder (one per fixed angle) completes before the dedup + refute barriers read `find.pluck(candidates).flat`
+// (Workflow Phase 1 → Phase 2). Each item runs the step's inline body; its result auto-carries the over/as
+// binding (§2.2). `pipeline` (below) is the non-barrier streamed variant — NOT used by either shipped template
+// today (review reverted to the barrier so dedup can run cross-angle); it stays for the engine grammar + tests.
 async function runFanOut(step: StepSpec, scope: Scope, ctx: LensContext, deps: LensDeps): Promise<unknown[]> {
   const list = (resolveValue(stripRef(step.over ?? ''), scope) as unknown[] | undefined) ?? []
   const as = step.as ?? 'item'
@@ -434,12 +438,12 @@ function finderStage(step: StepSpec): StepSpec | undefined {
   return step.stages?.find(isFinderShape)
 }
 
-// pipeline — a REAL non-barrier staged fan-out (Workflow's pipeline, the §3 fix for #6/#3b). Each item flows
-// through `stages` in sequence INDEPENDENTLY, sharing only the global concurrency limiter — so lens B's refute
-// can run while lens A's finder is still going (NO cross-item barrier; the old `parallel find` → `refute` made
-// every finder finish before ANY refute). The shipped review uses [finder, refute]: each lens is found, then ITS
-// OWN candidates are refuted + folded. Returns the folded SubjectFinding[] — same shape as the old `find` step,
-// each candidate carrying its refute verdict — so run.subjects / panelSummary / the result projection are unchanged.
+// pipeline — a REAL non-barrier staged fan-out (Workflow's pipeline). Each item flows through `stages` in sequence
+// INDEPENDENTLY, sharing only the global concurrency limiter — so lens B's refute can run while lens A's finder is
+// still going (NO cross-item barrier). NOTE: the shipped review NO LONGER uses this — it reverted to the
+// `parallel find → dedup → refute` barrier (Workflow Phase 1 → Phase 2) because cross-angle dedup needs ALL
+// candidates before any verifier runs, which a per-item pipeline can't provide. Kept for the engine grammar +
+// the deadlock/overlap regression tests. Returns the folded SubjectFinding[], each candidate carrying its verdict.
 async function runPipeline(step: StepSpec, scope: Scope, ctx: LensContext, deps: LensDeps): Promise<SubjectFinding[]> {
   const list = (resolveValue(stripRef(step.over ?? ''), scope) as unknown[] | undefined) ?? []
   const as = step.as ?? 'item'
@@ -485,9 +489,10 @@ async function runPipelineItem(step: StepSpec, scope: Scope, ctx: LensContext, d
   return subject ?? (droppedItem(finderStage(step) ?? step, item, as) as SubjectFinding)
 }
 
-// One finder lens — emits the Subject card, runs ≤2 attempts (non-contracted retry once), parses the findings
-// contract with the PASS-only empty-trust degrade, stamps focus/id onto each candidate. Result is a
-// SubjectFinding (pre-refute: passed is provisional, derived in the fold after verify).
+// One finder angle — emits the Subject card, runs up to `retries`+1 attempts (default 5, Workflow's retry cap) on a
+// non-contracted reply before DROP, parses the findings contract (≤6 candidates) with the PASS-only empty-trust
+// degrade, stamps focus/id onto each candidate. Result is a SubjectFinding (pre-verify: passed is provisional,
+// derived in the fold after the refute stage).
 async function runFinder(
   step: StepSpec,
   itemScope: Scope,
@@ -574,10 +579,55 @@ async function runReader(step: StepSpec, deps: LensDeps, path: string, as: strin
   return { [as]: path, [emitAs]: summary }
 }
 
+// dedup (BARRIER step) — Workflow Phase-2 opener: "Dedup near-duplicates (same defect, same location → keep
+// one)" BEFORE any verifier is spent. The FIXED angle taxonomy overlaps on purpose (line-scan + cross-file +
+// language-pitfall can all flag the same line), so without this each angle's copy of one defect would burn its
+// own skeptic. Collapses candidates that share the `by` fields (e.g. file+line) ACROSS all source angles,
+// keeping the most-severe / most-concrete representative; the rest are REMOVED IN PLACE from their owning
+// angle's `candidates`, so the downstream refute (`over: ${find.pluck(candidates).flat}`) and the per-angle fold
+// both read the deduped set — no phantom "survived" from an un-voted duplicate. Candidates missing any `by`
+// field (no file/line) are never merged (a unique key), so file-level findings can't over-collapse.
+function runDedup(step: StepSpec, scope: Scope): { total: number; kept: number; removed: number } {
+  const sourceId = (stripRef(step.over ?? '').split('.')[0] || '').trim()
+  const source = scope.steps[sourceId] as SubjectFinding[] | undefined
+  const by = step.by && step.by.length ? step.by : ['file', 'line']
+  if (!Array.isArray(source)) return { total: 0, kept: 0, removed: 0 }
+
+  type Ref = { owner: SubjectFinding; cand: Finding }
+  const groups = new Map<string, Ref[]>()
+  let total = 0
+  for (const subj of source) {
+    for (const c of subj.candidates ?? []) {
+      total++
+      const cr = c as unknown as Record<string, unknown>
+      const hasAll = by.every((f) => cr[f] != null && cr[f] !== '')
+      // no-location candidates never merge → a per-candidate unique key keeps them all
+      const key = hasAll ? by.map((f) => String(cr[f])).join(' ') : `__keep__${subj.key}__${c.id}`
+      const g = groups.get(key)
+      if (g) g.push({ owner: subj, cand: c })
+      else groups.set(key, [{ owner: subj, cand: c }])
+    }
+  }
+
+  const keep = new Set<Finding>()
+  for (const g of groups.values()) {
+    if (g.length === 1) { keep.add(g[0].cand); continue }
+    // representative = most severe (SEV_ORDER asc: high=0), tie-break on the most concrete (longest) mechanism
+    g.sort((a, b) => (SEV_ORDER[a.cand.severity] - SEV_ORDER[b.cand.severity]) || (b.cand.mechanism.length - a.cand.mechanism.length))
+    keep.add(g[0].cand)
+  }
+
+  // rewrite each angle's candidate list in place to only the survivors (the removed dups fold into their representative)
+  for (const subj of source) {
+    if (subj.candidates) subj.candidates = subj.candidates.filter((c) => keep.has(c))
+  }
+  return { total, kept: keep.size, removed: total - keep.size }
+}
+
 // refute (BARRIER step) — fans skeptics over the WHOLE flat candidate list at once, folds the SOURCE finder
-// step's per-lens verdicts in place (§3⑤), key-joins the refute cost (§3②). Used by a two-phase find→verify
-// template + the engine tests; the shipped review.yaml refutes per-lens inside the `pipeline` (no find barrier),
-// but BOTH paths share the refute math via refuteCandidates so it lives in exactly one place.
+// step's per-angle verdicts in place (§3⑤), key-joins the refute cost (§3②). This is the SHIPPED review's verify
+// stage (review.yaml: `find` → `dedup` → `verify`, over: ${find.pluck(candidates).flat}); the per-item `pipeline`
+// path also reuses refuteCandidates, so the refute math lives in exactly one place.
 async function runRefute(step: StepSpec, scope: Scope, ctx: LensContext, deps: LensDeps): Promise<{ kept: Finding[] }> {
   const candidates = (resolveValue(stripRef(step.over ?? ''), scope) as Finding[] | undefined) ?? []
   const roleId = resolveRole(step, ctx)
@@ -587,12 +637,12 @@ async function runRefute(step: StepSpec, scope: Scope, ctx: LensContext, deps: L
   return { kept: candidates }
 }
 
-// The shared refute engine: fan skeptics over a candidate SET (the whole flat list for the barrier step, or ONE
-// finder's candidates for the per-lens pipeline), set each candidate's refute verdict + tally IN PLACE, emit the
-// Finding rows + SubjectRefute votes, and return the per-lens refute token cost. DEPTH is per-candidate +
-// model-decided: the finder's own `confidence` picks the skeptic count from `votersByConfidence` (low confidence →
-// MORE skeptics, likelier a false alarm; high → fewer, it survives anyway). Falls back to a flat `voters` (3);
-// majority = strict majority of the chosen count (floor(n/2)+1) unless the template pins `majority`.
+// The shared refute engine: fan skeptics over a candidate SET (the whole flat deduped list for the barrier step,
+// or ONE finder's candidates for the per-item pipeline), set each candidate's refute verdict + tally IN PLACE,
+// emit the Finding rows + SubjectRefute votes, and return the per-angle refute token cost. The SHIPPED review sets
+// `voters: 1` — Workflow's "Verify (1-vote, recall-biased)": ONE skeptic per candidate, majority = floor(1/2)+1 = 1.
+// `votersByConfidence` (confidence → skeptic count) + a flat `voters` default (3) remain as generic engine knobs
+// (e.g. a deep-research-style N-vote template), but code-review uses 1. majority = floor(n/2)+1 unless `majority` is set.
 async function refuteCandidates(step: StepSpec, ctx: LensContext, deps: LensDeps, candidates: Finding[], roleId: string, kit: readonly string[], stepId: string, panelId: string): Promise<Map<string, { inputTokens: number; outputTokens: number }>> {
   const votersFor = (c: Finding): number => step.votersByConfidence?.[c.confidence ?? 'med'] ?? step.voters ?? 3
   const majorityFor = (n: number): number => step.majority ?? Math.floor(n / 2) + 1

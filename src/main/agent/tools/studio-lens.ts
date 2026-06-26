@@ -1,9 +1,9 @@
 // studio_lens — the agent-driven multi-perspective fan-out tool (studio-lens §4 / closure-loop §3.5).
 // Lets ANY agent role escalate, on its OWN judgment, to a fan-out of independent read-only agents: 'review'
-// (N reviewers each probing one risk axis + adversarial skeptics refuting false alarms → PASS/FAIL+evidence)
-// or 'understand' (N readers each summarizing one file → a shared map). The actual fan-out lives behind
-// ctx.panel (services/examine/agent-panel.ts) — this file is the tool surface + the guidance the model reads
-// to decide on its own WHEN to drive it, WHICH mode, and HOW WIDE.
+// (a FIXED set of review angles find candidates → dedup → one skeptic verifies each → confirmed defects + evidence)
+// or 'understand' (one reader per file → a shared map). The actual fan-out lives behind ctx.panel
+// (services/lens, the Workflow-aligned engine) — this file is the tool surface + the guidance the model reads to
+// decide on its own WHEN to drive it and WHICH mode (the fan-out size is fixed by the engine, not the caller).
 
 import { z } from 'zod'
 import { buildTool } from '../tool'
@@ -24,27 +24,28 @@ export const studioLensTool = buildTool<typeof inputSchema, StudioLensResult>({
   prompt: () =>
     'Fan a body of work out to SEVERAL independent, read-only agents that each examine it from one angle — far ' +
     'deeper than reading it once yourself. YOU decide, on your own judgment, when a piece of work is big enough to ' +
-    'warrant it, which mode fits, and how wide to fan; you do not wait to be told.\n' +
+    'warrant it and which mode fits; you do not wait to be told. You do NOT size the fan-out — review runs a FIXED ' +
+    'angle set, understand runs one reader per file you pass.\n' +
     'TWO MODES:\n' +
-    "• mode:'review' (default) — N reviewers each probe ONE distinct risk axis (security, data-integrity, " +
-    'concurrency, error-handling, migration-safety, perf, api-contract, test-quality), then adversarial skeptics try ' +
-    'to refute each flagged defect before it stands. Returns each axis as PASS/FAIL with evidence (false alarms ' +
-    'already filtered out). Use it to audit a feature/module you just built, an end-of-project review of a ' +
-    'from-scratch build, or a sizable cross-cutting change.\n' +
-    "• mode:'understand' — N readers each summarize one file into a shared, structured MAP (no pass/fail; the map " +
-    'IS the result). Use it to get up to speed FAST on material you have not internalized: a long document, a ' +
-    'multi-document set (e.g. 01-/02-/03- specs), or an unfamiliar multi-file module before you change it.\n' +
+    "• mode:'review' (default) — a FIXED set of review angles (correctness: per-hunk scan / removed-behavior / " +
+    'cross-file; plus reuse, simplification, efficiency, altitude, conventions) each surface candidate defects; ' +
+    'near-duplicates are merged, then ONE independent skeptic verifies each candidate (kept unless it can be ' +
+    'refuted from the code) before it stands. Returns the confirmed defects with evidence (false alarms already ' +
+    'dropped). Use it to audit a feature/module you just built, an end-of-project review of a from-scratch build, ' +
+    'or a sizable cross-cutting change.\n' +
+    "• mode:'understand' — one reader per file you pass summarizes it into a shared, structured MAP (no pass/fail; " +
+    'the map IS the result). Use it to get up to speed FAST on material you have not internalized: a long document, ' +
+    'a multi-document set (e.g. 01-/02-/03- specs), or an unfamiliar multi-file module before you change it.\n' +
     'WHEN TO REACH FOR IT: judge by the SHAPE of the work, and DEFAULT to running it before you call substantial ' +
     'work done — a feature/module/endpoint built from scratch, a change touching many files or a shared contract, ' +
     'high-stakes code (billing, auth, data-integrity, migrations), an audit / "is this sound?" pass, or a subsystem ' +
     'you have not internalized (understand mode first). On work shaped like that, a single read is not enough — ' +
-    'reach for this by default rather than waiting to be told. SCALE the fan-out to the work: a small change → a few ' +
-    'agents; a large green-field or multi-doc target → many (the panel sizes itself from the content; a limiter ' +
-    'backstops it, so you never do the math).\n' +
+    'reach for this by default rather than waiting to be told. The review fan-out is BOUNDED and the same shape ' +
+    'every time, so just decide WHETHER and WHICH mode.\n' +
     'WHEN NOT TO: a genuinely small, single-concern edit or a short file — a one-line fix, a rename, a copy tweak — ' +
     'a normal read is enough; do NOT reach for this. The call is yours, but lean toward reviewing on substantial work.\n' +
-    'INPUT/OUTPUT: pass the target file path(s) + mode; the panel itself picks which dimensions/readers the content ' +
-    'warrants. Read-only — it never edits code.',
+    'INPUT/OUTPUT: pass the target file path(s) + mode; review runs the fixed angle set over the change, understand ' +
+    'runs one reader per file. Read-only — it never edits code.',
   isReadOnly: () => true,
   async call(input, ctx) {
     // ctx.panel is set only on a top-level dev run; absent inside a sub-agent / a panel reviewer (the depth

@@ -133,6 +133,10 @@ export interface RunStepOptions {
   // every stream event, so a slow-but-active run is never killed — only a truly frozen one. Set by examine
   // subjects (panel finders/skeptics); a normal step leaves it unset (no watchdog). NOT a wall-clock cap.
   stallTimeoutMs?: number
+  // Hard cap on this run's agent-loop turns. Lens sub-agents (finder/skeptic/reader) pass 50 — Workflow's
+  // FORKED_AGENT_DEFAULT_MAX_TURNS — so a single agent can't run away into hundreds of self-read turns (the
+  // dogfood finder hit ~300 turns × 92k-token context = the channel-killer). Unset → unbounded (normal steps).
+  maxTurns?: number
 }
 
 // Coordinator's system = a base prompt section (direct / synthesis) + his recalled memories + the running
@@ -277,6 +281,7 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
         permissionMode: opts.permissionMode,
         toolNames: opts.toolNames,
         expectsFileChanges: opts.expectsFileChanges,
+        maxTurns: opts.maxTurns,
         imageModel: binding.imageModel ?? undefined,
         // DIRECT: run the loop with Danny's front-door persona + his recalled context, not the
         // dispatched-expert coding system. Gate B's verifier passes its own persona via opts.systemPromptOverride.

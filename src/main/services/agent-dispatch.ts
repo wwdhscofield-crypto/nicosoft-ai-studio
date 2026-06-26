@@ -76,6 +76,7 @@ export interface AgentLoopInput {
   initialTodos?: AgentContext['todos'] // seed the run's todos from the shared conv-level list (pipeline continuity)
   onTodosChange?: (roleId: string, todos: AgentContext['todos']) => void // TodoWrite writes back → shared conv-level list + per-role live push (roleId injected at ctx.setTodos)
   expectsFileChanges?: boolean // implementation-gated run: quiescing with zero file edits triggers one nudge turn (loop.ts)
+  maxTurns?: number // hard cap on agent-loop turns (lens sub-agents pass 50 = Workflow FORKED_AGENT_DEFAULT_MAX_TURNS); undefined → unbounded
   // 批C2b: a CONV-LEVEL async registry (solo-async) for the direct-chat path, so launch_async handles outlive the
   // run and a parked turn can resume across turns. When set, runAgentLoop uses it and does NOT dispose it in the
   // finally (conv-delete / app-exit owns that). Absent (dispatched / collab-sub) → a per-run registry, disposed here.
@@ -207,6 +208,7 @@ export async function runAgentLoop(
     ctx,
     contextWindow: loop.contextWindow ?? 200_000,
     expectsFileChanges: loop.expectsFileChanges,
+    maxTurns: loop.maxTurns,
     thinking: loop.thinking,
     imageModel: loop.imageModel,
     onStream: cb.onStream,
@@ -363,6 +365,7 @@ export interface DispatchedAgentInput {
   // the request) — false for pipeline step 2+ / panel (seed = the constructed `prompt`, not a user turn).
   includeHistory: boolean
   expectsFileChanges?: boolean // implementation-gated dispatch → loop nudges once on a zero-edit quiesce
+  maxTurns?: number // hard cap on agent-loop turns (lens sub-agents pass 50); undefined → unbounded
   memories: MemoryRow[]
   summary: string | null
   imageModel?: string // image backend slug for ns_generate_image (dispatched designer / Georgia); Gemini only
@@ -445,6 +448,7 @@ export async function runDispatchedAgent(
       contextWindow: d.contextWindow,
       permissionMode: d.permissionMode ?? 'default',
       expectsFileChanges: d.expectsFileChanges,
+      maxTurns: d.maxTurns,
       imageModel: d.imageModel,
       initialTodos: d.initialTodos,
       onTodosChange: d.onTodosChange,

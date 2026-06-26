@@ -1,8 +1,10 @@
-# Studio Lens — REVIEW template. The find→refute→synth panel, fully model-driven: the SELECT step AUTHORS the
-# review lenses from the code itself (zero enum, the whole point of the refactor), the refute stage is the
-# backstop against a fabricated lens. Orchestration is data; the engine owns the domain projections (§3).
+# Studio Lens — REVIEW template. The find→verify→synth panel, REPLICATING the Claude Code Workflow `code-review`
+# workflow (cc 2.1.186): a FIXED angle taxonomy (lens/angles.ts, injected as ctx.angles — NOT model-authored;
+# the old self-derived `select` step over-produced lenses and drove the fan-out explosion), one finder per angle,
+# ONE recall-biased skeptic per candidate, then a capped synthesis. Orchestration is data; the engine owns the
+# domain projections (§3).
 name: review
-inputs: [paths, diff, content, baseRef, task, implementerSummary, writtenFiles, floorVerdict]
+inputs: [paths, diff, content, baseRef, task, implementerSummary, writtenFiles, floorVerdict, angles]
 enabledSetting: gateB.studioLens.enabled
 # breadthInput is the caller's ENTRY INTENT, NOT a breadth level: 'thorough' = an EXPLICIT review request
 # (skip the throttle, always panel); 'conservative' = the Gate-B floor-amplifier (run the escalate throttle
@@ -29,130 +31,104 @@ phases:
       → ESCALATE: NO. When genuinely unsure, prefer YES (the floor is the safety net either way).
       End your reply with exactly one final line: `ESCALATE: YES` or `ESCALATE: NO` — nothing after it.
 
-  # SELECT — the model AUTHORS the review lenses from the code. No fixed list, no whitelist (the refute stage
-  # is the backstop against a fabricated lens). Replaces the deleted enum + deriveSubjects.
-  - id: select
-    type: agent
-    role: reviewer
-    when: "${breadthInput != 'conservative' || escalate.escalate}"
-    output:
-      lenses:
-        - key: string
-          focus: string
-          why: string
-    prompt: |
-      You DRIVE an independent review. AUTHOR the review LENSES this CODE warrants — each a risk surface
-      BEYOND standard correctness (the floor verifier already owns correctness / duplication / wrong-problem;
-      do NOT re-run them). There is NO fixed list — self-derive the lenses from what THIS code actually does
-      and means (a token check that can be bypassed = a security lens; a shared write without a lock = a
-      concurrency lens), never from file names.
-
-      Size the panel to THIS code's actual risk surface — author as FEW or as MANY lenses as it genuinely
-      warrants: one lens (or even an empty array [] when the change is genuinely trivial and a standard read
-      suffices) for a small contained edit, several for broad, cross-cutting, or risk-laden work. Don't pad the
-      list to look thorough, and don't under-cover a real risk — the COUNT is yours to size to the code, not a quota.
-
-      For each lens emit {"key":"<short-kebab-name>","focus":"<one sentence: exactly what this lens hunts
-      and the failure it looks for>","why":"<one line citing the specific code — a file:hunk or concrete
-      behavior — that puts it in scope>"}. The refute stage that follows drops any lens that yields no real
-      defect, so over-proposing a lens is cheap and under-covering a real risk is the costly miss. NEVER
-      fabricate a risk the code does not actually have.
-
-      Task:
-      {{task}}
-
-      File(s) under review: {{paths}}
-
-      Diff — what changed, IF available. It may be EMPTY (a brand-new file, or a project that is not a git
-      repo): an empty diff is NOT "low risk" — judge entirely from the full file content below either way.
-      {{diff}}
-
-      The code as it stands — your PRIMARY source; always review THIS directly:
-      {{content}}
-
-      Return ONLY a JSON array of lens objects — no prose, no markdown fence.
-
-  # PANEL — the find→refute PIPELINE (a real Workflow pipeline, NOT a barrier): each lens flows finder → refute
-  # INDEPENDENTLY, so a fast lens's candidates are vetted while a slow lens's finder is still hunting (the old
-  # two-phase `find` made EVERY finder finish before ANY refute — the 18-min coupling). All stages run under ONE
-  # global concurrency limiter. The pipeline returns the folded per-lens SubjectFinding[]; candidates carry their
-  # own refute verdict, so `panel.pluck(candidates).flat` is the cross-lens candidate list the result reads.
-  - id: panel
+  # FIND — one finder per FIXED angle, ALL in parallel (a BARRIER): every angle completes before verify, so the
+  # dedup step can merge cross-angle duplicates before any verifier is spent (Workflow Phase 1 → Phase 2). This is
+  # Workflow's real shape: a per-angle find→verify pipeline could not dedup ACROSS angles, so it burned a skeptic
+  # on every angle's copy of the same defect. `over: ${angles}` is the FIXED taxonomy (lens/angles.ts) — Workflow
+  # runs a fixed angle set, it does NOT author angles from the code. Returns the per-angle SubjectFinding[]; the
+  # verify fold writes each candidate's verdict back onto it, so `find.pluck(candidates).flat` is the result's list.
+  - id: find
     phase: Review
-    type: pipeline
-    over: "${select.lenses}"
+    # Fire the panel only when warranted: an explicit (thorough) review always; the conservative Gate-B
+    # floor-amplifier only when the escalate throttle said YES (the gate the deleted `select` step used to carry).
+    when: "${breadthInput != 'conservative' || escalate.escalate}"
+    type: parallel
+    over: "${angles}"
     as: lens
     role: reviewer
     kit: read-only
-    stages:
-      # FIND stage — one finder for this lens. READS the target files directly (git diff is OPTIONAL enrichment,
-      # agent's call — works on any tree, git or not), hunts its lens, emits a ```findings array with a
-      # per-candidate confidence. Empty array trusted ONLY on VERDICT: PASS — a FAIL with no array degrades to
-      # one prose candidate (never swallow a FAIL).
-      - id: find
-        card:
-          name: Subject
-          phase: find
-          subject: "${lens.key}"
-        prompt: |
-          Run your "{{lens.key}}" lens on the code under review: {{lens.focus}}. Inspect it YOURSELF — READ the
-          target file(s) ({{paths}}) directly; reading the code is ALWAYS enough on its own. If this happens to
-          be a git repo you MAY also use `git diff {{baseRef}}` / `git status` to isolate the precise change —
-          your call, only if it helps. Nothing is inlined.
+    card:
+      name: Subject
+      phase: find
+      subject: "${lens.key}"
+    prompt: |
+      Run your "{{lens.key}}" lens: {{lens.focus}}
 
-          Original task:
-          {{task}}
+      The change under review (unified diff — your PRIMARY input; review THIS):
+      {{diff}}
 
-          Implementer's own summary (a claim to verify, not ground truth):
-          {{implementerSummary}}
-        output:
-          verdict: PASS|FAIL
-          candidates:
-            - title: string
-              file: string
-              line: int
-              severity: high|med|low
-              confidence: high|med|low
-              mechanism: string
-        emit:
-          contract: findings
-          degradeTo: verdict
-          trustEmptyOn: PASS
+      Target file(s): {{paths}}. Read the ENCLOSING function of a hunk in these files ONLY when your angle needs
+      context the diff does not show. Do NOT read whole files end-to-end, and do NOT read files outside the target
+      set or explore the rest of the repo — that is out of scope and wastes the review.
 
-      # VERIFY stage — the adversarial REFUTE filter over THIS lens's OWN candidates (over: ${find.candidates},
-      # the finder stage's output threaded into this stage's scope — not a cross-lens flat list). The skeptic
-      # COUNT is MODEL-DECIDED: it scales to the finder's own `confidence` (votersByConfidence), so a borderline
-      # candidate is vetted harder (5) than an obvious one (2). majority = floor(n/2)+1 → drop-bars high 2/2,
-      # med 2/3, low 3/5: a MONOTONIC increasing drop-probability (high hardest to drop — we trust the finder —
-      # low easiest), and every tier survives ONE flaky/failed vote (no even-count unanimity trap; no single vote
-      # is dispositive even for high). failVote=uphold: an infra-failed / unparseable vote never drops a real defect.
-      - id: verify
-        phase: Verify
-        type: refute
-        over: "${find.candidates}"
-        as: cand
-        votersByConfidence: { high: 2, med: 3, low: 5 }
-        failVote: uphold
-        card:
-          name: SubjectRefute
-          phase: verify
-          subject: "${cand.id}"
-        system: "refutePrompt(${cand.focus})"
-        prompt: |
-          An independent "{{cand.lens}}" finder flagged ONE candidate defect in the code under review. As a
-          SKEPTIC, try to REFUTE this single candidate — prove it is a false alarm, or concede it stands.
-          Inspect it YOURSELF — READ the cited file ({{cand.file}}) directly; that is always enough. If this is a
-          git repo you MAY also `git diff {{baseRef}} -- {{cand.file}}` for the precise hunk — your call.
+      Original task:
+      {{task}}
 
-          Candidate to refute:
-          [{{cand.severity}}] {{cand.title}}
-          Mechanism: {{cand.mechanism}}
+      Implementer's own summary (a claim to verify, not ground truth):
+      {{implementerSummary}}
+    output:
+      verdict: PASS|FAIL
+      candidates:
+        - title: string
+          file: string
+          line: int
+          severity: high|med|low
+          mechanism: string
+    emit:
+      contract: findings
+      degradeTo: verdict
+      trustEmptyOn: PASS
 
-          Original task:
-          {{task}}
+  # DEDUP — Workflow Phase-2 opener: "Dedup near-duplicates (same defect, same location → keep one)" BEFORE any
+  # verifier is spent. The fixed angles overlap on purpose (line-scan + cross-file can flag the same line), so one
+  # defect flagged by N angles collapses to ONE candidate here (the most-severe / most-concrete representative is
+  # kept; the rest are removed from their angle IN PLACE). So verify spends one skeptic per DISTINCT defect and the
+  # per-angle fold reads the deduped set — no phantom "survived" from an un-voted duplicate.
+  - id: dedup
+    when: "${breadthInput != 'conservative' || escalate.escalate}"
+    type: dedup
+    over: "${find}"
+    by: [file, line]
 
-          Implementer's own summary:
-          {{implementerSummary}}
+  # VERIFY — ONE recall-biased skeptic per DEDUPED candidate (over: ${find.pluck(candidates).flat}, the cross-angle
+  # flat list the dedup step collapsed). This is Workflow's "Verify (1-vote, recall-biased)" EXACTLY: a single
+  # verifier per candidate, kept unless REFUTED (the refutePrompt persona is PLAUSIBLE-by-default). The old
+  # votersByConfidence {high:2,med:3,low:5} (avg ~2.4, up to 5) was the single biggest skeptic-count divergence —
+  # code-review is 1 vote, NOT majority voting (the 3-vote pattern is deep-research over web claims). majority =
+  # floor(1/2)+1 = 1, so the one skeptic decides. failVote=uphold: an infra-failed / unparseable vote never drops a
+  # real defect (recall-biased). The fold writes each candidate's verdict back onto its source angle in `find`.
+  - id: verify
+    phase: Verify
+    when: "${breadthInput != 'conservative' || escalate.escalate}"
+    type: refute
+    over: "${find.pluck(candidates).flat}"
+    as: cand
+    voters: 1
+    failVote: uphold
+    card:
+      name: SubjectRefute
+      phase: verify
+      subject: "${cand.id}"
+    system: "refutePrompt(${cand.focus})"
+    prompt: |
+      An independent "{{cand.lens}}" finder flagged ONE candidate defect. Verify it against the change below —
+      single-vote, recall-biased: keep it unless you can show FROM THE CODE that it is wrong.
+
+      The change under review (unified diff):
+      {{diff}}
+
+      Candidate to verify:
+      [{{cand.severity}}] {{cand.title}} ({{cand.file}})
+      Mechanism: {{cand.mechanism}}
+
+      Read the cited file's relevant lines ONLY if the diff above does not show enough to decide. Do NOT read
+      whole files or explore the repo beyond the candidate's site.
+
+      Original task:
+      {{task}}
+
+      Implementer's own summary:
+      {{implementerSummary}}
 
   # SYNTHESIZE — the lead-reviewer turn (tool-less one-shot, the chatOnce seam): dedup the CONFIRMED findings
   # into one actionable report, severity-first. Only runs when a confirmed defect survived refute.
@@ -160,7 +136,7 @@ phases:
     phase: Synthesize
     type: agent
     role: reviewer
-    when: "${panel.pluck(candidates).flat.where(refuted == false).length > 0}"
+    when: "${find.pluck(candidates).flat.where(refuted == false).length > 0}"
     card:
       name: Synth
       phase: synth
@@ -176,13 +152,13 @@ phases:
         WHY it matters, and a concrete FIX.
       - Be tight and concrete — no preamble, no restating these instructions. This goes straight to the engineer.
 
-      Confirmed findings (survived adversarial refutation), severity-first:
-      {{panel.pluck(candidates).flat.where(refuted == false).orderBy(severity, asc)}}
+      Confirmed findings (survived verification), most-severe first (at most 10 — correctness outranks cleanup):
+      {{find.pluck(candidates).flat.where(refuted == false).orderBy(severity, asc).take(10)}}
 
 # result: — the YAML归约 projection. The engine layers the domain projections (subjects[] / ok / message /
 # reviewer / recordExamine payload) on top in the bridge (§3①/M-7); they are NOT expressible as归约.
 result:
-  confirmed: "${panel.pluck(candidates).flat.where(refuted == false).orderBy(severity, asc)}"
-  refuted: "${panel.pluck(candidates).flat.where(refuted == true)}"
-  candidates: "${panel.pluck(candidates).flat}"
+  confirmed: "${find.pluck(candidates).flat.where(refuted == false).orderBy(severity, asc).take(10)}"
+  refuted: "${find.pluck(candidates).flat.where(refuted == true)}"
+  candidates: "${find.pluck(candidates).flat}"
   report: "${synth.report}"

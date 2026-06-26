@@ -13,9 +13,10 @@ import * as settingsService from '../settings.service'
 import * as workspaceTasks from '../workspace-tasks.service'
 import { chooseVerifierRole } from './verifier'
 import { runLens, type LensContext, type LensRun } from './engine'
+import { REVIEW_ANGLES } from './angles'
 import { reviewTemplate, understandTemplate } from './templates'
 import { makeLensDeps } from './step'
-import { buildChangedSet, readTargetContent, gitHead, diffSince } from './diff'
+import { buildChangedSet, gitHead, diffSince } from './diff'
 import type { SubjectFinding, Finding } from './types'
 import type { WrittenFile } from '../../agent/context'
 import type { RunStepOptions } from '../coordinator-step'
@@ -48,7 +49,6 @@ async function runReviewEngine(
   reviewerRoleId: string,
   implementers: string | string[],
   target: { changed: string[]; diff: string },
-  content: string,
   gate: Gate,
   implementationText: string,
   baseRef: string,
@@ -65,18 +65,27 @@ async function runReviewEngine(
     return { steps: {}, result: {}, subjects: [], reviewerRoleId }
   }
   const callerId = Array.isArray(implementers) ? implementers[0] : implementers
+  // PIN the diff ONCE (Workflow "Scope: pin the diff command") and inline it into every finder/skeptic — they
+  // REVIEW this focused diff instead of blindly self-reading the whole codebase. `target.diff` is already
+  // truncated to a hard char cap by diff.ts (buildChangedSet/diffSince — Workflow "diff = the change, bounded"),
+  // so inlining it is cheap and bounded. The full FILE CONTENT is still NOT inlined (that 60k read — the old
+  // select-step blunder — is what actually blew per-channel TPM); a finder reads a target file's enclosing code
+  // only when its angle needs it, bounded by maxTurns=50. Empty diff (already-committed target) → the finder
+  // reads the LISTED target files only (still scoped, still maxTurns-bounded).
   const ctx: LensContext = {
     stepId,
     roleBySlot: { reviewer: reviewerRoleId, caller: callerId },
     paths: target.changed,
-    diff: target.diff.trim() ? target.diff : '(no textual diff available — judge from the file content below)',
-    content,
+    diff: target.diff.trim() ? target.diff : '(no diff — these files are unchanged vs the base; read the listed target files directly for your angle)',
     baseRef: baseRef || 'HEAD',
     task: gate.originalPrompt,
     implementerSummary: implementationText,
     writtenFiles,
     floorVerdict,
     breadthInput,
+    // The FIXED review-angle taxonomy the panel fans over (Workflow runs a fixed angle set, not model-authored
+    // lenses). review.yaml reads it as `over: ${angles}`.
+    angles: REVIEW_ANGLES,
   }
   return runLens(reviewTemplate, ctx, makeLensDeps(opts))
 }
@@ -103,9 +112,8 @@ export async function runLensReview(
     if (!lensEnabled()) return []
     const target = await buildChangedSet(opts.cwd, baseRef, baseChanged, implementerFiles)
     if (target.changed.length === 0) return []
-    const content = await readTargetContent(opts.cwd, target.changed)
     const reviewOpts: RunStepOptions = { ...opts, signal: signal ?? opts.signal }
-    const run = await runReviewEngine(reviewOpts, reviewer, roleId, target, content, gate, implementationText, baseRef, 'conservative', implementerFiles, floorVerdict, stepId)
+    const run = await runReviewEngine(reviewOpts, reviewer, roleId, target, gate, implementationText, baseRef, 'conservative', implementerFiles, floorVerdict, stepId)
     return run.subjects
   } catch (e) {
     console.warn('[studio-lens] gate-b review failed (non-blocking, floor stands):', e instanceof Error ? e.message : e)
@@ -142,10 +150,7 @@ export async function runConsolidatedReview(
     return { ok: false, message: 'studio_lens (review) needs at least one configured expert independent of the implementer(s) to act as the reviewer, but none is bound. Configure another expert (e.g. Analyst/Shuri/Flynn) and retry.', confirmed: [], refuted: [], produced: [], report: null }
   }
   const paths = target.changed
-  // Explicit `thorough` review (collab + the agent tool): open the content caps up (the request asked for a full
-  // review) — still a hard ceiling, just larger than the Gate-B floor-amplifier's tight default.
-  const content = await readTargetContent(opts.cwd, paths, 60_000, 120)
-  const run = await runReviewEngine(opts, reviewer, implementers, target, content, { originalPrompt, acceptance: [] }, '(standalone review — no implementer summary to verify)', baseRef, 'thorough', [], '', ulid())
+  const run = await runReviewEngine(opts, reviewer, implementers, target, { originalPrompt, acceptance: [] }, '(standalone review — no implementer summary to verify)', baseRef, 'thorough', [], '', ulid())
 
   const produced = run.subjects.filter((f) => f.produced)
   if (produced.length === 0) {
@@ -272,7 +277,9 @@ export function createLensHandle(deps: LensHandleDeps): PanelHandle {
         }
       }
 
-      // REVIEW: the caller's own uncommitted changes to these paths (working tree vs HEAD).
+      // REVIEW: the caller's own uncommitted changes to these paths (working tree vs HEAD). Compute the diff
+      // ONCE here and pin it — the engine inlines it into every finder/skeptic (Workflow's "Scope: pin the diff"),
+      // so they review the focused change instead of self-reading the whole repo. diffSince truncates to a cap.
       const base = await gitHead(deps.cwd)
       const diff = base ? await diffSince(deps.cwd, base, paths) : ''
       const outcome = await runConsolidatedReview(
