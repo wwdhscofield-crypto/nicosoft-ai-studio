@@ -21,7 +21,7 @@ import { AsyncSubAgentPool } from '../agent/sub-agent-pool'
 import { LSPManager } from '../agent/lsp/manager'
 import { createLensHandle } from './lens/agent-lens'
 import { lspTool } from '../agent/tools/lsp'
-import { disposeE2ESessionsOwnedBy } from '../agent/tools/e2e-browser'
+import { disposePlaywrightSessionsOwnedBy } from '../agent/tools/playwright-browser'
 import type { Tool } from '../agent/tool'
 import type { AgentRunInput, MessageAttachmentDto } from '../ipc/contracts'
 import { persistBase64, resolveImageForLlm, MAX_REPLAY_IMAGES } from '../media/storage'
@@ -30,12 +30,13 @@ import * as summaryRepo from '../repos/summary.repo'
 import type { MemoryRow } from '../repos/memory.repo'
 import { agentEvents } from './event-bus'
 import { manager as skillManager } from './skill.service'
-import { DEV_ROLES, E2E_TOOLS, SERVICE_TOOLS, SUBAGENT_TOOLS, toolsForAgentRole } from './agent-tools'
+import { DEV_ROLES, PLAYWRIGHT_TOOLS, PREVIEW_AGENT_TOOLS, SERVICE_TOOLS, SUBAGENT_TOOLS, toolsForAgentRole } from './agent-tools'
 import { AsyncRegistry } from '../agent/async-registry'
 import { awaitAsyncTool } from '../agent/tools/await-async'
 import { launchAsyncTool } from '../agent/tools/launch-async'
 import { buildAgentSystem } from './agent-system'
 import { setActiveServices, clearActiveServices, broadcastConvServices } from './active-services'
+import { createPreviewHandle } from './active-preview'
 import * as workspaceTasks from './workspace-tasks.service'
 
 export interface AgentCallbacks {
@@ -158,7 +159,7 @@ export async function runAgentLoop(
     cwd,
     signal,
     roleId: loop.roleId,
-    runId: loop.runId, // run-scoped resource ownership — e2e_browser sessions are reclaimed by it below
+    runId: loop.runId, // run-scoped resource ownership — playwright_browser sessions are reclaimed by it below
     readFileState: new Map(),
     writtenPaths: new Set(), // git-free change event bus — Write/Edit/MultiEdit record here; harvested below for Gate B
     permissionMode: loop.permissionMode,
@@ -174,6 +175,7 @@ export async function runAgentLoop(
     async: asyncReg, // launch_async/await_async (+ studio_lens launches through it when present)
     parkSolo: loop.parkSolo, // 批C2b: direct-chat solo cross-turn park; undefined for dispatched/collab → within-turn await
     lsp,
+    preview: DEV_ROLES.has(loop.roleId) ? createPreviewHandle(loop.convId, signal) : undefined,
     // studio_lens bridge (studio-lens §4.1 / closure-loop decision ⑤) — inject the handle iff this run's kit
     // actually carries the studio_lens tool (every agent role now does; a fixed-kit verifier / sub-agent does
     // NOT). Handle-presence ⟺ tool-presence is the recursion guard: no tool → no handle, self-enforcing.
@@ -283,9 +285,9 @@ export async function runAgentLoop(
     subAgents.disposeAll() // tree-kill any background sub-agents — none outlive the parent run
     if (ownsAsyncReg) asyncReg.dispose() // per-run registry only: tree-kill its launch_async ops. A conv-level registry (批C2b direct-chat) is owned by solo-async — disposing it here would kill a parked op the resume needs.
     lsp?.dispose() // tree-kill the language server if one was spawned
-    // Reclaim e2e_browser sessions this run launched and never closed — without this, a run that ends,
+    // Reclaim playwright_browser sessions this run launched and never closed — without this, a run that ends,
     // aborts, or errors mid-verification leaks a live Chromium/Electron process per forgotten session.
-    void disposeE2ESessionsOwnedBy(loop.runId).then((n) => {
+    void disposePlaywrightSessionsOwnedBy(loop.runId).then((n) => {
       if (n > 0) console.warn(`[agent] reclaimed ${n} unclosed e2e browser session(s) for run ${loop.runId}`)
     })
   }
@@ -392,10 +394,10 @@ export async function runDispatchedAgent(
     // read-only Read/Grep/Glob/Bash verifier that runs the project checks without the implementer's write
     // tools or a non-dev role's Bash-less kit. No DEV augmentation; cwd is required for these.
     const allow = new Set(d.toolNames)
-    tools = [...CORE_TOOLS, ...E2E_TOOLS].filter((t) => allow.has(t.name))
+    tools = [...CORE_TOOLS, ...PLAYWRIGHT_TOOLS].filter((t) => allow.has(t.name))
   } else {
     tools = [...toolsForAgentRole(d.roleId), launchAsyncTool, awaitAsyncTool] // 批C2a: solo can launch/await async ops (studio_lens launches through ctx.async too)
-    if (DEV_ROLES.has(d.roleId)) tools = [...tools, ...SERVICE_TOOLS, ...E2E_TOOLS, ...SUBAGENT_TOOLS, lspTool as unknown as Tool]
+    if (DEV_ROLES.has(d.roleId)) tools = [...tools, ...SERVICE_TOOLS, ...PLAYWRIGHT_TOOLS, ...PREVIEW_AGENT_TOOLS, ...SUBAGENT_TOOLS, lspTool as unknown as Tool]
     if (!d.cwd && !DEV_ROLES.has(d.roleId)) tools = tools.filter((t) => t.name !== 'Read' && t.name !== 'Glob')
   }
   const serverTools: ServerToolSchema[] = d.protocol === 'openai' ? [{ type: 'web_search', name: 'web_search' }] : []

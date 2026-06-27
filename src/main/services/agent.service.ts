@@ -35,7 +35,7 @@ import * as compressionService from './compression.service'
 import { pickSmallModel } from './model-select'
 import { countContext } from './token-count.service'
 import { manager as skillManager } from './skill.service'
-import { DEV_ROLES, E2E_TOOLS, ENGINEER_ROLE_ID, SERVICE_TOOLS, SUBAGENT_TOOLS, toolsForAgentRole } from './agent-tools'
+import { DEV_ROLES, ENGINEER_ROLE_ID, PLAYWRIGHT_TOOLS, PREVIEW_AGENT_TOOLS, SERVICE_TOOLS, SUBAGENT_TOOLS, toolsForAgentRole } from './agent-tools'
 import { buildAgentSystem } from './agent-system'
 import { conversationToAgentMessages, runAgentLoop, type AgentCallbacks } from './agent-dispatch'
 import { getSoloAsync, parkSolo } from './solo-async'
@@ -64,7 +64,7 @@ export async function run(
   // Tools scoped to this agent role: a CORE subset (doc 16 §5) + MCP + Skill, by roleId + scope.
   const roleId = input.roleId ?? ENGINEER_ROLE_ID
   let tools = [...toolsForAgentRole(roleId), launchAsyncTool, awaitAsyncTool] // 批C2a: solo direct chat can launch/await async ops (studio_lens launches through ctx.async too)
-  if (DEV_ROLES.has(roleId)) tools = [...tools, ...SERVICE_TOOLS, ...E2E_TOOLS, ...SUBAGENT_TOOLS, lspTool as unknown as Tool]
+  if (DEV_ROLES.has(roleId)) tools = [...tools, ...SERVICE_TOOLS, ...PLAYWRIGHT_TOOLS, ...PREVIEW_AGENT_TOOLS, ...SUBAGENT_TOOLS, lspTool as unknown as Tool]
   // Read needs a folder boundary; without a cwd, drop it for non-dev roles so the model can't read the
   // process working dir. Dev roles (Flynn/Shuri) always have a cwd (required in the composer).
   if (!input.cwd && !DEV_ROLES.has(roleId)) tools = tools.filter((t) => t.name !== 'Read')

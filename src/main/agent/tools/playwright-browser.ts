@@ -1,4 +1,4 @@
-// e2e_browser tool — structured Playwright browser/Electron driver for end-to-end dogfooding. A single
+// playwright_browser tool — structured Playwright browser/Electron driver for end-to-end dogfooding. A single
 // tool dispatched by an `action` field (launch / goto / click / fill / screenshot / eval / assert / close).
 // launch opens either a real web page (chromium) or the Electron app under test (_electron.launch), keyed
 // by a sessionId the caller threads through subsequent actions; the browser/electronApp + page live in a
@@ -8,11 +8,17 @@
 // ctx.currentToolUseId) so the parent stream shows each browser step, mirroring task.ts's child events.
 
 import { randomUUID } from 'node:crypto'
+import { existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { app } from 'electron'
 import { z } from 'zod'
 import { buildTool } from '../tool'
 import type { AgentContext } from '../context'
 import type { ToolResultBlock } from '../types'
+import { USER_AGENT } from '../../user-agent'
+import { loadPlaywright, loadPlaywrightForChromium } from './playwright-resolver'
 
 // playwright's types are devDependency-only; keep this file buildable without them by typing loosely.
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -28,6 +34,16 @@ interface BrowserSession {
   // Owning run (ctx.runId at launch). runAgentLoop's finally reclaims every session tagged with its
   // runId, so a run that ends/aborts/errors without an explicit `close` can't leak a browser process.
   owner?: string
+  tmpDir?: string
+  credentialSnapshot?: CredentialSnapshot
+}
+
+interface CredentialSnapshot {
+  path: string
+  existed: boolean
+  bytes?: Buffer
+  capturedAt: number
+  mtimeMs?: number
 }
 
 // Live sessions keyed by sessionId. Survives across tool calls within a run (module-level singleton).
@@ -36,7 +52,7 @@ const sessions = new Map<string, BrowserSession>()
 // Run-scoped reclaim: tear down every session the given run launched and never closed. Called from
 // runAgentLoop's finally (same lifecycle as ServiceRegistry/SubAgentPool/LSP disposal). Sessions owned
 // by OTHER concurrent runs are untouched. Returns the reclaim count so the caller can log leaks.
-export async function disposeE2ESessionsOwnedBy(runId: string): Promise<number> {
+export async function disposePlaywrightSessionsOwnedBy(runId: string): Promise<number> {
   let n = 0
   for (const [id, s] of sessions) {
     if (s.owner !== runId) continue
@@ -52,7 +68,7 @@ export async function disposeE2ESessionsOwnedBy(runId: string): Promise<number> 
 }
 
 // App-quit backstop: close everything regardless of owner (the process is going away anyway).
-export async function disposeAllE2ESessions(): Promise<void> {
+export async function disposeAllPlaywrightSessions(): Promise<void> {
   const all = [...sessions.values()]
   sessions.clear()
   await Promise.allSettled(all.map((s) => teardown(s)))
@@ -71,6 +87,12 @@ const inputSchema = z.object({
     .optional()
     .describe('launch only: an http(s):// URL (chromium) OR a filesystem path to the app main.js (Electron)'),
   cwd: z.string().optional().describe('launch (Electron) only: working dir for _electron.launch'),
+  env: z.record(z.string(), z.string()).optional().describe('launch (Electron) only: extra environment variables merged into process.env'),
+  isolate: z.boolean().optional().describe('launch (Electron) only: default true; false opts out of the throwaway profile'),
+  seed: z
+    .object({ localStorage: z.record(z.string(), z.string()).optional() })
+    .optional()
+    .describe('launch (Electron) only: optional localStorage seed applied to the first window'),
   url: z.string().optional().describe('goto only: URL to navigate to'),
   selector: z.string().optional().describe('click/fill/assert(selector) only: CSS/text selector'),
   text: z.string().optional().describe('fill only: text to type into the selector'),
@@ -124,16 +146,18 @@ function getSession(input: Input): BrowserSession {
 
 async function launch(input: Input, ctx: AgentContext): Promise<ActionResult> {
   if (!input.target) throw new Error('launch requires `target` (an http(s):// URL or a path to main.js)')
-  const { chromium, _electron } = await import('playwright')
+  const electronCwd = input.cwd ?? ctx.cwd
   const sessionId = randomUUID()
   // A half-failed launch must clean up after itself: once the process exists, any later step throwing
   // (newPage/goto, firstWindow timeout) would otherwise leak it FOREVER — it never reached the sessions
   // Map, so neither the run-end reclaim nor an explicit close can ever find it. (Found live: an Electron
   // target with no window leaked its process exactly this way.)
   if (/^https?:\/\//i.test(input.target)) {
-    const browser = await chromium.launch()
+    const { playwright } = await loadPlaywrightForChromium(ctx.cwd)
+    const browser = await playwright.chromium.launch()
     try {
-      const page = await browser.newPage()
+      const context = await browser.newContext({ userAgent: USER_AGENT })
+      const page = await context.newPage()
       await page.goto(input.target)
       sessions.set(sessionId, { page, browser, owner: ctx.runId })
     } catch (e) {
@@ -143,15 +167,26 @@ async function launch(input: Input, ctx: AgentContext): Promise<ActionResult> {
     return { sessionId, ok: true, detail: `chromium launched at ${input.target}` }
   }
   // filesystem path → Electron app under test
-  const electronApp = await _electron.launch({ args: [input.target], cwd: input.cwd ?? ctx.cwd })
+  const { playwright } = await loadPlaywright(electronCwd)
+  const isolate = input.isolate !== false
+  const tmpDir = isolate ? await mkdtemp(join(tmpdir(), 'nsai-playwright-')) : undefined
+  const credentialSnapshot = snapshotCredentials()
+  const launchEnv = buildElectronEnv(input, tmpDir)
+  const args = tmpDir ? [`--user-data-dir=${tmpDir}`, input.target] : [input.target]
+  let electronApp: ElectronApp | undefined
   try {
+    electronApp = await playwright._electron.launch({ args, cwd: electronCwd, env: launchEnv })
+    reclaimIfAborted(ctx, { electronApp, tmpDir, credentialSnapshot })
     const page = await electronApp.firstWindow()
-    sessions.set(sessionId, { page, electronApp, owner: ctx.runId })
+    await applySeed(page, input.seed)
+    reclaimIfAborted(ctx, { electronApp, tmpDir, credentialSnapshot })
+    sessions.set(sessionId, { page, electronApp, owner: ctx.runId, tmpDir, credentialSnapshot })
   } catch (e) {
-    await electronApp.close().catch(() => {})
+    if (electronApp) await electronApp.close().catch(() => {})
+    await cleanupLaunchResources({ tmpDir, credentialSnapshot })
     throw e
   }
-  return { sessionId, ok: true, detail: `electron launched from ${input.target}` }
+  return { sessionId, ok: true, detail: `electron launched from ${input.target}${tmpDir ? ' with isolated profile' : ' with real profile'}` }
 }
 
 async function teardown(s: BrowserSession): Promise<void> {
@@ -159,7 +194,70 @@ async function teardown(s: BrowserSession): Promise<void> {
     if (s.browser) await s.browser.close()
     if (s.electronApp) await s.electronApp.close()
   } finally {
-    // nothing else to release
+    await cleanupLaunchResources({ tmpDir: s.tmpDir, credentialSnapshot: s.credentialSnapshot })
+  }
+}
+
+function buildElectronEnv(input: Input, tmpDir: string | undefined): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, ...(input.env ?? {}) }
+  if (tmpDir) {
+    env.STUDIO_USER_DATA = tmpDir
+    env.STUDIO_DATA_DIR = tmpDir
+  } else {
+    delete env.STUDIO_USER_DATA
+    delete env.STUDIO_DATA_DIR
+  }
+  return env
+}
+
+function reclaimIfAborted(ctx: AgentContext, resources: { electronApp?: ElectronApp; tmpDir?: string; credentialSnapshot?: CredentialSnapshot }): void {
+  if (!ctx.signal.aborted) return
+  if (resources.electronApp) void resources.electronApp.close().catch(() => {})
+  void cleanupLaunchResources(resources)
+  throw new Error('playwright_browser launch cancelled')
+}
+
+async function applySeed(page: Page, seed: Input['seed']): Promise<void> {
+  const localStorage = seed?.localStorage
+  if (!localStorage || Object.keys(localStorage).length === 0) return
+  await page.evaluate(`((entries) => { for (const [key, value] of entries) globalThis.localStorage.setItem(key, value); })(${JSON.stringify(Object.entries(localStorage))})`)
+  await page.reload().catch(() => {})
+}
+
+function snapshotCredentials(): CredentialSnapshot {
+  const path = join(app.getPath('userData'), 'credentials.json')
+  const capturedAt = Date.now()
+  if (!existsSync(path)) return { path, existed: false, capturedAt }
+  return { path, existed: true, bytes: readFileSync(path), capturedAt, mtimeMs: statSync(path).mtimeMs }
+}
+
+async function cleanupLaunchResources(resources: { tmpDir?: string; credentialSnapshot?: CredentialSnapshot }): Promise<void> {
+  try {
+    restoreCredentials(resources.credentialSnapshot)
+  } finally {
+    if (resources.tmpDir) await rm(resources.tmpDir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+function restoreCredentials(snapshot: CredentialSnapshot | undefined): void {
+  if (!snapshot) return
+  const currentExists = existsSync(snapshot.path)
+  const current = currentExists ? readFileSync(snapshot.path) : undefined
+  if (snapshot.existed && snapshot.bytes && current && Buffer.compare(current, snapshot.bytes) === 0) return
+  if (!snapshot.existed && !currentExists) return
+
+  if (current) {
+    const backupPath = `${snapshot.path}.playwright-current-${snapshot.capturedAt}.bak`
+    try {
+      writeFileSync(backupPath, current, { mode: 0o600 })
+    } catch {
+      /* backup is best-effort; the snapshot still restores the pre-launch state */
+    }
+  }
+  if (snapshot.existed && snapshot.bytes) {
+    writeFileSync(snapshot.path, snapshot.bytes, { mode: 0o600 })
+  } else if (currentExists) {
+    unlinkSync(snapshot.path)
   }
 }
 
@@ -202,7 +300,7 @@ async function run(input: Input, ctx: AgentContext): Promise<ActionResult> {
     case 'screenshot': {
       const s = getSession(input)
       const label = (input.name ?? 'shot').replace(/[^a-z0-9_-]+/gi, '-')
-      const path = join(ctx.sessionDir, `e2e-${label}-${Date.now()}.png`)
+      const path = join(ctx.sessionDir, `playwright-${label}-${Date.now()}.png`)
       await s.page.screenshot({ path })
       return { sessionId: input.sessionId, ok: true, detail: `screenshot saved`, screenshotPath: path }
     }
@@ -251,15 +349,17 @@ async function run(input: Input, ctx: AgentContext): Promise<ActionResult> {
   }
 }
 
-export const e2eBrowserTool = buildTool<typeof inputSchema, ActionResult>({
-  name: 'e2e_browser',
+export const playwrightBrowserTool = buildTool<typeof inputSchema, ActionResult>({
+  name: 'playwright_browser',
   inputSchema,
   prompt: () =>
     'Drive a real browser or the Electron app for end-to-end testing via Playwright. action=launch opens ' +
     'either an http(s):// URL (Chromium) or a filesystem path to the app main.js (Electron) and returns a ' +
     'sessionId; thread that sessionId into goto / click / fill / screenshot / eval / assert, then close to ' +
-    'tear it down. assert(kind=text|selector|state, expected) returns { pass, detail }. screenshots are ' +
-    'saved to disk and the path returned. Always close the session when finished.',
+    'tear it down. Electron launches default to an isolated throwaway profile with STUDIO_USER_DATA, ' +
+    'STUDIO_DATA_DIR, and --user-data-dir all set to the same temp dir; pass isolate:false only when you ' +
+    'explicitly need the real profile. assert(kind=text|selector|state, expected) returns { pass, detail }. ' +
+    'screenshots are saved to disk and the path returned. Always close the session when finished.',
   isReadOnly: () => false,
   isConcurrencySafe: () => false,
   isDestructive: () => false,
@@ -295,7 +395,7 @@ export const e2eBrowserTool = buildTool<typeof inputSchema, ActionResult>({
   },
   mapResult(out, toolUseId): ToolResultBlock {
     if (out.error) {
-      return { type: 'tool_result', tool_use_id: toolUseId, content: `[e2e_browser error] ${out.error}`, is_error: true }
+      return { type: 'tool_result', tool_use_id: toolUseId, content: `[playwright_browser error] ${out.error}`, is_error: true }
     }
     const lines: string[] = []
     if (out.sessionId) lines.push(`sessionId: ${out.sessionId}`)

@@ -11,8 +11,9 @@ import { askUserQuestionTool } from '../agent/tools/ask-user-question'
 import { studioLensTool } from '../agent/tools/studio-lens'
 import { startServiceTool, stopServiceTool, serviceLogsTool, listServicesTool } from '../agent/tools/service'
 import { agentSpawnTool, agentSendTool, agentWaitTool, agentCloseTool, agentBatchTool } from '../agent/tools/async-subagent'
-import { e2eBrowserTool } from '../agent/tools/e2e-browser'
-import { e2eRequestTool } from '../agent/tools/e2e-request'
+import { playwrightBrowserTool } from '../agent/tools/playwright-browser'
+import { playwrightRequestTool } from '../agent/tools/playwright-request'
+import { PREVIEW_TOOLS } from '../agent/tools/preview'
 import type { Tool } from '../agent/tool'
 import * as settingsService from './settings.service'
 import { manager as mcpManager } from './mcp.service'
@@ -74,7 +75,8 @@ const PANEL_TOOLS = [studioLensTool] as unknown as Tool[]
 // so they run dev servers via start_service — detached + readiness-probed + tree-killed — instead of a
 // blocking `Bash ... &` that wedges the loop and leaks the process.
 export const SERVICE_TOOLS = [startServiceTool, stopServiceTool, serviceLogsTool, listServicesTool] as unknown as Tool[]
-export const E2E_TOOLS = [e2eBrowserTool, e2eRequestTool] as unknown as Tool[]
+export const PLAYWRIGHT_TOOLS = [playwrightBrowserTool, playwrightRequestTool] as unknown as Tool[]
+export const PREVIEW_AGENT_TOOLS = PREVIEW_TOOLS as unknown as Tool[]
 // Async sub-agent tools (batch 3) — only on top-level dev-role runs, which reach ctx.subAgents (set by
 // runAgentLoop). Sub-agents and collab experts don't get them: their ctx.subAgents is undefined (the loop
 // also strips agent_* from the child tool set), so a child can't spawn children (depth 1).

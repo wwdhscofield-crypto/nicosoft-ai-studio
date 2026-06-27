@@ -1,4 +1,4 @@
-// e2e_request tool — structured Playwright APIRequestContext driver for end-to-end API dogfooding. A
+// playwright_request tool — structured Playwright APIRequestContext driver for end-to-end API dogfooding. A
 // single tool dispatched by an `action` field (get / post / assert / close). launch-free: the first action
 // that needs a context creates one lazily and returns a sessionId the caller threads through; the
 // APIRequestContext lives in a module-level Map so headers/cookies persist across calls, and close disposes
@@ -11,6 +11,8 @@ import { z } from 'zod'
 import { buildTool } from '../tool'
 import type { AgentContext } from '../context'
 import type { ToolResultBlock } from '../types'
+import { USER_AGENT } from '../../user-agent'
+import { loadPlaywright } from './playwright-resolver'
 
 // playwright's types are devDependency-only; keep this file buildable without them by typing loosely.
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -73,14 +75,14 @@ function emit(
   })
 }
 
-async function getOrCreate(input: Input): Promise<{ sessionId: string; session: RequestSession }> {
+async function getOrCreate(input: Input, ctx: AgentContext): Promise<{ sessionId: string; session: RequestSession }> {
   if (input.sessionId) {
     const existing = sessions.get(input.sessionId)
     if (!existing) throw new Error(`unknown sessionId "${input.sessionId}" (it was closed)`)
     return { sessionId: input.sessionId, session: existing }
   }
-  const { request } = await import('playwright')
-  const context = await request.newContext()
+  const { playwright } = await loadPlaywright(ctx.cwd)
+  const context = await playwright.request.newContext({ userAgent: USER_AGENT })
   const sessionId = randomUUID()
   const session: RequestSession = { context }
   sessions.set(sessionId, session)
@@ -101,11 +103,11 @@ async function capture(session: RequestSession, res: APIResponse): Promise<{ sta
   return { status, body }
 }
 
-async function run(input: Input): Promise<ActionResult> {
+async function run(input: Input, ctx: AgentContext): Promise<ActionResult> {
   switch (input.action) {
     case 'get': {
       if (!input.url) throw new Error('get requires `url`')
-      const { sessionId, session } = await getOrCreate(input)
+      const { sessionId, session } = await getOrCreate(input, ctx)
       const res = await session.context.get(input.url, { headers: input.headers })
       const { status, body } = await capture(session, res)
       return { sessionId, ok: true, status, body, detail: `GET ${input.url} → ${status}` }
@@ -113,7 +115,7 @@ async function run(input: Input): Promise<ActionResult> {
 
     case 'post': {
       if (!input.url) throw new Error('post requires `url`')
-      const { sessionId, session } = await getOrCreate(input)
+      const { sessionId, session } = await getOrCreate(input, ctx)
       const res = await session.context.post(input.url, {
         headers: { 'content-type': 'application/json', ...input.headers },
         data: input.body,
@@ -163,8 +165,8 @@ async function run(input: Input): Promise<ActionResult> {
   }
 }
 
-export const e2eRequestTool = buildTool<typeof inputSchema, ActionResult>({
-  name: 'e2e_request',
+export const playwrightRequestTool = buildTool<typeof inputSchema, ActionResult>({
+  name: 'playwright_request',
   inputSchema,
   prompt: () =>
     'Make HTTP API calls for end-to-end testing via Playwright APIRequestContext. action=get/post returns a ' +
@@ -179,7 +181,7 @@ export const e2eRequestTool = buildTool<typeof inputSchema, ActionResult>({
     const args = input as unknown as Record<string, unknown>
     emit(ctx, 'sub_tool_start', evtId, input.action, args)
     try {
-      const data = await run(input)
+      const data = await run(input, ctx)
       emit(ctx, 'sub_tool_done', evtId, input.action, args, { result: data, isError: data.ok === false })
       return { data }
     } catch (e) {
@@ -202,7 +204,7 @@ export const e2eRequestTool = buildTool<typeof inputSchema, ActionResult>({
   },
   mapResult(out, toolUseId): ToolResultBlock {
     if (out.error) {
-      return { type: 'tool_result', tool_use_id: toolUseId, content: `[e2e_request error] ${out.error}`, is_error: true }
+      return { type: 'tool_result', tool_use_id: toolUseId, content: `[playwright_request error] ${out.error}`, is_error: true }
     }
     const lines: string[] = []
     if (out.sessionId) lines.push(`sessionId: ${out.sessionId}`)

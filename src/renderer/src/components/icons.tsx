@@ -491,9 +491,9 @@ const TOOL_ICON: Record<string, string> = {
   Dispatch: 'arrowRight', Watch: 'eye', studio_lens: 'compass',
   // sub-agents
   agent_spawn: 'users', agent_send: 'users', agent_wait: 'users', agent_close: 'users', agent_batch: 'users',
-  // dev services & e2e
+  // dev services & Playwright
   start_service: 'box', stop_service: 'box', list_services: 'box', service_logs: 'note',
-  e2e_browser: 'globe', e2e_request: 'zap',
+  playwright_browser: 'globe', playwright_request: 'zap',
   // skills
   Skill: 'sparkle',
 }

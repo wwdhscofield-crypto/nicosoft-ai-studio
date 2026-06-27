@@ -23,6 +23,7 @@ import { useRoles } from '@/stores/roles'
 import { useCustomRoles } from '@/stores/custom-roles'
 import { useMemoryCloud } from '@/stores/memory-cloud'
 import { useAllExperts } from '@/lib/all-experts'
+import { previewApi, type PreviewOpenEvent } from '@/lib/preview-api'
 import { Toaster } from '@/components/toaster'
 import { UpdatePrompt } from '@/components/update-prompt'
 
@@ -73,10 +74,11 @@ export default function App(): ReactElement {
   const [drawerOpen, setDrawerOpen] = useState<boolean>(persisted.drawerOpen || false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(persisted.sidebarCollapsed || false)
   const [activeProject, setActiveProject] = useState<string | null>(persisted.activeProject || null)
-  // Workspace drawer: which panel is showing (menu launcher / tasks / files / terminal) + the
+  // Workspace drawer: which panel is showing (menu launcher / tasks / files / terminal / preview) + the
   // user-dragged width. Both persisted alongside drawerOpen so the drawer reopens where it was.
   const [workspacePanel, setWorkspacePanel] = useState<WorkspacePanel>(persisted.workspacePanel || 'menu')
   const [drawerWidth, setDrawerWidth] = useState<number>(persisted.drawerWidth || 360)
+  const [previewRequest, setPreviewRequest] = useState<PreviewOpenEvent | null>(null)
   const [fromProject, setFromProject] = useState<string | null>(null) // project an expert chat was opened FROM (back-breadcrumb)
 
   useEffect(() => {
@@ -130,7 +132,7 @@ export default function App(): ReactElement {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // Workspace panel shortcuts (Files ⌘P / Tasks ⌘J / Terminal ⌃`). Only in the conversation view (the
+  // Workspace panel shortcuts (Files ⌘P / Tasks ⌘J / Terminal ⌃` / Preview ⌘⇧V). Only in the conversation view (the
   // drawer lives there). Two guards (design §1):
   //  - Focus guard (P23): never hijack a key while focus is in an editable field (composer textarea,
   //    xterm's hidden textarea, any contentEditable) — `editable` short-circuits before we preventDefault.
@@ -164,6 +166,9 @@ export default function App(): ReactElement {
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
         e.preventDefault()
         togglePanel('tasks')
+      } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'v') {
+        e.preventDefault()
+        togglePanel('preview')
       }
     }
     window.addEventListener('keydown', onKey)
@@ -210,6 +215,22 @@ export default function App(): ReactElement {
     setView('app')
     setCmdk(false)
   }
+
+  useEffect(() => {
+    const offOpen = previewApi()?.onOpen?.((event) => {
+      const current = useChat.getState()
+      const conv = current.conversations.find((c) => c.id === event.convId)
+      if (current.activeConv !== event.convId) void current.openConversation(event.convId)
+      if (conv?.primaryRoleId) setActiveExpert(conv.primaryRoleId)
+      setPreviewRequest(event)
+      setWorkspacePanel('preview')
+      setDrawerOpen(true)
+      setFromProject(null)
+      setView('app')
+      setCmdk(false)
+    })
+    return () => offOpen?.()
+  }, [])
   const openSettings = (tab?: string): void => {
     if (typeof tab === 'string') setSettingsTab(tab)
     setView('settings')
@@ -338,6 +359,7 @@ export default function App(): ReactElement {
                 onPanel={setWorkspacePanel}
                 width={drawerWidth}
                 onWidth={setDrawerWidth}
+                previewRequest={previewRequest}
               />
             )}
           </div>

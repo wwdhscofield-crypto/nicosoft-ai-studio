@@ -5,6 +5,7 @@
 
 import { mkdir } from 'node:fs/promises'
 import { dataDir } from '../db/connection'
+import { ulid } from '../db/id'
 import { join } from 'node:path'
 import type { AgentContext, PermissionRequest, PermissionDecision, StudioLensResult } from '../agent/context'
 import type { AgentLlmEvent } from '../agent/llm'
@@ -22,14 +23,16 @@ import { ServiceRegistry, type ServiceInfo } from '../agent/service-registry'
 import { LSPManager } from '../agent/lsp/manager'
 import { startServiceTool, stopServiceTool, serviceLogsTool, listServicesTool } from '../agent/tools/service'
 import { lspTool } from '../agent/tools/lsp'
+import { disposePlaywrightSessionsOwnedBy } from '../agent/tools/playwright-browser'
 import type { Tool } from '../agent/tool'
 import type { AgentRunInput } from '../ipc/contracts'
 import { agentEvents } from './event-bus'
 import { manager as skillManager } from './skill.service'
-import { DEV_ROLES, E2E_TOOLS, toolsForAgentRole } from './agent-tools'
+import { DEV_ROLES, PLAYWRIGHT_TOOLS, PREVIEW_AGENT_TOOLS, toolsForAgentRole } from './agent-tools'
 import { buildAgentSystem } from './agent-system'
 import { createLensHandle } from './lens/agent-lens'
 import { setActiveServices, clearActiveServices, broadcastConvServices } from './active-services'
+import { createPreviewHandle } from './active-preview'
 import * as workspaceTasks from './workspace-tasks.service'
 
 // One expert in a collaboration: who, the task it starts on, its endpoint + cwd. Same per-role binding the
@@ -173,6 +176,7 @@ export async function runCollabSession(
   const reasonByRole = new Map<string, AgentResult['reason']>() // per expert: its loop's terminal reason → bubbles incomplete/thrash_stop up to coordinator:done (not just text)
   const roster = experts.map((x) => ({ id: x.roleId, name: displayName(x.roleId) ?? x.roleId }))
   const lspByExpert: LSPManager[] = [] // one per dev expert; tree-killed in the finally
+  const runIdsByExpert: string[] = []
   const specs: ExpertSpec[] = experts.map((x) => {
     // Per-expert state shared across its turns: the read-file cache + todo list persist as it loops, so it
     // doesn't forget what it read between being woken.
@@ -183,6 +187,8 @@ export async function runCollabSession(
     // fires on time instead of overshooting. Starts empty → the first wake behaves exactly as before.
     let compactCarry: CompactCarry = { usageAt: 0, autoFails: 0 }
     const toolNames = new Map<string, string>() // tool_use id → name, to pair tool:post with its tool (audit)
+    const runId = ulid()
+    runIdsByExpert.push(runId)
     // Per-expert language server (dev roles) — Shuri's TS frontend benefits most; persists across this
     // expert's turns, lazily spawns on the first lsp query, disposed when the collaboration ends.
     const lsp = DEV_ROLES.has(x.roleId) ? new LSPManager(x.cwd) : undefined
@@ -203,7 +209,7 @@ export async function runCollabSession(
       stopServiceTool,
       serviceLogsTool,
       listServicesTool,
-      ...(DEV_ROLES.has(x.roleId) ? [lspTool as unknown as Tool, ...E2E_TOOLS] : [])
+      ...(DEV_ROLES.has(x.roleId) ? [lspTool as unknown as Tool, ...PLAYWRIGHT_TOOLS, ...PREVIEW_AGENT_TOOLS] : [])
     ]
     const serverTools: ServerToolSchema[] = x.protocol === 'openai' ? [{ type: 'web_search', name: 'web_search' }] : []
     const system = buildCollabSystem(
@@ -230,6 +236,7 @@ export async function runCollabSession(
         const ctx: AgentContext = {
           cwd: x.cwd,
           signal: sig,
+          runId,
           roleId: x.roleId,
           readFileState,
           permissionMode: x.permissionMode ?? 'default',
@@ -243,6 +250,7 @@ export async function runCollabSession(
           services: registry,
           async: asyncRegistry,
           lsp,
+          preview: DEV_ROLES.has(x.roleId) ? createPreviewHandle(convId, sig) : undefined,
           // 批B (dogfood2 P1): restore ctx.panel for collab implementers (批3 had nulled it). Solo-style handle so
           // an elected collaborator can drive the consolidated review from its OWN turn (批C wraps the studio_lens
           // tool in ctx.async for non-blocking launch + await_async suspend). Gated on the tool's presence —
@@ -355,6 +363,7 @@ export async function runCollabSession(
     broadcastConvServices(convId, []) // clear the Tasks panel's Services section on teardown
     registry.dispose() // tree-kill every service the collaboration started — no lingering ports
     asyncRegistry.dispose() // tree-kill any still-running launch_async op, INCLUDING unawaited ones — a normal quiescent end never aborts the signal, so this is the only cleanup hook
+    await Promise.allSettled(runIdsByExpert.map((runId) => disposePlaywrightSessionsOwnedBy(runId)))
     for (const lsp of lspByExpert) lsp.dispose() // tree-kill each expert's language server
   }
 }

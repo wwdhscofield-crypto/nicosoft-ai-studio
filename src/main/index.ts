@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, nativeTheme, protocol } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, nativeTheme, protocol, session } from 'electron'
 import { join } from 'path'
 import { existsSync, renameSync, readFileSync, writeFileSync } from 'node:fs'
 import { getDb } from './db/connection'
@@ -10,11 +10,13 @@ import { connectEnabled as connectMcpServers } from './services/mcp.service'
 import { loadEnabled as loadSkills } from './services/skill.service'
 import { schedulerEngine } from './agent/scheduler/engine'
 import { scheduledTaskStore } from './agent/scheduler/store'
-import { disposeAllE2ESessions } from './agent/tools/e2e-browser'
+import { disposeAllPlaywrightSessions } from './agent/tools/playwright-browser'
 import { disposeAll as disposeAllTerminals } from './services/terminal.service'
 import { disposeAllActiveServices } from './services/active-services'
 import { disposeAllSoloAsync } from './services/solo-async'
 import { initUpdateService, checkSilently } from './services/update.service'
+import { PREVIEW_PARTITION, markPreviewGuestAllowed } from './services/active-preview'
+import { USER_AGENT } from './user-agent'
 
 declare const __APP_VERSION__: string
 
@@ -110,6 +112,25 @@ function saveWindowState(win: BrowserWindow): void {
   }
 }
 
+function isPreviewSrcAllowed(src: string | undefined): boolean {
+  if (!src) return false
+  try {
+    const proto = new URL(src).protocol
+    return proto === 'http:' || proto === 'https:'
+  } catch {
+    return false
+  }
+}
+
+function openExternalIfAllowed(url: string): void {
+  try {
+    const proto = new URL(url).protocol
+    if (proto === 'http:' || proto === 'https:' || proto === 'mailto:') void shell.openExternal(url)
+  } catch {
+    /* unparsable URL -> drop */
+  }
+}
+
 function createWindow(): void {
   const winState = loadWindowState()
   const win = new BrowserWindow({
@@ -136,7 +157,8 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: true,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      webviewTag: true
     }
   })
 
@@ -162,13 +184,26 @@ function createWindow(): void {
     // Only hand the OS well-known safe schemes. Model output / web-search results render as links —
     // an exotic scheme (file:, app protocols) must not reach openExternal, which would launch whatever
     // the OS associates with it.
-    try {
-      const proto = new URL(details.url).protocol
-      if (proto === 'http:' || proto === 'https:' || proto === 'mailto:') void shell.openExternal(details.url)
-    } catch {
-      /* unparsable URL → drop */
-    }
+    openExternalIfAllowed(details.url)
     return { action: 'deny' }
+  })
+
+  win.webContents.on('will-attach-webview', (_event, webPreferences, params) => {
+    delete webPreferences.preload
+    webPreferences.nodeIntegration = false
+    webPreferences.contextIsolation = true
+    webPreferences.sandbox = true
+    webPreferences.partition = PREVIEW_PARTITION
+    params.partition = PREVIEW_PARTITION
+    if (!isPreviewSrcAllowed(params.src)) params.src = 'about:blank'
+  })
+
+  win.webContents.on('did-attach-webview', (_event, guest) => {
+    markPreviewGuestAllowed(guest)
+    guest.setWindowOpenHandler((details) => {
+      openExternalIfAllowed(details.url)
+      return { action: 'deny' }
+    })
   })
 
   // Menu strategy (design §1 P32): the workspace panel shortcuts (Files ⌘P / Tasks ⌘J / Terminal ⌃`)
@@ -217,6 +252,7 @@ ipcMain.handle('theme:set', (_e, pref: string) => applyThemePref(pref))
 app.whenReady().then(() => {
   getDb() // open SQLite + run migrations (idempotent) before any IPC handler can hit it
   applyThemePref(settingsService.get<string>('theme')) // set nativeTheme from the persisted pref before the window is created
+  session.fromPartition(PREVIEW_PARTITION).setUserAgent(USER_AGENT)
   registerMediaProtocol() // nsai-media:// → local image files, before the window loads any attachment
   registerIpc()
   initUpdateService() // wire autoUpdater (channel from the build's own version) before any check can run
@@ -249,7 +285,7 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-// Backstop for e2e_browser sessions on quit: per-run reclaim (agent.service finally) covers normal run
+// Backstop for playwright_browser sessions on quit: per-run reclaim covers normal runs
 // endings; this covers quitting mid-run so no Playwright child outlives the app.
 app.on('before-quit', () => {
   // FIRST: abort every in-flight run (chat + solo-agent + coordinator/collab) so its live LLM fetch streams tear
@@ -258,7 +294,7 @@ app.on('before-quit', () => {
   // Before this, teardown relied solely on the renderer's window-`destroyed` firing each stream's abort — which a
   // busy renderer delays. Proactively aborting here makes the main process release everything and exit cleanly.
   abortAllRuns()
-  void disposeAllE2ESessions()
+  void disposeAllPlaywrightSessions()
   disposeAllTerminals() // kill any live pty so no shell outlives the app
   disposeAllActiveServices() // tree-kill detached dev servers so none outlive the app holding ports
   disposeAllSoloAsync() // 批C2b: tree-kill any conv-level launch_async op parked across runs so none outlives the app

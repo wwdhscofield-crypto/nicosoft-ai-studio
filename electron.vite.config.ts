@@ -19,9 +19,9 @@ export default defineConfig({
     build: {
       rollupOptions: {
         // externalizeDepsPlugin only externalizes `dependencies` — playwright is a DEV dependency
-        // (e2e_browser tool, dev roles only), so rollup BUNDLED it into out/main. Bundling hoisted
+        // (Playwright browser tool, dev roles only), so rollup BUNDLED it into out/main. Bundling hoisted
         // playwright-core's lazy `require("chromium-bidi/…")` (never executed on the normal launch
-        // paths) into an eager top-level require, crashing EVERY e2e_browser launch with "Cannot find
+        // paths) into an eager top-level require, crashing EVERY Playwright browser launch with "Cannot find
         // module 'chromium-bidi/…'". Externalized, import('playwright') resolves the real package from
         // node_modules in dev (lazy requires stay lazy), and a packaged build (no devDeps) fails
         // cleanly into the tool's existing "playwright unavailable" path — the degradation its header

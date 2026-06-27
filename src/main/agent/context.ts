@@ -7,6 +7,7 @@
 import type { CollabHandle } from './collab'
 import type { ServiceHandle } from './service-registry'
 import type { LspHandle } from './lsp/manager'
+import type { PreviewHandle } from './preview'
 import type { AsyncRegistry } from './async-registry'
 
 // studio_lens agent tool (studio-lens §4.1): the agent drives a multi-perspective review on an EXPLICIT
@@ -126,7 +127,7 @@ export interface AgentContext {
   cwd: string // confined project root; every tool path must resolve under this
   signal: AbortSignal // cancellation — threaded into bash spawns and sub-agents
   // Owning run id for run-scoped resource ownership: tools holding live resources across calls
-  // (e2e_browser sessions) tag them with this, and runAgentLoop's finally reclaims by it — a run that
+  // (playwright_browser sessions) tag them with this, and runAgentLoop's finally reclaims by it — a run that
   // ends/aborts/errors without an explicit close must not leak a browser process. Run-level, not
   // per-turn (turnCtx spreads preserve it); concurrent runs each carry their own.
   runId?: string
@@ -187,6 +188,9 @@ export interface AgentContext {
   // diagnostics on TS/JS. Set by runAgentLoop (lazily spawns typescript-language-server on first query);
   // undefined where there's no project to analyze. Shared with sub-agents so they can use it too.
   lsp?: LspHandle
+  // Shared interactive Preview webview for this conversation. Present only in top-level dev-agent contexts;
+  // sub-agents and fixed-kit verifiers must not inherit it because the visible Preview is user-facing state.
+  preview?: PreviewHandle
   // studio_lens agent tool (studio-lens §4 / closure-loop decision ⑤): set by runAgentLoop / collab iff the
   // run's kit carries the studio_lens tool — every agent role now does (handle-presence ⟺ tool-presence).
   // Undefined inside a sub-agent / a panel reviewer / any fixed-kit verifier (they have no studio_lens tool;

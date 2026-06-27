@@ -183,6 +183,54 @@ export interface ConvServices {
   convId: string
   services: ServiceInfoDto[]
 }
+
+export interface PreviewOpenRequest {
+  convId: string
+  url?: string | null
+}
+export interface PreviewOpenEvent {
+  convId: string
+  attachId: string
+  url?: string | null
+}
+export interface PreviewOpenCancelEvent {
+  convId: string
+  attachId: string
+  reason: string
+}
+export interface PreviewAttachInput {
+  convId: string
+  webContentsId: number
+  attachId?: string | null
+}
+export interface PreviewDetachInput {
+  convId: string
+  webContentsId: number
+}
+export interface PreviewDevToolsInput {
+  convId: string
+  open: boolean
+}
+export interface PreviewExternalOpenInput {
+  url: string
+}
+export interface PreviewStatusDto {
+  convId: string
+  attached: boolean
+  webContentsId: number | null
+  url: string | null
+  devToolsOpen: boolean
+  networkAvailable: boolean
+}
+export interface PreviewResultDto {
+  ok: boolean
+  status?: PreviewStatusDto
+  error?: string
+}
+export interface ConvPreviewStatus {
+  convId: string
+  status: PreviewStatusDto
+}
 // A generated image surfaced live from an in-flight agent turn, keyed by convId (like ConvUsage). An agent
 // tool (ns_generate_image, code_execution charts, view_image) returned an image; the loop persisted it to
 // the media store (nsai-media:// ref) and broadcasts it here so the renderer attaches it to the streaming
@@ -553,7 +601,7 @@ export interface VerifyProgressEvent {
   maxRounds: number
   phase: 'verify' | 'fix'
 }
-// One e2e tool action from the Gate C verifier (e2e_browser / e2e_request: launch/goto/click/fill/
+// One e2e tool action from the Gate C verifier (playwright_browser / playwright_request: launch/goto/click/fill/
 // screenshot/assert/get/post). Mirrors the sub_tool start/done shape so the ToolCard timeline can render
 // it. screenshotPath (when present) is an absolute path to a PNG the verifier captured.
 export interface VerifyToolEvent {

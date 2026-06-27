@@ -340,7 +340,7 @@ export async function* runAgent(
   // EnterPlanMode/ExitPlanMode would otherwise flip the PARENT's plan state / hit the parent's Gate A.
   // studio_lens is denied too (studio-lens §7 Phase 4 P0): a sub-agent — or a panel reviewer — must NOT be
   // able to recursively trigger another panel fan-out (bounds fan-out × depth). ctx.panel is also nulled below.
-  const subAgentTools = tools.filter((t) => t.name !== 'Task' && t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens')
+  const subAgentTools = tools.filter((t) => t.name !== 'Task' && t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens' && !t.name.startsWith('preview_'))
   const makeSpawnSubAgent =
     (signal: AbortSignal): SpawnSubAgent =>
     async ({ prompt, parentToolId }) => {
@@ -358,7 +358,7 @@ export async function* runAgent(
         // setTodos nulled (alongside panel/spawnSubAgent/askUser): a sub-agent's TodoWrite is a private, run-local
         // checklist — without this it inherits the parent's setTodos and broadcasts the child's one-shot todos into
         // the PARENT conversation's live Tasks list (overwriting the real list / prematurely archiving a phase).
-        ctx: { ...ctx, signal, readFileState: new Map(), todos: [], setTodos: undefined, spawnSubAgent: undefined, panel: undefined, askUser: undefined },
+        ctx: { ...ctx, signal, readFileState: new Map(), todos: [], setTodos: undefined, spawnSubAgent: undefined, panel: undefined, preview: undefined, askUser: undefined },
         maxTokens,
         maxTurns,
         onStream: emitChildStream(parentToolId),
@@ -396,7 +396,7 @@ export async function* runAgent(
   // runChild that runs one of a child's turns with the sub-agent tool set — no Task, no nested agent_*
   // (depth 1) — threading the child's persisted readFileState/todos. Sub-agents get subAgents: undefined.
   if (ctx.subAgents instanceof AsyncSubAgentPool) {
-    const asyncChildTools = tools.filter((t) => t.name !== 'Task' && !t.name.startsWith('agent_') && t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens')
+    const asyncChildTools = tools.filter((t) => t.name !== 'Task' && !t.name.startsWith('agent_') && t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens' && !t.name.startsWith('preview_'))
     const runChild: RunChild = async (childMessages, signal, readFileState, todos, parentToolId, subAgentId) => {
       const sub = runAgent({
         protocol: params.protocol,
@@ -410,7 +410,7 @@ export async function* runAgent(
         // under agent_batch several run concurrently — nulling prevents a child popping a blocking user dialog.
         // setTodos nulled (see the Task spawn above): a background sub-agent's TodoWrite stays run-local and must
         // never broadcast into the parent conversation's live Tasks list.
-        ctx: { ...ctx, signal, readFileState, todos, setTodos: undefined, spawnSubAgent: undefined, subAgents: undefined, panel: undefined, askUser: undefined },
+        ctx: { ...ctx, signal, readFileState, todos, setTodos: undefined, spawnSubAgent: undefined, subAgents: undefined, panel: undefined, preview: undefined, askUser: undefined },
         maxTokens,
         maxTurns,
         onStream: emitChildStream(parentToolId, subAgentId),

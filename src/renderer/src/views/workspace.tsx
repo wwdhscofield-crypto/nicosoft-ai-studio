@@ -12,8 +12,10 @@ import { useT } from '@/stores/locale'
 import { WorkspaceTasks } from '@/views/workspace-tasks'
 import { WorkspaceFiles } from '@/views/workspace-files'
 import { WorkspaceTerminal } from '@/views/workspace-terminal'
+import { WorkspacePreview } from '@/views/workspace-preview'
+import type { PreviewOpenEvent } from '@/lib/preview-api'
 
-export type WorkspacePanel = 'menu' | 'tasks' | 'files' | 'terminal'
+export type WorkspacePanel = 'menu' | 'tasks' | 'files' | 'terminal' | 'preview'
 
 const MIN_W = 290
 // max 60vw so the drawer can never crush the main chat area on a small window.
@@ -26,7 +28,8 @@ export function WorkspaceDrawer({
   panel,
   onPanel,
   width,
-  onWidth
+  onWidth,
+  previewRequest
 }: {
   onClose: () => void
   activeConv: string | null
@@ -35,6 +38,7 @@ export function WorkspaceDrawer({
   onPanel: (p: WorkspacePanel) => void
   width: number
   onWidth: (w: number) => void
+  previewRequest: PreviewOpenEvent | null
 }): ReactElement {
   const t = useT()
   const conv = useChat((s) => s.conversations.find((c) => c.id === activeConv)) ?? null
@@ -69,7 +73,8 @@ export function WorkspaceDrawer({
     menu: 'topbar.workspace',
     tasks: 'workspace.tasks',
     files: 'workspace.files',
-    terminal: 'workspace.terminal'
+    terminal: 'workspace.terminal',
+    preview: 'workspace.preview'
   }
 
   return (
@@ -92,8 +97,10 @@ export function WorkspaceDrawer({
         <WorkspaceTasks activeConv={activeConv} />
       ) : panel === 'files' ? (
         <WorkspaceFiles conv={conv} activeExpert={activeExpert} />
-      ) : (
+      ) : panel === 'terminal' ? (
         <WorkspaceTerminal conv={conv} activeExpert={activeExpert} />
+      ) : (
+        <WorkspacePreview activeConv={activeConv} openRequest={previewRequest} />
       )}
     </div>
   )
@@ -104,7 +111,8 @@ function Launcher({ onPick }: { onPick: (p: WorkspacePanel) => void }): ReactEle
   const entries: { panel: WorkspacePanel; icon: (typeof Icons)[string]; label: string; kbd: string }[] = [
     { panel: 'tasks', icon: Icons.listChecks, label: t('workspace.tasks'), kbd: '⌘J' },
     { panel: 'files', icon: Icons.folder, label: t('workspace.files'), kbd: '⌘P' },
-    { panel: 'terminal', icon: Icons.terminal, label: t('workspace.terminal'), kbd: '⌃`' }
+    { panel: 'terminal', icon: Icons.terminal, label: t('workspace.terminal'), kbd: '⌃`' },
+    { panel: 'preview', icon: Icons.globe, label: t('workspace.preview'), kbd: '⌘⇧V' }
   ]
   return (
     <div className="ws-launcher">

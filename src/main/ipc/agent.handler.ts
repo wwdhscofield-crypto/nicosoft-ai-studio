@@ -10,6 +10,7 @@ import * as compressionService from '../services/compression.service'
 import * as workspaceTasks from '../services/workspace-tasks.service'
 import { armSoloResume, markSoloRunActive, markSoloRunIdle } from '../services/solo-async'
 import { ENGINEER_ROLE_ID } from '../services/agent-tools'
+import { isSoloPreviewWriteTool } from '../agent/tools/preview'
 import type { AgentBlockDto, AgentPermissionResponse, AgentQuestionResponse, AgentResultDto, AgentRunInput } from './contracts'
 
 // Streaming agent over IPC: `agent:run` starts a run, returns its streamId, and pushes events on
@@ -149,8 +150,9 @@ function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: { resum
             workspaceTasks.recordTodos(input.convId, roleId, todos) // Tasks-history phase capture (design §5 P30) — same seam as the live push
           },
           onToolImage: (attachment) => broadcastConvImage(sender, input.convId, attachment),
-          requestPermission: (req, signal) =>
-            new Promise<PermissionDecision>((resolve) => {
+          requestPermission: (req, signal) => {
+            if (isSoloPreviewWriteTool(req.toolName)) return Promise.resolve({ allow: true })
+            return new Promise<PermissionDecision>((resolve) => {
               const permissionId = ulid()
               // delete-guarded so a response and an abort can race without double-resolving; clears its
               // own bucket entry so the terminal sweep doesn't re-deny an already-answered prompt. On an
@@ -170,7 +172,8 @@ function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: { resum
               controller.signal.addEventListener('abort', onAbort, { once: true })
               signal?.addEventListener('abort', onAbort, { once: true })
               send('agent:permission', { streamId, permissionId, toolName: req.toolName, input: req.input, reason: req.reason })
-            }),
+            })
+          },
           askUser: (q, signal) =>
             new Promise<string>((resolve) => {
               const questionId = ulid()

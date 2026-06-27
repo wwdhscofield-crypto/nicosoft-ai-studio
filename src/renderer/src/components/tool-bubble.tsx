@@ -1,6 +1,6 @@
 // Tool payload renderers + server-activity rows. The chat's tool SURFACE is components/tool-run.tsx
 // (count summaries + expandable lines); this module keeps the level-2 payload rendering
-// (ToolDetail: DiffView / highlighted Read source / command output / e2e screenshot) and the
+// (ToolDetail: DiffView / highlighted Read source / command output / Playwright screenshot) and the
 // server-side activity shapes (ServerBubble, Sources). The old ToolBubble/ExploreGroup chat shapes
 // were retired with the tool-run redesign.
 
@@ -22,10 +22,10 @@ function isGitDiff(text: string): boolean {
   return /^diff --git /m.test(text) || /^@@ -\d+(,\d+)? \+\d+(,\d+)? @@/m.test(text)
 }
 
-// e2e_browser / e2e_request actions (launch/click/screenshot/assert/…) return a JSON object
+// playwright_browser / playwright_request actions (launch/click/screenshot/assert/…) return a JSON object
 // { sessionId, ok, pass?, screenshotPath?, detail }. Parse it so the payload can render a screenshot
 // thumbnail for the captured frame.
-function e2eMeta(tool: ToolCall): { pass?: boolean; screenshotPath?: string } | null {
+function playwrightMeta(tool: ToolCall): { pass?: boolean; screenshotPath?: string } | null {
   if (tool.status === 'running' || !tool.result) return null
   try {
     const obj = JSON.parse(tool.result) as { sessionId?: unknown; pass?: unknown; screenshotPath?: unknown }
@@ -111,7 +111,7 @@ function ResultBody({ tool }: { tool: ToolCall }): ReactElement {
 }
 
 // Level-2 payload for one tool call: the diff for editing tools, highlighted source for Read, the
-// screenshot for e2e actions, and the raw/Markdown result otherwise. The line chrome (verb/target/stat)
+// screenshot for Playwright actions, and the raw/Markdown result otherwise. The line chrome (verb/target/stat)
 // lives in tool-run.tsx; this is only what opens UNDER a line.
 export function ToolDetail({ tool }: { tool: ToolCall }): ReactElement | null {
   const input = (tool.input ?? {}) as Record<string, unknown>
@@ -122,13 +122,13 @@ export function ToolDetail({ tool }: { tool: ToolCall }): ReactElement | null {
   const isError = hasResult && (tool.status === 'error' || /^\s*<tool_use_error>/.test(tool.result!))
   const isDiff = DIFF_TOOLS.has(tool.name) && !isError
   const isReadResult = tool.name === 'Read' && hasResult && !isError
-  const e2e = e2eMeta(tool)
-  if (!isDiff && !hasResult && !e2e?.screenshotPath) return null
+  const playwright = playwrightMeta(tool)
+  if (!isDiff && !hasResult && !playwright?.screenshotPath) return null
   return (
     <div className="tb-detail">
-      {e2e?.screenshotPath ? (
+      {playwright?.screenshotPath ? (
         <div className="tb-shot">
-          <VerifyScreenshot path={e2e.screenshotPath} />
+          <VerifyScreenshot path={playwright.screenshotPath} />
         </div>
       ) : null}
       {isDiff ? <DiffView name={tool.name} input={input} /> : null}

@@ -105,7 +105,17 @@ import type {
   VerifyProgressEvent,
   VerifyToolEvent,
   VerifyDoneEvent,
-  UpdateState
+  UpdateState,
+  PreviewAttachInput,
+  PreviewDetachInput,
+  PreviewDevToolsInput,
+  PreviewExternalOpenInput,
+  PreviewOpenCancelEvent,
+  PreviewOpenEvent,
+  PreviewOpenRequest,
+  PreviewResultDto,
+  PreviewStatusDto,
+  ConvPreviewStatus
 } from '../main/ipc/contracts'
 
 // Typed bridge exposed to the renderer as `window.api`. Window controls (Batch 0) + Batch 1
@@ -141,6 +151,19 @@ const api = {
   // Live per-conversation background services (start_service), pushed on every start/ready/port/exit — the
   // workspace Tasks panel's Services section. Only active (starting/ready); exited ones go to history.
   onConvServices: (cb: (d: ConvServices) => void): (() => void) => agentListen('conv:services', cb),
+
+  preview: {
+    open: (input: PreviewOpenRequest): Promise<PreviewResultDto> => ipcRenderer.invoke('preview:open-request', input),
+    attach: (input: PreviewAttachInput): Promise<PreviewResultDto> => ipcRenderer.invoke('preview:attach', input),
+    detach: (input: PreviewDetachInput): Promise<PreviewResultDto> => ipcRenderer.invoke('preview:detach', input),
+    setDevTools: (input: PreviewDevToolsInput): Promise<PreviewResultDto> => ipcRenderer.invoke('preview:devtools', input),
+    openExternal: (url: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('preview:open-external', { url } satisfies PreviewExternalOpenInput),
+    status: (convId: string): Promise<PreviewStatusDto> => ipcRenderer.invoke('preview:status', convId),
+    onOpen: (cb: (d: PreviewOpenEvent) => void): (() => void) => agentListen('preview:open', cb),
+    onOpenCancel: (cb: (d: PreviewOpenCancelEvent) => void): (() => void) => agentListen('preview:open:cancel', cb),
+    onStatus: (cb: (d: ConvPreviewStatus) => void): (() => void) => agentListen('preview:status', cb),
+  },
 
   // Workspace Tasks panel: refetch history when a phase/examine is archived.
   onTasksHistoryChanged: (cb: (d: TasksHistoryChanged) => void): (() => void) => agentListen('tasks:historyChanged', cb),

@@ -104,11 +104,11 @@ export function submitGateC(input: CoordinatorRunInput, decision: RouteDecision,
 }
 
 // One e2e verification ROUND. Modeled on the Gate B runVerifierStep dispatch: it runs an independent
-// agent-loop verifier with an e2e tool kit (the Block-1 e2e_browser + e2e_request drivers plus a read/Bash
+// agent-loop verifier with an e2e tool kit (the playwright_browser + playwright_request drivers plus a read/Bash
 // kit to find + launch the product) under the COORDINATOR_E2E_PROMPT persona. The verifier actually drives
 // the app/API and ends with one verdict line, classified into EXACTLY one of PASS/FAIL/BLOCKED/SKIP. Runs
 // AFTER run() returned (the turn is over), so it uses the silent forward-only callback set below.
-// Forwards the verifier/implementer agent's depth-1 tool events (the e2e_browser / e2e_request actions:
+// Forwards the verifier/implementer agent's depth-1 tool events (the playwright_browser / playwright_request actions:
 // launch/goto/click/fill/screenshot/assert/get/post) up to the renderer as conv-scoped `verify:tool` events,
 // so the ENTIRE e2e run is visible in the ToolCard timeline even though it happens after the turn's stream
 // closed. Captured screenshot paths are also pushed into `shots` so the final verdict toast can show them.
@@ -153,7 +153,7 @@ async function runE2EVerify(convId: string, prompt: string, cwd: string | undefi
   const forwardCb = makeE2EForwardCb(convId, round, cb, shots)
   const verifierPrompt = [
     `End-to-end verification, round ${round}. Actually run the product and verify the task below — do not trust any written summary.`,
-    'Use e2e_browser (UI/Electron) and/or e2e_request (HTTP API) to launch and drive the app, run the asserted checks, report your evidence, then END your message with exactly one final line `VERDICT: PASS|FAIL|BLOCKED|SKIP` — the classifier reads only that line.',
+    'Use playwright_browser (UI/Electron) and/or playwright_request (HTTP API) to launch and drive the app, run the asserted checks, report your evidence, then END your message with exactly one final line `VERDICT: PASS|FAIL|BLOCKED|SKIP` — the classifier reads only that line.',
     `Original task:\n${prompt}`
   ].join('\n\n')
   const verifier = await runRoleStep({
@@ -168,7 +168,7 @@ async function runE2EVerify(convId: string, prompt: string, cwd: string | undefi
     includeHistory: false,
     // The Block-1 e2e drivers + start_service (launch the product under test, spec §19) + a read/Bash kit so
     // the verifier can find the surface and bring the product up before driving it.
-    toolNames: ['e2e_browser', 'e2e_request', 'start_service', 'Read', 'Grep', 'Glob', 'Bash'],
+    toolNames: ['playwright_browser', 'playwright_request', 'start_service', 'Read', 'Grep', 'Glob', 'Bash'],
     systemPromptOverride: COORDINATOR_E2E_PROMPT
   })
   const text = verifier.text.trim()
@@ -224,7 +224,8 @@ async function runE2EImplementerFix(
     signal,
     cwd,
     permissionMode: 'default',
-    includeHistory: false
+    includeHistory: false,
+    toolNames: ['Read', 'Grep', 'Glob', 'LS', 'Edit', 'MultiEdit', 'Write', 'Bash', 'TodoWrite', 'start_service', 'stop_service', 'service_logs', 'list_services', 'playwright_browser', 'playwright_request']
   })
 }
 
