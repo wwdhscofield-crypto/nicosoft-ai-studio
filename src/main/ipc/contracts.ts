@@ -231,6 +231,18 @@ export interface ConvPreviewStatus {
   convId: string
   status: PreviewStatusDto
 }
+// Two-level Playwright (Tier 2) availability for the Extensions → Tools read-only readout (doc-57 §4.2/§4.3):
+// (1) the `playwright` package resolves, (2) the Chromium browser binary exists. Produced by the existing
+// getPlaywrightAvailability() detection — no new probing. Display-only: installing Playwright stays in the
+// engineering role's consent flow, never a UI button.
+export interface PlaywrightAvailabilityDto {
+  packageAvailable: boolean
+  source: 'project' | 'studio' | 'missing'
+  chromiumAvailable: boolean | null
+  packagePath?: string
+  chromiumPath?: string
+  message?: string
+}
 // A generated image surfaced live from an in-flight agent turn, keyed by convId (like ConvUsage). An agent
 // tool (ns_generate_image, code_execution charts, view_image) returned an image; the loop persisted it to
 // the media store (nsai-media:// ref) and broadcasts it here so the renderer attaches it to the streaming

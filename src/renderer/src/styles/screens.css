@@ -788,6 +788,23 @@
 .skill-pickrow .btn { flex: none; }
 .dialog-err { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--error); }
 
+/* Playwright (Tier 2) read-only availability readout — Extensions › Tools (doc-57 §4.2/§4.3) */
+.pw-card { margin-top: 14px; border: 1px solid var(--border-1); border-radius: var(--r-lg); padding: 14px 15px; }
+.pw-head { display: flex; align-items: center; gap: 9px; }
+.pw-ic { width: 26px; height: 26px; flex: 0 0 26px; border-radius: 7px; display: grid; place-items: center; background: var(--bg-2); border: 1px solid var(--border-1); color: var(--text-3); }
+.pw-title { font-size: 13.5px; color: var(--text-1); font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; }
+.pw-tools { flex: 1 1 auto; min-width: 0; color: var(--text-4); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pw-status { flex: 0 0 auto; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.pw-status.available { color: var(--success); }
+.pw-status.missingBrowser { color: var(--warning); }
+.pw-status.missingPkg { color: var(--text-3); }
+.pw-desc { font-size: 12px; color: var(--text-3); margin-top: 8px; }
+.pw-levels { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 11px; }
+.pw-level { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-2); }
+.pw-level-label { color: var(--text-3); }
+.pw-level-val { color: var(--text-1); font-weight: 500; }
+.pw-note { margin-top: 11px; font-size: 11px; line-height: 1.45; color: var(--text-4); }
+
 /* scope chip */
 .scope-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
 .scope-chip.all { color: var(--text-4); }
@@ -1336,6 +1353,17 @@
   flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
   padding: 8px 10px; border-bottom: 1px solid var(--border-1);
 }
+/* Thin divider separating the close (collapse) button from the left navigation buttons — a short centered hairline
+   (not a full-height rule), per the approved prototype. */
+.preview-toolbar-sep { flex: 0 0 auto; align-self: center; width: 1px; height: 18px; margin: 0 3px; background: var(--border-1); }
+/* The close (collapse) button is the panel's PRIMARY action — accent-tinted (soft accent fill + accent glyph) so
+   it stands out from the plain navigation icons, per the approved prototype (not a flat grey icon-btn). */
+.icon-btn.preview-close-btn { color: var(--accent); background: var(--accent-soft); }
+.icon-btn.preview-close-btn:hover { color: var(--accent); background: color-mix(in oklab, var(--accent) 26%, transparent); }
+/* Keep-alive host: collapsing Preview hides the <webview> (display:none) but never unmounts it — the agent keeps
+   driving that webContents. display:contents keeps the panel as a direct drawer flex child while visible. */
+.ws-preview-host { display: contents; }
+.ws-preview-host[hidden] { display: none; }
 .preview-url-wrap {
   flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px;
   padding: 5px 9px; border-radius: 7px; background: var(--bg-2); color: var(--text-4);

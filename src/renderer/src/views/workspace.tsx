@@ -5,7 +5,7 @@
    user-draggable + persisted; the active panel is persisted too (App.tsx
    PersistedState), so reopening the drawer returns to where you were.
    ============================================================ */
-import { useState, type ReactElement } from 'react'
+import { useEffect, useState, type ReactElement } from 'react'
 import { Icons } from '@/components/icons'
 import { useChat } from '@/stores/chat'
 import { useT } from '@/stores/locale'
@@ -46,6 +46,14 @@ export function WorkspaceDrawer({
   // store (App) on mouseup only — avoids a saveState write per mousemove frame.
   const [dragW, setDragW] = useState<number | null>(null)
   const w = dragW ?? width
+
+  // Keep Preview mounted once opened: collapsing it (or switching to another panel) HIDES the <webview> rather
+  // than unmounting it. The agent drives that webContents directly, so unmounting would tear down the live preview
+  // session mid-flight. Lazily mount on first open; it then persists (hidden) as long as the drawer stays open.
+  const [previewMounted, setPreviewMounted] = useState(panel === 'preview')
+  useEffect(() => {
+    if (panel === 'preview') setPreviewMounted(true)
+  }, [panel])
 
   const startDrag = (e: React.MouseEvent): void => {
     e.preventDefault()
@@ -99,8 +107,15 @@ export function WorkspaceDrawer({
         <WorkspaceFiles conv={conv} activeExpert={activeExpert} />
       ) : panel === 'terminal' ? (
         <WorkspaceTerminal conv={conv} activeExpert={activeExpert} />
-      ) : (
-        <WorkspacePreview activeConv={activeConv} openRequest={previewRequest} />
+      ) : null}
+      {previewMounted && (
+        <div className="ws-preview-host" hidden={panel !== 'preview'}>
+          <WorkspacePreview
+            activeConv={activeConv}
+            openRequest={previewRequest}
+            onCollapse={() => onPanel('menu')}
+          />
+        </div>
       )}
     </div>
   )

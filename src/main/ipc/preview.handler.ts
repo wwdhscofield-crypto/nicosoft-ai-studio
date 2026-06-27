@@ -1,6 +1,14 @@
-import { ipcMain, shell } from 'electron'
-import type { PreviewAttachInput, PreviewDetachInput, PreviewDevToolsInput, PreviewExternalOpenInput, PreviewOpenRequest } from './contracts'
+import { app, ipcMain, shell } from 'electron'
+import type {
+  PlaywrightAvailabilityDto,
+  PreviewAttachInput,
+  PreviewDetachInput,
+  PreviewDevToolsInput,
+  PreviewExternalOpenInput,
+  PreviewOpenRequest,
+} from './contracts'
 import { attachPreview, detachPreview, openPreview, previewStatus, setPreviewDevTools } from '../services/active-preview'
+import { getPlaywrightAvailability } from '../agent/tools/playwright-resolver'
 
 export function registerPreviewHandlers(): void {
   ipcMain.handle('preview:open-request', async (_event, input: PreviewOpenRequest) => {
@@ -21,6 +29,13 @@ export function registerPreviewHandlers(): void {
     }
   })
   ipcMain.handle('preview:status', (_event, convId: string) => previewStatus(convId))
+  // Read-only Playwright (Tier 2) availability for Extensions → Tools (doc-57 §4.2/§4.3). Reuses the agent's
+  // existing two-level detection against Studio's own environment (app path); per-project installs are detected
+  // by the agent at runtime. Display-only — installing Playwright stays in the engineering role's consent flow.
+  ipcMain.handle(
+    'preview:playwright-availability',
+    async (): Promise<PlaywrightAvailabilityDto> => getPlaywrightAvailability(app.getAppPath())
+  )
   ipcMain.handle('preview:open-external', async (_event, input: PreviewExternalOpenInput) => {
     try {
       const proto = new URL(input.url).protocol

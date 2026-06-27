@@ -17,7 +17,7 @@ import { SkillDialog } from '@/components/dialogs/skill-dialog'
 import { PluginDialog } from '@/components/dialogs/plugin-dialog'
 import { useRoleBinding } from '@/lib/use-role-binding'
 import { STUDIO_DATA } from '@/data/studio-data'
-import type { McpServerDto, SkillDto, PluginDto } from '@/lib/api'
+import type { McpServerDto, SkillDto, PluginDto, PlaywrightAvailabilityDto } from '@/lib/api'
 import type { PluginBundle } from '@/types'
 import { toast } from '@/stores/toast'
 import { useT } from '@/stores/locale'
@@ -323,6 +323,64 @@ function bundleSummary(bundles: PluginDto["bundles"]): string {
 
 /* ——— Tools (built-in ns_ tools) ——— */
 const TOOLS_ENABLED_KEY = 'tools.generate_image.enabled';
+
+/* — Playwright (Tier 2) read-only availability (doc-57 §4.2/§4.3). Two independent levels — ① the `playwright`
+     package resolves, ② the Chromium browser binary exists — collapse into three overall states
+     (available / browser missing / package missing). Display-only: installing Playwright is driven by the
+     engineering expert's consent flow in chat, never a button here. — */
+function PlaywrightCard(): ReactElement {
+  const t = useT();
+  const [av, setAv] = useState<PlaywrightAvailabilityDto | null>(null);
+  useEffect(() => {
+    void window.api.preview.playwrightAvailability().then(setAv).catch(() => setAv(null));
+  }, []);
+
+  const pkgOk = av?.packageAvailable ?? false;
+  const browserOk = av?.chromiumAvailable === true;
+  const overall = !pkgOk ? 'missingPkg' : browserOk ? 'available' : 'missingBrowser';
+  const overallLabel =
+    overall === 'available'
+      ? t('tools.playwright.available')
+      : overall === 'missingBrowser'
+        ? t('tools.playwright.missingBrowser')
+        : t('tools.playwright.missingPkg');
+  const pkgVal = pkgOk
+    ? av?.source === 'project'
+      ? t('tools.playwright.sourceProject')
+      : t('tools.playwright.sourceStudio')
+    : t('tools.playwright.missing');
+  const browserVal = browserOk
+    ? t('tools.playwright.installed')
+    : pkgOk
+      ? t('tools.playwright.missing')
+      : t('tools.playwright.na');
+
+  return (
+    <div className="pw-card">
+      <div className="pw-head">
+        <span className="pw-ic"><Icons.globe size={15} /></span>
+        <span className="pw-title">{t('tools.playwright.name')}</span>
+        <span className="ext-name mono pw-tools">playwright_browser · playwright_request</span>
+        <span className={'pw-status ' + overall}>{overallLabel}</span>
+      </div>
+      <div className="pw-desc">{t('tools.playwright.desc')}</div>
+      <div className="pw-levels">
+        <span className="pw-level">
+          <HealthDot status={pkgOk ? 'healthy' : 'failing'} />
+          <span className="pw-level-label">{t('tools.playwright.pkg')}</span>
+          <span className="pw-level-val">{pkgVal}</span>
+        </span>
+        <span className="pw-level">
+          <HealthDot status={browserOk ? 'healthy' : pkgOk ? 'failing' : 'off'} />
+          <span className="pw-level-label">{t('tools.playwright.browser')}</span>
+          <span className="pw-level-val">{browserVal}</span>
+        </span>
+      </div>
+      <div className="pw-note">{t('tools.playwright.installNote')}</div>
+    </div>
+  );
+}
+
 function ToolsTab(): ReactElement {
   const t = useT();
   const { EXPERT_BY_ID } = STUDIO_DATA;
@@ -360,6 +418,7 @@ function ToolsTab(): ReactElement {
           </div>
         </div>
       </div>
+      <PlaywrightCard />
     </div>
   );
 }

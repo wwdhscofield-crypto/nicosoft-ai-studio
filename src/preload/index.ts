@@ -115,7 +115,8 @@ import type {
   PreviewOpenRequest,
   PreviewResultDto,
   PreviewStatusDto,
-  ConvPreviewStatus
+  ConvPreviewStatus,
+  PlaywrightAvailabilityDto
 } from '../main/ipc/contracts'
 
 // Typed bridge exposed to the renderer as `window.api`. Window controls (Batch 0) + Batch 1
@@ -160,6 +161,8 @@ const api = {
     openExternal: (url: string): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke('preview:open-external', { url } satisfies PreviewExternalOpenInput),
     status: (convId: string): Promise<PreviewStatusDto> => ipcRenderer.invoke('preview:status', convId),
+    // Read-only two-level Tier 2 availability for Extensions → Tools (doc-57 §4.2/§4.3); no install action here.
+    playwrightAvailability: (): Promise<PlaywrightAvailabilityDto> => ipcRenderer.invoke('preview:playwright-availability'),
     onOpen: (cb: (d: PreviewOpenEvent) => void): (() => void) => agentListen('preview:open', cb),
     onOpenCancel: (cb: (d: PreviewOpenCancelEvent) => void): (() => void) => agentListen('preview:open:cancel', cb),
     onStatus: (cb: (d: ConvPreviewStatus) => void): (() => void) => agentListen('preview:status', cb),

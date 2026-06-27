@@ -17,10 +17,12 @@ const PREVIEW_PARTITION = 'persist:preview'
 
 export function WorkspacePreview({
   activeConv,
-  openRequest
+  openRequest,
+  onCollapse
 }: {
   activeConv: string | null
   openRequest: PreviewOpenEvent | null
+  onCollapse: () => void
 }): ReactElement {
   const t = useT()
   const services = useConvServices((s) => (activeConv ? s.byConv[activeConv] ?? [] : []))
@@ -113,6 +115,10 @@ export function WorkspacePreview({
       const result = await api.attach({ convId: activeConv, webContentsId, attachId })
       if (cancelled) return
       if (!result.ok) {
+        // Clear the de-dupe guard so a later webview event (dom-ready/did-attach) can retry:
+        // a failed attach registered nothing (validateAttach rejects before registerPreview),
+        // and with keep-alive the component no longer remounts on reopen to reset it.
+        lastAttachKeyRef.current = null
         setError(result.error || t('preview.attachFailed'))
         return
       }
@@ -308,6 +314,16 @@ export function WorkspacePreview({
           title={devToolsOpen ? t('preview.devtoolsOn') : t('preview.devtools')}
         >
           <Icons.command size={15} />
+        </button>
+        <span className="preview-toolbar-sep" aria-hidden="true" />
+        <button
+          className="icon-btn preview-close-btn"
+          type="button"
+          onClick={onCollapse}
+          title={t('preview.close')}
+          aria-label={t('preview.close')}
+        >
+          <Icons.x size={15} />
         </button>
       </form>
 
