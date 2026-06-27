@@ -45,6 +45,10 @@ export const studioLensTool = buildTool<typeof inputSchema, StudioLensResult>({
     'sizes the rest.\n' +
     'WHEN NOT TO: a genuinely small, single-concern edit or a short file — a one-line fix, a rename, a copy tweak — ' +
     'a normal read is enough; do NOT reach for this. The call is yours, but lean toward reviewing on substantial work.\n' +
+    'HANDLING THE RESULT: a review is an advisory critique you disposition ONCE, not a gate to re-pass. Fix the real ' +
+    'defects at their root; for a finding you can refute from the code, state the one-line reason and leave the ' +
+    'correct code AS IS — never change working code just to silence a finding. Do NOT re-run a review you already ran ' +
+    'to "confirm" or re-clear it; re-review only a genuinely NEW round of changes.\n' +
     'INPUT/OUTPUT: pass the target file path(s) + mode. Read-only — it never edits code.',
   isReadOnly: () => true,
   async call(input, ctx) {

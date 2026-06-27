@@ -362,7 +362,19 @@ export async function runConsolidatedReview(
     message,
     examinedAt: Date.now(),
   })
-  return { ok: true, message, reviewer, confirmed, refuted: refutedCands, produced, report }
+  // How to ACT on the findings — mirrors cc's reliance on agent JUDGMENT (minimal change, only what's needed), NOT a
+  // framework cap (cc has no "review runs once" gate; a quality cap would be a Workflow-foreign limit). A review is an
+  // advisory critique to disposition ONCE, not a gate to re-pass. Without this a weaker model treats every finding as
+  // must-fix-then-re-verify: it changes CORRECT code just to silence a finding (churn, not a fix) and re-runs the
+  // whole review to "confirm" (the infinite-review loop). The persisted `message` stays clean — this rides the reply.
+  const disposition = confirmed.length
+    ? '\n\n— Disposition each finding ONCE, then move on; this is an advisory review, not a gate to re-pass. A real ' +
+      'defect → fix its ROOT cause. A finding you can refute from the code (false alarm / intentional / out of scope) ' +
+      '→ state the one-line reason it does not hold and leave the code AS IS. Do NOT change correct code just to stop ' +
+      'a finding being raised (that is churn, not a fix), and do NOT re-run the review to "confirm" or clear it — a ' +
+      'dispositioned finding is closed; re-review only a genuinely NEW round of changes.'
+    : ''
+  return { ok: true, message: message + disposition, reviewer, confirmed, refuted: refutedCands, produced, report }
 }
 
 // --- Understand (parallel readers → map) ---------------------------------------------------------------------
