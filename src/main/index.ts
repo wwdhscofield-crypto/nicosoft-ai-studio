@@ -294,6 +294,13 @@ app.on('before-quit', () => {
   // Before this, teardown relied solely on the renderer's window-`destroyed` firing each stream's abort — which a
   // busy renderer delays. Proactively aborting here makes the main process release everything and exit cleanly.
   abortAllRuns()
+  // disposeAllPlaywrightSessions is INTENTIONALLY fire-and-forget (void, NOT awaited). Awaiting it — or
+  // event.preventDefault() + await — would re-introduce the quit-hang c53dfe6 deliberately removed: a clean exit
+  // relies on abortAllRuns() above releasing the live sockets, NOT on blocking quit for teardown. Known trade-off:
+  // an isolate:false session's async credential-restore + throwaway-tmp rm can be cut off here (minor — default is
+  // isolate:true; a .bak of the creds is written before any overwrite, so it stays recoverable). A proper fix is a
+  // BOUNDED teardown — preventDefault → Promise.race([dispose, ~2s timeout]) → app.exit(0) with a re-entry guard —
+  // but it touches this hang-prone path and MUST be manually quit-tested before landing. (doc-57 acceptance, fix-1.)
   void disposeAllPlaywrightSessions()
   disposeAllTerminals() // kill any live pty so no shell outlives the app
   disposeAllActiveServices() // tree-kill detached dev servers so none outlive the app holding ports
