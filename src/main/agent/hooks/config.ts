@@ -45,36 +45,62 @@ export function loadSettingsHooks(event: HookEventName): MatchedHook[] {
   return out
 }
 
-// The field a matcher selects against is event-specific (mirrors the reference's per-event query selection): a
-// tool event matches on the tool name; SubagentStart/SubagentStop on the sub-agent type; SessionStart on its
-// source; FileChanged on the changed file's basename; PreCompact on the compaction trigger. Reading tool_name
-// for every event silently broke matchers on non-tool events (e.g. a SubagentStop matcher, wired this batch,
-// never fired). An event with no selectable field resolves to '' → only the empty/"*" matcher matches it.
-function matcherQuery(payload: HookPayload): string {
+// The field a matcher selects against is event-specific (mirrors the reference per-event query selection `kOo`):
+// tool events → tool_name; UserPromptExpansion → command_name; SessionStart/ConfigChange → source;
+// Setup/PreCompact/PostCompact → trigger; Notification → notification_type; SessionEnd → reason; StopFailure →
+// error; SubagentStart/SubagentStop → agent_type; Elicitation/ElicitationResult → mcp_server_name;
+// InstructionsLoaded → load_reason; FileChanged → changed-file basename. Events with NO selectable field
+// (Stop, UserPromptSubmit, PostToolBatch, Worktree*, CwdChanged, MessageDisplay, TeammateIdle, Task*) return
+// null → the matcher is IGNORED and every hook for the event applies (kOo's "全配"). Reading tool_name for every
+// event would silently break matchers on the non-tool events the moment they are wired (e.g. SubagentStop).
+function matcherQuery(payload: HookPayload): string | null {
   const s = (v: unknown): string => (typeof v === 'string' ? v : '')
   switch (payload.hook_event_name) {
+    case 'PreToolUse':
+    case 'PostToolUse':
+    case 'PostToolUseFailure':
+    case 'PermissionRequest':
+    case 'PermissionDenied':
+      return s(payload.tool_name)
+    case 'UserPromptExpansion':
+      return s(payload.command_name)
+    case 'SessionStart':
+    case 'ConfigChange':
+      return s(payload.source)
+    case 'Setup':
+    case 'PreCompact':
+    case 'PostCompact':
+      return s(payload.trigger)
+    case 'Notification':
+      return s(payload.notification_type)
+    case 'SessionEnd':
+      return s(payload.reason)
+    case 'StopFailure':
+      return s(payload.error)
     case 'SubagentStart':
     case 'SubagentStop':
       return s(payload.agent_type)
-    case 'SessionStart':
-      return s(payload.source)
+    case 'Elicitation':
+    case 'ElicitationResult':
+      return s(payload.mcp_server_name)
+    case 'InstructionsLoaded':
+      return s(payload.load_reason)
     case 'FileChanged': {
-      const f = s(payload.filename) || s(payload.path)
+      const f = s(payload.file_path) || s(payload.filename) || s(payload.path)
       return f ? basename(f) : ''
     }
-    case 'PreCompact':
-      return s(payload.trigger)
     default:
-      return s(payload.tool_name)
+      return null // no selectable field → matcher ignored, all hooks for the event apply
   }
 }
 
 // gHm matcher: empty / "*" → match all; a pure identifier (optionally "A|B|C") → literal/alias membership; any
-// other string → regex. Matched against the event's selectable field (see matcherQuery): the tool name for a
-// tool event, the sub-agent type for SubagentStop, etc.
+// other string → regex. Matched against the event's selectable field (see matcherQuery); an event with no
+// selectable field (matcherQuery → null) ignores the matcher and matches unconditionally.
 export function matchesMatcher(matcher: string | undefined, payload: HookPayload): boolean {
   if (!matcher || matcher === '*') return true
   const query = matcherQuery(payload)
+  if (query === null) return true
   if (/^[A-Za-z0-9_|]+$/.test(matcher)) return matcher.split('|').includes(query)
   try {
     return new RegExp(matcher).test(query)

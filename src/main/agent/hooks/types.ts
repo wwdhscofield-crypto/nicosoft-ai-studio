@@ -26,7 +26,6 @@ export interface CommandHookConfig extends HookCommonConfig {
   async?: boolean // run in background, don't block the turn
   asyncRewake?: boolean // background + wake the model on exit code 2 (implies async)
   rewakeMessage?: string
-  rewakeSummary?: string
 }
 
 // prompt — a one-shot LLM yes/no judgement returning {ok, reason} (batch 4).

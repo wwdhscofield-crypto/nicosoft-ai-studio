@@ -40,7 +40,9 @@ function interpolateEnv(value: string, allowed: ReadonlySet<string>): string {
   return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (match, braced: string | undefined, bare: string | undefined) => {
     const name = braced ?? bare ?? ''
     if (!allowed.has(name)) return match
-    return process.env[name] ?? match
+    const v = process.env[name]
+    if (v === undefined) return match
+    return v.replace(/[\r\n\x00]/g, '') // strip CR/LF/NUL — a header value can't legally contain them; prevents header injection via an env value (the reference's lHm guard)
   })
 }
 

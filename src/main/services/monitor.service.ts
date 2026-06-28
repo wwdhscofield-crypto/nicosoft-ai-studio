@@ -271,7 +271,9 @@ class MonitorService {
         `[change detected by monitor "${w.label}"]\n` +
         `previous: ${truncate(prev)}\n` +
         `current: ${truncate(sample)}`
-      sessionBus.inject(w.convId, { text: body, source: `monitor:${w.id}`, priority: 'later', roleId: w.roleId })
+      // 'next' (jump the queue): a detected change is a reactive event the model should act on promptly, like
+      // the auto-stop notice above (mirrors the reference Monitor injection priority), not appended behind a backlog.
+      sessionBus.inject(w.convId, { text: body, source: `monitor:${w.id}`, priority: 'next', roleId: w.roleId })
       this.notify()
       return
     }
