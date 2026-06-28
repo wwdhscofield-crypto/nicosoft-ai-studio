@@ -16,7 +16,6 @@ import { disposeAllActiveServices } from './services/active-services'
 import { disposeAllSoloAsync } from './services/solo-async'
 import { initUpdateService, checkSilently } from './services/update.service'
 import { PREVIEW_PARTITION, markPreviewGuestAllowed } from './services/active-preview'
-import { USER_AGENT } from './user-agent'
 
 declare const __APP_VERSION__: string
 
@@ -252,7 +251,18 @@ ipcMain.handle('theme:set', (_e, pref: string) => applyThemePref(pref))
 app.whenReady().then(() => {
   getDb() // open SQLite + run migrations (idempotent) before any IPC handler can hit it
   applyThemePref(settingsService.get<string>('theme')) // set nativeTheme from the persisted pref before the window is created
-  session.fromPartition(PREVIEW_PARTITION).setUserAgent(USER_AGENT)
+  // The Preview webview presents as an ORDINARY Chromium browser, not the studio's product UA: external sites
+  // gate / bot-detect on non-browser UAs, and Claude Code's own preview runs in real Chromium and never
+  // overrides the UA (verified against the cc binary — zero setUserAgentOverride; it only emulates the
+  // viewport). Derive a clean Chrome UA from Electron's built-in one by dropping the app-name token (between
+  // "Gecko)" and "Chrome/") and the "Electron/…" token; the platform + Chrome-version segments stay, so they're
+  // correct per OS / build and never go stale. The global USER_AGENT still identifies the studio on LLM and
+  // playwright traffic — ONLY this preview partition uses the browser UA.
+  const previewBrowserUA = session.defaultSession
+    .getUserAgent()
+    .replace(/\(KHTML, like Gecko\) .*?Chrome\//, '(KHTML, like Gecko) Chrome/')
+    .replace(/ Electron\/[\d.]+/, '')
+  session.fromPartition(PREVIEW_PARTITION).setUserAgent(previewBrowserUA)
   registerMediaProtocol() // nsai-media:// → local image files, before the window loads any attachment
   registerIpc()
   initUpdateService() // wire autoUpdater (channel from the build's own version) before any check can run
