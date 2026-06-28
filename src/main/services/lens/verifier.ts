@@ -14,9 +14,11 @@ import { runRoleStep, type RunStepOptions } from '../coordinator-step'
 // anywhere → the find barrier's Promise.all hung until 6h/SIGKILL). Abort the frozen subject so its task degrades
 // to null and the find/refute barrier proceeds. Generous on purpose: a deep-thinking-but-active subject keeps
 // resetting it (any stream event), so only a truly frozen one trips. The FLOOR verifier is exempt (no subject) —
-// it may run a long, silent build. Subjects self-fetch `git diff` + stream reasoning, so 3 min total silence is
-// pathological, not merely slow.
-const EXAMINE_SUBJECT_STALL_MS = 180_000
+// it may run a long, silent build. 10 min (matches LENS_STALL_MS): subjects DO stream reasoning natively, but a
+// gateway that doesn't forward reasoning deltas (nicosoft → opus-4.8-max / gpt-5.5 high effort) can leave a hard
+// subject silent >3 min before its first forwarded event → a false stall. Raise the pure-silence ceiling; any real
+// stream event still resets it and a truly frozen stream is caught within the window.
+const EXAMINE_SUBJECT_STALL_MS = 600_000
 
 export function chooseVerifierRole(implementer: string | string[]): string {
   // The verifier runs the agent loop with an overridden read-only kit (Read/Grep/Glob/Bash) + the Gate B

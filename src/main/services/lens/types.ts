@@ -5,11 +5,17 @@
 
 export type Severity = 'high' | 'med' | 'low'
 
-// The P4 delta-stall watchdog threshold for finders/skeptics (carved from examine/verifier.ts): 3 min of zero
+// The P4 delta-stall watchdog threshold for finders/skeptics (carved from examine/verifier.ts): N min of zero
 // stream activity = a frozen LLM stream → abort so the find/refute barrier proceeds (examine/ had no timeout
 // anywhere; the dogfood hung 6h until SIGKILL). The engine applies it to finders by default — never silently
 // drop the fix by relying on the caller to set it.
-export const LENS_STALL_MS = 180_000
+// 10 min, not CC's 180s (PBp): the watchdog resets on EVERY stream event (coordinator-step armStall), so CC's 180s
+// holds because Anthropic-native streaming emits reasoning deltas that keep it alive during a long think. Through a
+// gateway that does NOT forward reasoning deltas (e.g. nicosoft → opus-4.8-max / gpt-5.5 at high effort), a hard
+// review prompt can sit in silent reasoning >3 min before the first forwarded event → a false stall that burned all
+// 5 retries and dropped the finder. Raise the pure-silence ceiling to accommodate high-effort TTFT; 5× retry still
+// bounds a genuinely dead stream. (= CC's general hook timeout jd=600000.)
+export const LENS_STALL_MS = 600_000
 
 // ONE candidate defect a lens finder surfaced (workflow FIND stage). The finder emits a list of these; the
 // REFUTE stage then judges EACH one independently (not the lens as a whole), so a weak candidate riding a
