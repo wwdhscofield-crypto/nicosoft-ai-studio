@@ -22,6 +22,9 @@ import { abortableDelay, isRetryableLlmError, retryBackoffMs } from './retry'
 import { bashRanClean, isVerifyCommand, ThrashTracker, thrashSteerText, thrashStopText, THRASH_STOP_AT, VERIFY_NUDGE } from './loop-guards'
 import { callWithTools, type AgentLlmEvent } from './llm'
 import type { Tool } from './tool'
+import { runHooks, STOP_HOOK_BLOCK_CAP } from './hooks/engine'
+import { hookRegistry } from './hooks/registry'
+import { hookContextFromAgent, baseHookPayload } from './hooks/adapter'
 import { isContentBlock } from './types'
 import type {
   AgentMessage,
@@ -67,6 +70,9 @@ export interface RunAgentParams {
   // Collab threads the compaction anchor across an expert's mailbox wakes (see CompactCarry). Omitted by
   // solo / dispatch (a single runAgent call) → the anchor starts empty on turn 1, exactly as before.
   seedCompact?: CompactCarry
+  // True when this runAgent IS a sub-agent loop (Task / async pool child). Sub-agents fire SubagentStop (at the
+  // parent), never the top-level Stop hook — so this suppresses Stop here. Undefined/false on the main loop.
+  isSubAgentLoop?: boolean
 }
 
 export type AgentEvent =
@@ -201,6 +207,7 @@ export async function* runAgent(
   const ctx: AgentContext = {
     ...params.ctx,
     llm: params.ctx.llm ?? { protocol: params.protocol, baseUrl, apiKey, smallModel, searchModel, imageModel: params.imageModel },
+    model: params.ctx.model ?? params.model, // for prompt/agent hook executors (their own `model` config overrides)
     setPermissionMode: setPlanMode,
   }
   const childToolNames = new Map<string, string>()
@@ -344,7 +351,7 @@ export async function* runAgent(
   // EnterPlanMode/ExitPlanMode would otherwise flip the PARENT's plan state / hit the parent's Gate A.
   // studio_lens is denied too (studio-lens §7 Phase 4 P0): a sub-agent — or a panel reviewer — must NOT be
   // able to recursively trigger another panel fan-out (bounds fan-out × depth). ctx.panel is also nulled below.
-  const subAgentTools = tools.filter((t) => t.name !== 'Task' && t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens' && !t.name.startsWith('preview_'))
+  const subAgentTools = tools.filter((t) => t.name !== 'Task' && t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens' && !t.name.startsWith('preview_') && !t.name.startsWith('monitor_') && t.name !== 'schedule_wakeup')
   const makeSpawnSubAgent =
     (signal: AbortSignal): SpawnSubAgent =>
     async ({ prompt, parentToolId }) => {
@@ -356,6 +363,7 @@ export async function* runAgent(
         system: SUBAGENT_SYSTEM,
         messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
         tools: subAgentTools,
+        isSubAgentLoop: true, // fires SubagentStop (below), not the top-level Stop hook
         // askUser nulled (like the headless scheduler): a sub-agent has no interactive surface — without this
         // it would inherit the parent's live askUser and could pop a blocking question dialog to the real user,
         // contradicting SUBAGENT_SYSTEM's "no interactive user to ask". Nulled → AskUserQuestion errors cleanly.
@@ -393,6 +401,12 @@ export async function* runAgent(
       // NB: 'incomplete' is intentionally NOT annotated here — it is only produced for an expectsFileChanges
       // run, and sub-agent spawns do not thread that flag, so a child can never return it. If delegated
       // implementation is ever gated, add the note here (and thread expectsFileChanges into the spawns).
+      // SubagentStop hook: the parent fires it when a sub-agent finishes. A hook can attach context that rides
+      // back on the sub-agent's summary (sub-agent re-entry on block is a later refinement).
+      if (hookRegistry.hasAny('SubagentStop')) {
+        const ss = await runHooks('SubagentStop', { ...baseHookPayload('SubagentStop', ctx), stop_hook_active: false }, hookContextFromAgent(ctx))
+        if (ss.additionalContexts.length) last = `${last}\n\n${ss.additionalContexts.join('\n\n')}`
+      }
       return last
     }
 
@@ -400,7 +414,7 @@ export async function* runAgent(
   // runChild that runs one of a child's turns with the sub-agent tool set — no Task, no nested agent_*
   // (depth 1) — threading the child's persisted readFileState/todos. Sub-agents get subAgents: undefined.
   if (ctx.subAgents instanceof AsyncSubAgentPool) {
-    const asyncChildTools = tools.filter((t) => t.name !== 'Task' && !t.name.startsWith('agent_') && t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens' && !t.name.startsWith('preview_'))
+    const asyncChildTools = tools.filter((t) => t.name !== 'Task' && !t.name.startsWith('agent_') && t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens' && !t.name.startsWith('preview_') && !t.name.startsWith('monitor_') && t.name !== 'schedule_wakeup')
     const runChild: RunChild = async (childMessages, signal, readFileState, todos, parentToolId, subAgentId) => {
       const sub = runAgent({
         protocol: params.protocol,
@@ -410,6 +424,7 @@ export async function* runAgent(
         system: SUBAGENT_SYSTEM,
         messages: childMessages,
         tools: asyncChildTools,
+        isSubAgentLoop: true, // async sub-agent: no top-level Stop hook
         // askUser nulled (see the Task spawn above): a background sub-agent has no interactive surface, and
         // under agent_batch several run concurrently — nulling prevents a child popping a blocking user dialog.
         // setTodos nulled (see the Task spawn above): a background sub-agent's TodoWrite stays run-local and must
@@ -432,6 +447,12 @@ export async function* runAgent(
     }
     ctx.subAgents.setRunChild(runChild)
   }
+
+  // Stop-hook continuation state: a Stop hook that blocks injects its reason as a new turn and re-enters the
+  // loop, with stop_hook_active set so the hook can self-pass. The consecutive-block breaker (cap 8) force-ends
+  // the run if a hook blocks the turn from ending too many times — the anti-deadlock backstop.
+  let stopHookActive = false
+  let stopHookBlockCount = 0
 
   while (true) {
     // Layer 2: microcompact every turn (clear old tool-result content, keep the recent 5) — cheap,
@@ -703,6 +724,26 @@ export async function* runAgent(
         console.warn(`[agent] verify-before-done nudge run=${ctx.runId} turn=${turns} — files changed, no verification command ran after the last edit`)
         messages.push({ role: 'user', content: [{ type: 'text', text: VERIFY_NUDGE }] })
         continue
+      }
+      // Stop hook (top-level loop only — a sub-agent fires SubagentStop at its parent). A blocking Stop hook
+      // does NOT truly stop: its reason is injected as a new user turn and the loop re-enters (waking the model
+      // to keep going), with stop_hook_active set so the hook can self-pass next time. preventContinuation truly
+      // stops. The consecutive-block breaker overrides after STOP_HOOK_BLOCK_CAP blocks to prevent a deadlock.
+      if (!params.isSubAgentLoop && hookRegistry.hasAny('Stop')) {
+        const stop = await runHooks('Stop', { ...baseHookPayload('Stop', ctx), stop_hook_active: stopHookActive }, hookContextFromAgent(ctx))
+        if (!stop.preventContinuation && stop.blockingErrors.length > 0) {
+          stopHookBlockCount++
+          if (stopHookBlockCount > STOP_HOOK_BLOCK_CAP) {
+            console.warn(`[agent] stop-hook breaker run=${ctx.runId}: a hook blocked the turn from ending ${stopHookBlockCount}× consecutively — overriding and ending. (For Stop hooks, check stop_hook_active and pass while it's true.)`)
+          } else {
+            messages.push({
+              role: 'user',
+              content: [{ type: 'text', text: `${stop.blockingErrors.join('\n\n')}\n\n(You are being continued by a Stop hook. If its condition genuinely cannot be satisfied, say so briefly and stop.)` }],
+            })
+            stopHookActive = true
+            continue
+          }
+        }
       }
       return { reason: 'completed', messages, turns, compactions, compact: carryOut() }
     }

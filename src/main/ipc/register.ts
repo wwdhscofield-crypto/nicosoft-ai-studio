@@ -16,6 +16,7 @@ import { registerSkillHandlers } from './skill.handler'
 import { registerPluginHandlers } from './plugin.handler'
 import { registerApprovalHandlers } from './approval.handler'
 import { registerScheduledHandlers } from './scheduled.handler'
+import { registerMonitorHandlers } from './monitor.handler'
 import { registerAnalyticsHandlers } from './analytics.handler'
 import { registerServiceHandlers } from './services.handler'
 import { registerUpdateHandlers } from './update.handler'
@@ -41,6 +42,7 @@ export function registerIpc(): void {
   registerPluginHandlers()
   registerApprovalHandlers()
   registerScheduledHandlers()
+  registerMonitorHandlers()
   registerAnalyticsHandlers()
   registerServiceHandlers()
   registerPreviewHandlers()

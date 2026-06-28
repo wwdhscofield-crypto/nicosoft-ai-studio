@@ -14,6 +14,10 @@ import { disposeAllPlaywrightSessions } from './agent/tools/playwright-browser'
 import { disposeAll as disposeAllTerminals } from './services/terminal.service'
 import { disposeAllActiveServices } from './services/active-services'
 import { disposeAllSoloAsync } from './services/solo-async'
+import { monitorService } from './services/monitor.service'
+import { selfRhythmService } from './services/self-rhythm.service'
+import { registerHookExecutors } from './agent/hooks/executors'
+import { fileWatchManager } from './agent/hooks/file-watch'
 import { initUpdateService, checkSilently } from './services/update.service'
 import { PREVIEW_PARTITION, markPreviewGuestAllowed } from './services/active-preview'
 
@@ -265,6 +269,7 @@ app.whenReady().then(() => {
   session.fromPartition(PREVIEW_PARTITION).setUserAgent(previewBrowserUA)
   registerMediaProtocol() // nsai-media:// → local image files, before the window loads any attachment
   registerIpc()
+  registerHookExecutors() // fill the hook engine's executor table (command/prompt/agent/http/mcp_tool)
   initUpdateService() // wire autoUpdater (channel from the build's own version) before any check can run
   // Connect every enabled MCP server (best effort) so their tools are ready when an agent role runs.
   void connectMcpServers().catch(() => {})
@@ -315,4 +320,7 @@ app.on('before-quit', () => {
   disposeAllTerminals() // kill any live pty so no shell outlives the app
   disposeAllActiveServices() // tree-kill detached dev servers so none outlive the app holding ports
   disposeAllSoloAsync() // 批C2b: tree-kill any conv-level launch_async op parked across runs so none outlives the app
+  monitorService.disposeAll() // stop every Monitor watcher so no probe interval outlives the app
+  selfRhythmService.disposeAll() // cancel every pending self-wakeup timer
+  fileWatchManager.disposeAll() // close every hook file watcher
 })

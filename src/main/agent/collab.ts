@@ -69,6 +69,7 @@ interface ExpertRunner {
   messages: AgentMessage[]
   mailbox: CollabMessage[]
   status: 'running' | 'parked'
+  exited: boolean // runExpert's loop has terminated (error/quiescent) → it can NEVER drain pendingResults again
   waitRequested: boolean
   waitUntil: number // epoch ms; 0 = park indefinitely (idle, woken only by assign or quiescence)
   wake?: (reason: 'woken' | 'quiescent') => void
@@ -129,11 +130,15 @@ export class CollabSession {
   private clock: () => number
 
   // onEvent surfaces every consult interaction for audit + the orchestration tree (doc 19 §5). nowMs is
-  // injected (Date.now is banned in some contexts) — pass () => Date.now() from the caller.
+  // injected (Date.now is banned in some contexts) — pass () => Date.now() from the caller. hasKeepalive (the
+  // session bus) reports whether any session-level keepalive reason holds (e.g. an armed Monitor): while it
+  // does, settle() never quiesces the collaboration — the session stays open for injected wakeups until the
+  // reason is cleared (mirrors the T2 in-flight-async-handle guard, but session-scoped not expert-scoped).
   constructor(
     specs: ExpertSpec[],
     private onEvent: (e: CollabEvent) => void,
     nowMs: () => number,
+    private hasKeepalive?: () => boolean,
   ) {
     this.clock = nowMs
     for (const s of specs) {
@@ -142,6 +147,7 @@ export class CollabSession {
         messages: [userTurn(s.initialPrompt)],
         mailbox: [],
         status: 'running',
+        exited: false,
         waitRequested: false,
         waitUntil: 0,
         pairCount: new Map(),
@@ -321,6 +327,7 @@ export class CollabSession {
         console.warn(`[collab] expert "${e.spec.roleId}" turn failed — dropping it from the session, continuing with the others:`, msg)
       }
     }
+    e.exited = true // the loop is gone — injectExternal must not route a note here (it can never drain again)
     e.status = 'parked'
     // Mark this expert parked + drained so the quiescence sweep doesn't keep waiting on it. A peer parked in
     // wait() on a reply from this expert resolves via the global quiescence check (all parked → end), so a
@@ -346,6 +353,40 @@ export class CollabSession {
         this.onEvent({ kind: 'wake', roleId: e.spec.roleId })
       }
     }
+  }
+
+  // Inject an external session event (a Monitor change, a hook, a scheduled wakeup) into the collaboration via
+  // the session bus. Same delivery path as a completed async handle (notifyHandleComplete): push the note onto
+  // the target expert's pendingResults queue and wake it if parked — a running expert picks it up at its
+  // pre-park check, a transiently-wakeless one at its post-park splice, so there's no lost-wakeup window.
+  // Routing: deliver to `roleId` when it names a LIVE expert (the one that armed the Monitor); otherwise fall
+  // back to the first live expert so a session-wide event reaches someone. "Live" = the expert's loop is still
+  // alive, so it WILL drain its pendingResults — whether RUNNING (it picks the note up at its pre-park check),
+  // parked WITH a `wake` (we wake it below), or transiently parked-but-already-woken by an EARLIER inject in the
+  // SAME synchronous tick (its `wake` was just consumed and its resume is pending: on resume it re-checks
+  // pendingResults and drains every note queued meanwhile). Keying liveness off `wake!==undefined` alone misses
+  // that transient state, so a burst of injects (e.g. the scheduler delivering each step synchronously) would
+  // drop/misroute every note after the first; keying off !exited fixes it. Only an EXITED runner (loop ended on
+  // error/quiescence) can never drain — exclude it so a note is never pushed onto a dead queue (which, with a
+  // keepalive reason holding the session open, would also wedge it waiting for a wakeup that can't come). If NO
+  // expert is live the event is dropped (a documented terminal loss, not a wedge). (Multi-target routing is a follow-up.)
+  injectExternal(note: string, roleId?: string): void {
+    const isLive = (x: ExpertRunner): boolean => !x.exited
+    const byRole = roleId ? this.experts.get(roleId) : undefined
+    const target = byRole && isLive(byRole) ? byRole : [...this.experts.values()].find(isLive)
+    if (!target) return // no live expert to receive it — don't push onto a dead queue
+    target.pendingResults.push(note)
+    // A parked expert must be woken to drain it; a running one will hit its own pre-park check and splice it.
+    if (target.status === 'parked' && target.wake) {
+      target.wake('woken') // resume; runExpert's post-park check injects pendingResults as a user turn
+      this.onEvent({ kind: 'wake', roleId: target.spec.roleId })
+    }
+  }
+
+  // Re-evaluate quiescence on demand — called by the session bus when the last keepalive reason is removed, so
+  // a collaboration that was held open only by a Monitor can end now that nothing keeps it alive.
+  pokeSettle(): void {
+    this.settle()
   }
 
   // Decide whether the collaboration can end — called whenever an expert parks (park) or leaves its loop
@@ -380,6 +421,10 @@ export class CollabSession {
     // session out from under it; its completion event will wake it. AFTER the mail/timed-waiter drains above, so
     // it only blocks the final quiescent end (not those wakeups). An async-waiting peer can still receive mail.
     if (all.some((x) => x.pendingHandles.size > 0 && x.wake)) return
+    // Session-level keepalive (e.g. an armed Monitor): a kept-alive collaboration is held open for injected
+    // wakeups, never quiesced away. Cleared (the last reason removed) → the bus pokes pokeSettle() to re-check
+    // and end now. A real abort still tears it down (park's onAbort), so this can't wedge a cancel.
+    if (this.hasKeepalive?.()) return
     for (const x of all) x.wake?.('quiescent')
   }
 

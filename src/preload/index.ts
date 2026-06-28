@@ -102,6 +102,7 @@ import type {
   ScheduledTask,
   CreateTaskInput,
   ScheduledFiredEvent,
+  MonitorInfoDto,
   VerifyProgressEvent,
   VerifyToolEvent,
   VerifyDoneEvent,
@@ -380,6 +381,12 @@ const api = {
     remove: (id: string): Promise<boolean> => ipcRenderer.invoke('scheduled:delete', id),
     onFired: (cb: (d: ScheduledFiredEvent) => void): (() => void) => agentListen('scheduled:fired', cb),
     onChanged: (cb: () => void): (() => void) => agentListen('scheduled:changed', cb)
+  },
+
+  monitor: {
+    list: (): Promise<MonitorInfoDto[]> => ipcRenderer.invoke('monitor:list'),
+    stop: (id: string): Promise<boolean> => ipcRenderer.invoke('monitor:stop', id),
+    onChanged: (cb: () => void): (() => void) => agentListen('monitor:changed', cb)
   },
 
   roles: {

@@ -9,6 +9,9 @@ import { findTool, type Tool } from './tool'
 import { persistLargeResult } from './tool-result-storage'
 import { isSystemSoftwareInstall } from './tools/bash-classifier'
 import type { ToolResultBlock, ToolUseBlock } from './types'
+import { runHooks } from './hooks/engine'
+import { hookRegistry } from './hooks/registry'
+import { hookContextFromAgent, baseHookPayload } from './hooks/adapter'
 
 const MAX_CONCURRENCY = 10
 
@@ -110,12 +113,71 @@ async function runOne(
     const valid = await tool.validateInput(input, ctx)
     if (!valid.result) return errorResult(toolUse.id, valid.message)
 
-    const decision = await checkPermission(tool, input, ctx)
+    // PreToolUse hooks: can DENY the call (→ error result), REWRITE the input (updatedInput), or attach context
+    // that rides back on the tool result. Runs before permission so a hook can veto a tool the user would
+    // otherwise approve. Skipped cheaply when nothing listens.
+    let effectiveInput = input
+    const hookContexts: string[] = []
+    if (hookRegistry.hasAny('PreToolUse')) {
+      const pre = await runHooks(
+        'PreToolUse',
+        { ...baseHookPayload('PreToolUse', ctx), tool_name: tool.name, tool_input: input },
+        hookContextFromAgent(ctx),
+      )
+      if (pre.permissionBehavior === 'deny') {
+        return errorResult(toolUse.id, `Blocked by a PreToolUse hook: ${pre.permissionReason ?? (pre.blockingErrors.join('; ') || 'condition not met')}`)
+      }
+      if (pre.updatedInput) {
+        // A hook's rewritten input must clear the SAME gates the model's original did. Re-validate it against
+        // the tool's schema + value-validation so a rewrite can't smuggle malformed/forbidden input (a path the
+        // validator rejects, a wrong-typed field) past the pipeline straight into tool.call. And reject a
+        // rewrite that turns a concurrency-SAFE call UNSAFE: the streaming executor already scheduled this call
+        // (parallel read-batch vs serialized write) from the ORIGINAL input, so a safe→unsafe rewrite would run
+        // a mutation inside a parallel read batch and break write-serialization.
+        const reparsed = tool.inputSchema.safeParse(pre.updatedInput)
+        if (!reparsed.success) return errorResult(toolUse.id, `PreToolUse hook produced invalid input: ${formatZodError(reparsed.error)}`)
+        const rewritten = reparsed.data as Record<string, unknown>
+        if (tool.isConcurrencySafe(input) && !tool.isConcurrencySafe(rewritten)) {
+          return errorResult(toolUse.id, 'PreToolUse hook rewrite turned a concurrency-safe call into an unsafe one, which is not allowed after scheduling.')
+        }
+        const revalid = await tool.validateInput(rewritten, ctx)
+        if (!revalid.result) return errorResult(toolUse.id, `PreToolUse hook produced invalid input: ${revalid.message}`)
+        effectiveInput = rewritten
+      }
+      hookContexts.push(...pre.additionalContexts)
+    }
+
+    const decision = await checkPermission(tool, effectiveInput, ctx)
     if (!decision.allow) return errorResult(toolUse.id, decision.message ?? 'Permission denied')
 
     const toolCtx: AgentContext = { ...ctx, currentToolUseId: toolUse.id }
-    const result = await tool.call(decision.updatedInput ?? input, toolCtx)
-    const block = tool.mapResult(result.data, toolUse.id)
+    const result = await tool.call(decision.updatedInput ?? effectiveInput, toolCtx)
+    let block = tool.mapResult(result.data, toolUse.id)
+
+    // PostToolUse hooks: can REWRITE the output (updatedToolOutput — last wins) or attach context. Errors are
+    // surfaced too (the failure is the signal a PostToolUse hook reacts to).
+    if (hookRegistry.hasAny('PostToolUse')) {
+      const post = await runHooks(
+        'PostToolUse',
+        { ...baseHookPayload('PostToolUse', ctx), tool_name: tool.name, tool_input: effectiveInput, tool_response: block.content, is_error: block.is_error === true },
+        hookContextFromAgent(ctx),
+      )
+      const rewrite = post.updatedToolOutputs.at(-1)
+      if (rewrite !== undefined) block = { ...block, content: typeof rewrite === 'string' ? rewrite : JSON.stringify(rewrite) }
+      hookContexts.push(...post.additionalContexts)
+    }
+
+    // Fold any hook-attached context onto the tool result so the model sees it. String content is appended;
+    // array content (image tools: generate_image/view_image) gets the context as an extra text block so it is
+    // not silently dropped — and the existing image blocks are preserved.
+    if (hookContexts.length) {
+      const extra = hookContexts.join('\n\n')
+      if (typeof block.content === 'string') {
+        block = { ...block, content: `${block.content}\n\n${extra}` }
+      } else if (Array.isArray(block.content)) {
+        block = { ...block, content: [...block.content, { type: 'text', text: extra }] }
+      }
+    }
     return await persistLargeResult(block, tool.maxResultSizeChars, ctx.sessionDir)
   } catch (err) {
     return errorResult(toolUse.id, err instanceof Error ? err.message : String(err))

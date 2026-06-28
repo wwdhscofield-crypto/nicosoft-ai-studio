@@ -1126,6 +1126,21 @@ export interface ScheduledFiredEvent {
   ok: boolean
 }
 
+// A running session Monitor (services/monitor.service.ts) surfaced to the Scheduled page's "Running monitors"
+// section so the user can see what each conversation is watching and stop it. Read-only view of a watcher.
+export interface MonitorInfoDto {
+  id: string
+  convId: string
+  roleId?: string // the expert that armed it (collab)
+  kind: 'preview' | 'http' | 'file'
+  label: string
+  intervalMs: number
+  target: string // the probe target (expression / url / path)
+  startedAt: number
+  lastChangeAt?: number
+  changeCount: number
+}
+
 // App self-update (doc 56). The single state object the main-process update service (services/update.service.ts)
 // broadcasts on every autoUpdater transition; the renderer store (stores/update.ts) mirrors it verbatim. One
 // source of truth shared by the Topbar button, the update modal, and the About row.

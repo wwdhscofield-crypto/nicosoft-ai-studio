@@ -485,5 +485,10 @@
   "update.about.checking": "檢測中…",
   "update.about.upToDate": "已是最新 ✓",
   "update.about.found": "發現 {version} →",
-  "update.about.failed": "檢測失敗"
+  "update.about.failed": "檢測失敗",
+  "monitors.heading": "執行中的監視器",
+  "monitors.stop": "停止",
+  "monitors.meta": "每 {interval} · {count} 次變化",
+  "monitors.stopped": "監視器已停止",
+  "monitors.stopFailed": "無法停止監視器"
 }

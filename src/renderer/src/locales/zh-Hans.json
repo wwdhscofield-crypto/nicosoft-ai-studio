@@ -485,5 +485,10 @@
   "update.about.checking": "检测中…",
   "update.about.upToDate": "已是最新 ✓",
   "update.about.found": "发现 {version} →",
-  "update.about.failed": "检测失败"
+  "update.about.failed": "检测失败",
+  "monitors.heading": "运行中的监视器",
+  "monitors.stop": "停止",
+  "monitors.meta": "每 {interval} · {count} 次变化",
+  "monitors.stopped": "监视器已停止",
+  "monitors.stopFailed": "无法停止监视器"
 }

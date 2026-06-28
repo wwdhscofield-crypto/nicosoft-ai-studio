@@ -17,6 +17,7 @@ import { displayName } from '../agent/roles/prompts'
 import { sendMessageTool, assignTaskTool, waitTool } from '../agent/tools/consult'
 import { CollabSession, type ExpertSpec, type CollabEvent } from '../agent/collab'
 import { AsyncRegistry, formatAsyncHandle } from '../agent/async-registry'
+import { sessionBus } from '../agent/session-bus'
 import { awaitAsyncTool } from '../agent/tools/await-async'
 import { launchAsyncTool } from '../agent/tools/launch-async'
 import { ServiceRegistry, type ServiceInfo } from '../agent/service-registry'
@@ -29,6 +30,8 @@ import type { AgentRunInput } from '../ipc/contracts'
 import { agentEvents } from './event-bus'
 import { manager as skillManager } from './skill.service'
 import { DEV_ROLES, PLAYWRIGHT_TOOLS, PREVIEW_AGENT_TOOLS, toolsForAgentRole } from './agent-tools'
+import { monitorService } from './monitor.service'
+import { selfRhythmService } from './self-rhythm.service'
 import { buildAgentSystem } from './agent-system'
 import { createLensHandle } from './lens/agent-lens'
 import { setActiveServices, clearActiveServices, broadcastConvServices } from './active-services'
@@ -243,6 +246,7 @@ export async function runCollabSession(
           signal: sig,
           runId,
           roleId: x.roleId,
+          convId, // session-scoped tools (monitor_*) key off it; injectExternal routes the wakeup back to this expert
           readFileState,
           permissionMode: x.permissionMode ?? 'default',
           requestPermission: (req, s) => hooks.requestPermission(x.roleId, req, s),
@@ -349,10 +353,18 @@ export async function runCollabSession(
     hooks.onServices?.(registry.list())
   }
   try {
-    const session = new CollabSession(specs, onEvent, nowMs)
+    // hasKeepalive lets the session block its own quiescence while a session-level keepalive reason holds (an
+    // armed Monitor) — the collaboration stays open for injected wakeups until the reason clears.
+    const session = new CollabSession(specs, onEvent, nowMs, () => sessionBus.hasKeepalive(convId))
     // C3 §6.5 (批8): route async-handle completions into the session so it wakes the parked expert + injects the
     // result (notifyHandleComplete → runExpert T1). Set before run() so a fast handle can't fire before it's wired.
     asyncRegistry.onComplete = (h) => session.notifyHandleComplete(h.id, formatAsyncHandle(h))
+    // Unified session bus: an injection (Monitor / hook / scheduled wakeup) wakes a parked expert and seeds the
+    // note as its next turn (injectExternal); when the last keepalive reason is removed, re-check quiescence so a
+    // session held open only by a Monitor can end. Collab does NOT mark the bus active — it leaves running-vs-
+    // parked serialization to its own scheduler, so an inject delivers immediately instead of waiting for idle.
+    sessionBus.armDelivery(convId, (note, roleId) => session.injectExternal(note, roleId))
+    sessionBus.armIdleCheck(convId, () => session.pokeSettle())
     const texts = await session.run(signal)
     // 批D (dogfood2 P1): the elected driver ran the consolidated panel from its OWN turn (批C) → its verdict is the
     // 'panel' handle in the shared async registry. Extract it BEFORE the finally dispose so the coordinator
@@ -368,6 +380,18 @@ export async function runCollabSession(
     )
     return { results, panelResult }
   } finally {
+    // Unarm the bus delivery + idle-check so a late injection can't try to wake a torn-down session, then dispose
+    // any session-scoped Monitor / self-wakeup armed during this collaboration. A collaboration only reaches
+    // teardown with a Monitor still armed via abort / all-experts-error — a Monitor's keepalive otherwise blocks
+    // quiescence — and once delivery is unarmed the watcher can wake nobody, so a surviving Monitor would leak its
+    // probe timer AND its `monitor:<id>` keepalive. That keepalive is convId-global, so it would wedge the NEXT
+    // collaboration on this conv (hasKeepalive stays true → it never quiesces → run() never resolves) and grow the
+    // bus queue unbounded. disposeForConv is idempotent and clears each watcher's timer + keepalive (manual stop,
+    // no inject), so it is safe even when nothing was armed.
+    sessionBus.armDelivery(convId, undefined)
+    sessionBus.armIdleCheck(convId, undefined)
+    monitorService.disposeForConv(convId)
+    selfRhythmService.disposeForConv(convId)
     hooks.onServices?.([])
     clearActiveServices(convId, registry)
     broadcastConvServices(convId, []) // clear the Tasks panel's Services section on teardown

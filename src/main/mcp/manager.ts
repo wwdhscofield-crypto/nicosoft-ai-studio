@@ -1,5 +1,6 @@
 import { connectToServer } from './connection'
 import { discoverTools } from './discovery'
+import { callMcpTool } from './execution'
 import type { Tool } from '../agent/tool'
 import type { ConnectedServer, McpScope, McpServerConfig } from './types'
 
@@ -50,6 +51,18 @@ export class McpManager {
 
   toolCount(id: string): number {
     return this.servers.get(id)?.tools.length ?? 0
+  }
+
+  // Call a tool on a connected server resolved by its display NAME (hook configs reference a server by name,
+  // not its internal id) and TOOL name (the bare tool name, not the role-scoped mcp__server__tool alias).
+  // Throws if the server isn't connected, or if the name is AMBIGUOUS — display names carry no uniqueness
+  // guarantee, so silently picking the first match could route the call to the wrong server; fail loudly
+  // instead. Used by the mcp_tool hook executor.
+  async callToolByName(serverName: string, toolName: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<{ content: unknown; isError?: boolean }> {
+    const matches = [...this.servers.values()].filter((e) => e.connection.name === serverName)
+    if (matches.length === 0) throw new Error(`MCP server "${serverName}" is not connected.`)
+    if (matches.length > 1) throw new Error(`MCP server name "${serverName}" is ambiguous — ${matches.length} connected servers share it; rename one so the hook can address it unambiguously.`)
+    return callMcpTool(matches[0].connection, toolName, args, signal)
   }
 
   // Every MCP tool scoped to a role: server scope 'all', or its roleId list includes roleId.

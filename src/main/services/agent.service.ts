@@ -165,7 +165,8 @@ export async function run(
       onTodosChange: cb.onTodos, // TodoWrite executed (mid-turn) → live push to the workspace Tasks panel
       // 批C2b: solo direct chat gets a CONV-LEVEL async registry (handles outlive the run) + the cross-turn park
       // hook, so launch_async + await_async can park the turn and resume when the op completes. The IPC layer
-      // (agent.handler.startAgentRun) arms the resume closure + drives markSoloRunActive/Idle around this run.
+      // (agent.handler.startAgentRun) arms the session-bus delivery + drives sessionBus.markActive/markIdle around
+      // this run; a completed handle injects its result into the bus (solo-async), which resumes when idle.
       asyncRegistry: getSoloAsync(convId).reg,
       parkSolo: (inflight, settledResults) => parkSolo(convId, inflight, settledResults),
     },

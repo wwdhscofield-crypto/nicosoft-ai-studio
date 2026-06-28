@@ -26,6 +26,7 @@ import * as endpointRepo from '../../repos/endpoint.repo'
 import * as convRepo from '../../repos/conversation.repo'
 import * as conversationService from '../../services/conversation.service'
 import * as keychain from '../../keychain/keychain'
+import { sessionBus } from '../session-bus'
 
 // Cap one timer at 6h: bounds a far-future task's delay (setTimeout overflows past ~24.8d) and re-checks
 // after system sleep / clock changes. NOT a poll — a timer exists ONLY while an enabled task is scheduled,
@@ -161,6 +162,37 @@ class SchedulerEngine {
     const primaryRoleId = task.steps[0]?.roleId ?? DEFAULT_EXECUTOR
     const convId =
       task.convId ?? conversationService.create({ kind: 'chat', primaryRoleId, title: `Scheduled · ${task.name}` }).id
+
+    // Self-rhythm reuse (batch 6): if the task is bound to a conversation that has a LIVE session, DELIVER its
+    // steps into that session via the unified bus instead of starting a fresh headless run — which would race
+    // the live run (two runs streaming one conv). Each step keeps the SAME per-kind handling as the headless
+    // path so nothing is silently dropped: agent steps (expert/tool/email) are injected with their own role +
+    // the kind's instruction framing; a `project` step runs its agent-independent side effect directly; each
+    // step's role binding is validated (a misbound role still surfaces an error). The ONE feature not preserved
+    // is sequential output-piping (an injected step can't feed the next) — an accepted tradeoff for reusing the
+    // live session + its Preview. Delivery is async (the live agent acts on its own schedule). When the conv is
+    // NOT live, fall through to the headless chain below (still on the same convId).
+    if (task.convId && sessionBus.hasDelivery(task.convId)) {
+      for (const step of task.steps) {
+        if (step.kind === 'project') {
+          await this.runProjectStep(step, '') // agent-independent: must run regardless of liveness
+          continue
+        }
+        // Deliver into the LIVE session, which already runs under its OWN validated role/endpoint/key. We must
+        // NOT re-validate (or use) the step's role binding here: that gate belongs to the headless run() path
+        // below, which actually starts a run under that binding. Validating it here checks a role the injected
+        // note never executes as — and for a tool/email step (no roleId → 'scheduler') it would throw a false
+        // "not bound"/"no api key" mid-loop, AFTER earlier steps were already injected, recording a partially
+        // applied chain as a failure. The roleId still rides along so collab can route the note to the matching
+        // live expert (solo resumes under the conv's original role and ignores it).
+        const text =
+          step.kind === 'tool' ? `Use your available MCP tools to do the following.\n\n${step.prompt}`
+          : step.kind === 'email' ? emailInstruction(step)
+          : step.prompt
+        sessionBus.inject(task.convId, { text, source: `schedule:${task.id}`, priority: 'later', roleId: step.roleId })
+      }
+      return task.convId
+    }
 
     const controller = new AbortController() // one abort scope for the whole chain
     let prior = '' // previous step's output — injected into the next step

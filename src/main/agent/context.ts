@@ -168,6 +168,17 @@ export interface AgentContext {
   // it to attribute effects to an expert — the service tools stamp ServiceInfo.owner with it so the Tasks
   // panel can group running services by expert in a group chat. Undefined where no role applies.
   roleId?: string
+  // The run's main model slug. Threaded so prompt/agent hook executors can run their judgement on the same
+  // model the agent uses (a hook's own `model` config overrides). Set by runAgent; undefined where no model.
+  model?: string
+  // The conversation this run belongs to. Session-scoped tools (monitor_start/stop, scheduled wakeups) key off
+  // it to register a watcher / wakeup against the right session and route the resulting injection back to it.
+  // Set by runAgentLoop (solo/dispatch) and the collab runTurn; undefined only in contexts with no conversation.
+  convId?: string
+  // Anti-recursion id for the hook engine: a sub-query an AGENT hook spawns carries an id prefixed with
+  // 'hook-agent-' (engine.HOOK_AGENT_PREFIX). When set, the hook engine drops prompt/agent hooks so a hook
+  // can't recursively trigger more hooks. Undefined on a normal turn; set only inside a hook-spawned agent.
+  hookAgentId?: string
   // Long-running dev service registry (doc 19 §10), shared across a collaboration's experts (Flynn starts
   // a backend, Shuri connects). The start_service / stop_service / service_logs / list_services tools reach
   // it here. Undefined outside a collaboration → those tools no-op with a message.

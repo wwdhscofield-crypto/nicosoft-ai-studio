@@ -485,5 +485,10 @@
   "update.about.checking": "Checking…",
   "update.about.upToDate": "Up to date ✓",
   "update.about.found": "Found {version} →",
-  "update.about.failed": "Check failed"
+  "update.about.failed": "Check failed",
+  "monitors.heading": "Running monitors",
+  "monitors.stop": "Stop",
+  "monitors.meta": "every {interval} · {count} changes",
+  "monitors.stopped": "Monitor stopped",
+  "monitors.stopFailed": "Couldn’t stop monitor"
 }

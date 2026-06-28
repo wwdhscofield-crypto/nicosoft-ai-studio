@@ -485,5 +485,10 @@
   "update.about.checking": "確認中…",
   "update.about.upToDate": "最新です ✓",
   "update.about.found": "{version} を発見 →",
-  "update.about.failed": "確認に失敗"
+  "update.about.failed": "確認に失敗",
+  "monitors.heading": "実行中のモニター",
+  "monitors.stop": "停止",
+  "monitors.meta": "{interval}ごと · {count}回の変化",
+  "monitors.stopped": "モニターを停止しました",
+  "monitors.stopFailed": "モニターを停止できませんでした"
 }

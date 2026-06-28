@@ -8,7 +8,8 @@ import { StreamRegistry } from './stream-lifecycle'
 import * as agentService from '../services/agent.service'
 import * as compressionService from '../services/compression.service'
 import * as workspaceTasks from '../services/workspace-tasks.service'
-import { armSoloResume, markSoloRunActive, markSoloRunIdle } from '../services/solo-async'
+import { sessionBus } from '../agent/session-bus'
+import { drainSoloResume } from '../services/solo-async'
 import { ENGINEER_ROLE_ID } from '../services/agent-tools'
 import { isSoloPreviewWriteTool } from '../agent/tools/preview'
 import type { AgentBlockDto, AgentPermissionResponse, AgentQuestionResponse, AgentResultDto, AgentRunInput } from './contracts'
@@ -68,12 +69,13 @@ function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: { resum
       model: input.model,
     })
   }
-  // Arm/refresh the conv's resume closure with THIS run's sender + input (latest wins; a WebContents survives a
-  // renderer reload, so it stays valid). When a parked async op completes, solo-async invokes it → a fresh resumed
-  // run on a new stream. markSoloRunActive claims the conv so a completion DURING this run defers its resume to the
-  // run's idle (finally → markSoloRunIdle) — never two concurrent runs on one conv.
-  armSoloResume(input.convId, (note) => startAgentRun(input, sender, { resumeNote: note }))
-  markSoloRunActive(input.convId)
+  // Arm/refresh the conv's session-bus delivery with THIS run's sender + input (latest wins; a WebContents
+  // survives a renderer reload, so it stays valid). Any session injection (a parked async op completing, a
+  // Monitor change, a hook, a scheduled wakeup) drives it → a fresh resumed run on a new stream. markActive
+  // claims the conv so an injection DURING this run defers its delivery to the run's idle (finally → markIdle)
+  // — never two concurrent runs on one conv. The note is already wrapped in the notification shell by the bus.
+  sessionBus.armDelivery(input.convId, (note) => startAgentRun(input, sender, { resumeNote: note }))
+  sessionBus.markActive(input.convId)
 
   void agentService
     .run(
@@ -205,9 +207,13 @@ function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: { resum
         workspaceTasks.finalizeConv(input.convId) // run silent → finalize an all-complete phase (design §5 P19)
         sweepStream(streamId) // deny any prompt the renderer never answered before the run ended
         finish()
-        // 批C2b: mark the conv idle LAST. If this turn PARKED on an async op (or one completed mid-run), this is
-        // where the resume fires — a fresh run on a new stream, now that no run streams for the conv.
-        markSoloRunIdle(input.convId)
+        // Give solo-async its idle-transition re-check BEFORE releasing the conv: if the turn parked on async
+        // ops that have all completed (and none is still in flight), it queues the resume now — re-evaluating
+        // `awaiting` at the true end of the run so a late await isn't pre-empted. Then mark the conv idle LAST:
+        // if this turn parked (or a Monitor/hook/schedule injection landed mid-run), this is where the resume
+        // fires — a fresh run on a new stream, now that no run streams for the conv. The bus drains its queue here.
+        drainSoloResume(input.convId)
+        sessionBus.markIdle(input.convId)
       })
 
   return { streamId }

@@ -17,6 +17,7 @@ import { useT } from '@/stores/locale'
 
 // DTO from the preload bridge — same shape as the scheduler's model (ipc/contracts), no mapping layer.
 type TaskDto = Awaited<ReturnType<typeof window.api.scheduled.list>>[number]
+type MonitorDto = Awaited<ReturnType<typeof window.api.monitor.list>>[number]
 type StepDto = TaskDto['steps'][number]
 type StepKind = StepDto['kind']
 type TriggerType = 'once' | 'interval' | 'daily' | 'weekly' | 'cron'
@@ -118,6 +119,47 @@ function fmtTime(ms?: number): string {
   return new Date(ms).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' })
 }
 
+// Compact interval readout for a running monitor: ms → "5s" / "2m" / "1h".
+function fmtInterval(ms: number): string {
+  if (ms >= 3_600_000) return `${Math.round(ms / 3_600_000)}h`
+  if (ms >= 60_000) return `${Math.round(ms / 60_000)}m`
+  return `${Math.round(ms / 1000)}s`
+}
+
+// Running session Monitors (services/monitor.service) — non-LLM watchers that wake a conversation on change.
+// Shown only when at least one is armed, each with a Stop button.
+function MonitorsSection({ monitors, onStop }: { monitors: MonitorDto[]; onStop: (id: string) => void }): ReactElement | null {
+  const t = useT()
+  if (monitors.length === 0) return null
+  return (
+    <div className="sched-monitors" style={{ marginBottom: 16 }}>
+      <div className="sched-mon-head" style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 13, opacity: 0.8, marginBottom: 8 }}>
+        <Icons.eye size={14} /> {t('monitors.heading')}
+      </div>
+      <div className="sched-list">
+        {monitors.map((m) => (
+          <div className="sched-row" key={m.id}>
+            <span className="sched-trig-ic"><Icons.eye size={16} /></span>
+            <div className="sched-main">
+              <div className="sched-name-line">
+                <span className="sched-name">{m.label}</span>
+                <span className="sched-trigger">{m.kind}</span>
+              </div>
+              <div className="sched-chain mono" style={{ opacity: 0.7, fontSize: 12, wordBreak: 'break-all' }}>{m.target}</div>
+            </div>
+            <div className="sched-meta">
+              <span className="sched-next">{t('monitors.meta', { interval: fmtInterval(m.intervalMs), count: m.changeCount })}</span>
+            </div>
+            <button className="btn secondary sm" onClick={() => onStop(m.id)}>
+              {t('monitors.stop')}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function StepChip({ step }: { step: StepDto }): ReactElement {
   const { EXPERT_BY_ID } = STUDIO_DATA
   if (step.kind === 'expert') {
@@ -171,15 +213,19 @@ function LastRun({ task, onOpenConversation }: { task: TaskDto; onOpenConversati
 /* — Scheduled list — */
 function ScheduledList({
   tasks,
+  monitors,
   onToggle,
   onEdit,
   onNew,
+  onStopMonitor,
   onOpenConversation,
 }: {
   tasks: TaskDto[]
+  monitors: MonitorDto[]
   onToggle: (t: TaskDto) => void
   onEdit: (id: string) => void
   onNew: () => void
+  onStopMonitor: (id: string) => void
   onOpenConversation?: (id: string) => void
 }): ReactElement {
   return (
@@ -192,6 +238,7 @@ function ScheduledList({
       </div>
       <div className="sched-body">
         <div className="sched-inner">
+          <MonitorsSection monitors={monitors} onStop={onStopMonitor} />
           <div className="sched-note">
             Timed tasks fire an orchestrated step chain. Email always goes through an email MCP or a Scheduler draft —
             Studio never sends mail itself.
@@ -458,21 +505,39 @@ function ScheduledEditor({
 export function ScheduledView({ onOpenConversation }: { onOpenConversation?: (id: string) => void }): ReactElement {
   const t = useT()
   const [tasks, setTasks] = useState<TaskDto[]>([])
+  const [monitors, setMonitors] = useState<MonitorDto[]>([])
   const [editing, setEditing] = useState<{ id: string | null } | null>(null) // {id} edit | {id:null} new | null list
 
   const reload = useCallback(async (): Promise<void> => {
     setTasks(await window.api.scheduled.list())
   }, [])
+  const reloadMonitors = useCallback(async (): Promise<void> => {
+    setMonitors(await window.api.monitor.list())
+  }, [])
   useEffect(() => {
     void reload()
+    void reloadMonitors()
     // Live-refresh: engine fired a task (Next/Last) OR any task mutation (e.g. a tool created/deleted one).
     const offFired = window.api.scheduled.onFired(() => void reload())
     const offChanged = window.api.scheduled.onChanged(() => void reload())
+    const offMonitors = window.api.monitor.onChanged(() => void reloadMonitors())
     return () => {
       offFired()
       offChanged()
+      offMonitors()
     }
-  }, [reload])
+  }, [reload, reloadMonitors])
+
+  const stopMonitor = async (id: string): Promise<void> => {
+    try {
+      const ok = await window.api.monitor.stop(id)
+      if (ok) toast.success(t('monitors.stopped'))
+      else toast.error(t('monitors.stopFailed'))
+      void reloadMonitors()
+    } catch {
+      toast.error(t('monitors.stopFailed'))
+    }
+  }
 
   const toggle = async (task: TaskDto): Promise<void> => {
     try {
@@ -491,5 +556,5 @@ export function ScheduledView({ onOpenConversation }: { onOpenConversation?: (id
     const task = editing.id ? tasks.find((t) => t.id === editing.id) ?? null : null
     return <ScheduledEditor task={task} onBack={() => setEditing(null)} onSaved={onSaved} />
   }
-  return <ScheduledList tasks={tasks} onToggle={(t) => void toggle(t)} onEdit={(id) => setEditing({ id })} onNew={() => setEditing({ id: null })} onOpenConversation={onOpenConversation} />
+  return <ScheduledList tasks={tasks} monitors={monitors} onToggle={(t) => void toggle(t)} onEdit={(id) => setEditing({ id })} onNew={() => setEditing({ id: null })} onStopMonitor={(id) => void stopMonitor(id)} onOpenConversation={onOpenConversation} />
 }

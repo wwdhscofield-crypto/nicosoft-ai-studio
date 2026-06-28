@@ -14,6 +14,8 @@ import { agentSpawnTool, agentSendTool, agentWaitTool, agentCloseTool, agentBatc
 import { playwrightBrowserTool } from '../agent/tools/playwright-browser'
 import { playwrightRequestTool } from '../agent/tools/playwright-request'
 import { PREVIEW_TOOLS } from '../agent/tools/preview'
+import { monitorStartTool, monitorStopTool } from '../agent/tools/monitor'
+import { scheduleWakeupTool } from '../agent/tools/schedule-wakeup'
 import type { Tool } from '../agent/tool'
 import * as settingsService from './settings.service'
 import { manager as mcpManager } from './mcp.service'
@@ -71,6 +73,10 @@ const PLAN_TOOLS = [enterPlanModeTool, exitPlanModeTool] as unknown as Tool[]
 // the injection sites (runAgentLoop / collab) key off the kit containing this tool, so handle-presence ⟺
 // tool-presence — a fixed-kit verifier / sub-agent (no studio_lens) automatically gets no handle (recursion guard).
 const PANEL_TOOLS = [studioLensTool] as unknown as Tool[]
+// Session-pacing tools — UNIVERSAL across agent roles, NOT gated to DEV_ROLES (capability parity): Monitor
+// (conditional polling, wakes on change) + schedule_wakeup (self-paced timed wakeup). Both are session-scoped
+// and route their wakeup through the unified bus; sub-agents have them stripped in loop.ts.
+const MONITOR_TOOLS = [monitorStartTool, monitorStopTool, scheduleWakeupTool] as unknown as Tool[]
 // Dev roles (Flynn/Shuri) get the service tools in the SINGLE-agent path too (collab already had them),
 // so they run dev servers via start_service — detached + readiness-probed + tree-killed — instead of a
 // blocking `Bash ... &` that wedges the loop and leaks the process.
@@ -96,5 +102,6 @@ export function toolsForAgentRole(roleId: string): Tool[] {
   // studio_lens for every agent role (decision ⑤). coordinator's read-only DIRECT kit is not an agent role,
   // so it does not get it; the runtime gate handles whether an independent reviewer can be formed.
   const panel = AGENT_ROLE_IDS.has(roleId) ? PANEL_TOOLS : []
-  return [...core, ...PLAN_TOOLS, askUserQuestionTool as unknown as Tool, ...panel, ...mcpManager.toolsForRole(roleId), ...(skill ? [skill] : [])]
+  const monitor = AGENT_ROLE_IDS.has(roleId) ? MONITOR_TOOLS : []
+  return [...core, ...PLAN_TOOLS, askUserQuestionTool as unknown as Tool, ...panel, ...monitor, ...mcpManager.toolsForRole(roleId), ...(skill ? [skill] : [])]
 }

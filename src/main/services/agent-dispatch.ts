@@ -29,6 +29,10 @@ import * as convRepo from '../repos/conversation.repo'
 import * as summaryRepo from '../repos/summary.repo'
 import type { MemoryRow } from '../repos/memory.repo'
 import { agentEvents } from './event-bus'
+import { runHooks } from '../agent/hooks/engine'
+import { hookRegistry } from '../agent/hooks/registry'
+import { hookContextFromAgent, baseHookPayload } from '../agent/hooks/adapter'
+import { fileWatchManager } from '../agent/hooks/file-watch'
 import { manager as skillManager } from './skill.service'
 import { DEV_ROLES, PLAYWRIGHT_TOOLS, PREVIEW_AGENT_TOOLS, SERVICE_TOOLS, SUBAGENT_TOOLS, toolsForAgentRole } from './agent-tools'
 import { AsyncRegistry } from '../agent/async-registry'
@@ -85,6 +89,9 @@ export interface AgentLoopInput {
   // 批C2b: the solo cross-turn park hook (solo-async.parkSolo, convId-bound). Wired into ctx.parkSolo so await_async
   // parks the turn instead of blocking. Set ONLY by the direct-chat path (resumable); undefined elsewhere.
   parkSolo?: (inflightIds: string[], settledResults: string[]) => string
+  // Anti-recursion id for an AGENT hook's sub-query (prefixed 'hook-agent-'). Set into ctx.hookAgentId so the
+  // hook engine drops prompt/agent hooks inside it — a hook can't recursively trigger more prompt/agent hooks.
+  hookAgentId?: string
 }
 
 // Generic tool→image surfacing. A tool that produces an image (ns_generate_image, code_execution charts,
@@ -160,6 +167,8 @@ export async function runAgentLoop(
     signal,
     roleId: loop.roleId,
     runId: loop.runId, // run-scoped resource ownership — playwright_browser sessions are reclaimed by it below
+    convId: loop.convId, // session-scoped tools (monitor_*, scheduled wakeups) key off it
+    hookAgentId: loop.hookAgentId, // set for an agent-hook sub-query → hook engine drops prompt/agent hooks (anti-recursion)
     readFileState: new Map(),
     writtenPaths: new Set(), // git-free change event bus — Write/Edit/MultiEdit record here; harvested below for Gate B
     permissionMode: loop.permissionMode,
@@ -229,6 +238,12 @@ export async function runAgentLoop(
   const startedAt = Date.now()
   const toolCalls = { total: 0, errors: 0, byName: {} as Record<string, number> }
   agentEvents.emit({ type: 'session:start', convId: loop.convId, roleId: loop.roleId, ts: Date.now() })
+  // SessionStart hooks: their hookSpecificOutput.watchPaths arm the file watcher (watchPaths→FileChanged loop).
+  // Gated by hasAny so a session with no SessionStart hook pays nothing.
+  if (hookRegistry.hasAny('SessionStart')) {
+    const ss = await runHooks('SessionStart', { ...baseHookPayload('SessionStart', ctx) }, hookContextFromAgent(ctx))
+    if (ss.watchPaths.length > 0) fileWatchManager.arm(loop.convId, ss.watchPaths, { cwd, sessionDir, roleId: loop.roleId })
+  }
   try {
     for (;;) {
       const { value, done } = await gen.next()
@@ -381,6 +396,7 @@ export interface DispatchedAgentInput {
   toolNames?: readonly string[]
   initialTodos?: AgentContext['todos'] // shared conv-level todos seeded into the dispatched run (pipeline continuity)
   onTodosChange?: (roleId: string, todos: AgentContext['todos']) => void // TodoWrite writes back → shared conv-level list + per-role live push (roleId injected at ctx.setTodos)
+  hookAgentId?: string // agent-hook sub-query id (anti-recursion); threaded into ctx.hookAgentId
 }
 
 export async function runDispatchedAgent(
@@ -399,6 +415,13 @@ export async function runDispatchedAgent(
     tools = [...toolsForAgentRole(d.roleId), launchAsyncTool, awaitAsyncTool] // 批C2a: solo can launch/await async ops (studio_lens launches through ctx.async too)
     if (DEV_ROLES.has(d.roleId)) tools = [...tools, ...SERVICE_TOOLS, ...PLAYWRIGHT_TOOLS, ...PREVIEW_AGENT_TOOLS, ...SUBAGENT_TOOLS, lspTool as unknown as Tool]
     if (!d.cwd && !DEV_ROLES.has(d.roleId)) tools = tools.filter((t) => t.name !== 'Read' && t.name !== 'Glob')
+    // Session-pacing tools (monitor_start/monitor_stop/schedule_wakeup) belong to the SESSION OWNER — the solo
+    // top-level run (agent.service.run) or a collab's parked experts (agent-collab) — both of which ARM bus
+    // delivery so a wakeup routes back to them. A coordinator-dispatched expert is a ONE-SHOT sub-run that never
+    // arms delivery: a Monitor/wakeup it armed would key its keepalive + timer to the coordinator's conv, leak
+    // past the expert's exit, and misroute its inject to the COORDINATOR's resume closure. Strip them here (the
+    // loop already strips them for sub-agents; this closes the same gap on the dispatch path).
+    tools = tools.filter((t) => !t.name.startsWith('monitor_') && t.name !== 'schedule_wakeup')
   }
   const serverTools: ServerToolSchema[] = d.protocol === 'openai' ? [{ type: 'web_search', name: 'web_search' }] : []
   const system = d.systemPromptOverride ?? buildAgentSystem(d.roleId, d.memories, d.summary, skillManager.listingForRole(d.roleId), d.cwd)
@@ -454,6 +477,7 @@ export async function runDispatchedAgent(
       imageModel: d.imageModel,
       initialTodos: d.initialTodos,
       onTodosChange: d.onTodosChange,
+      hookAgentId: d.hookAgentId,
     },
     cb,
     signal,

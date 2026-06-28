@@ -5,6 +5,10 @@ import * as convRepo from '../repos/conversation.repo'
 import * as titleService from './title.service'
 import * as workspaceTasks from './workspace-tasks.service'
 import { disposeSoloAsync } from './solo-async'
+import { monitorService } from './monitor.service'
+import { selfRhythmService } from './self-rhythm.service'
+import { hookRegistry } from '../agent/hooks/registry'
+import { fileWatchManager } from '../agent/hooks/file-watch'
 import { persistDataUrl, removeConversationMedia } from '../media/storage'
 import type {
   ConversationCreateDto,
@@ -117,6 +121,10 @@ export async function generateTitle(input: ConversationTitleInput): Promise<stri
 export function remove(convId: string): void {
   convRepo.remove(convId)
   workspaceTasks.dropLive(convId) // workspace_task_history rows cascade via FK; the in-memory live phase doesn't
+  monitorService.disposeForConv(convId) // stop any Monitor watcher armed under this conv (clears its keepalive too)
+  selfRhythmService.disposeForConv(convId) // cancel any pending self-wakeup timer for this conv
+  hookRegistry.clearConv(convId) // forget this conv's once-hook firing marks + stop its file watchers
+  fileWatchManager.disposeForConv(convId)
   disposeSoloAsync(convId) // 批C2b: tree-kill any still-running launch_async op parked under this conv (its registry outlives runs)
   removeConversationMedia(convId) // DB rows cascade via FK; the media files don't — drop them too
   // Agent runs persist transcript.jsonl + tool-results/ (and e2e screenshots) under
