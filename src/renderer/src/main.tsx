@@ -15,6 +15,7 @@ import './styles/electron-overrides.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
+import { ErrorBoundary } from './components/error-boundary'
 import { initTheme } from './stores/theme'
 import { initLocale } from './stores/locale'
 import './stores/conv-todos' // app-lifetime conv:todos subscription — keeps caching each conversation's live TodoWrite list even while the Tasks panel / workspace view is unmounted (or later code-split), so opening the panel mid-run shows current progress immediately
@@ -25,6 +26,8 @@ initLocale() // resolve locale + start tracking OS language changes
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>
 )
