@@ -89,7 +89,9 @@ export async function executeAgentHook(config: AgentHookConfig, payload: HookPay
         toolNames: HOOK_AGENT_TOOLS,
         systemPromptOverride: systemFor(meta.isStopClass),
         permissionMode: 'bypass', // read-only kit confined to cwd → safe to run unattended
-        maxTurns: 50, // bound the investigation (matches the reference forked-agent cap)
+        // No turn cap: CC's agent-hook (type:"agent") is bounded by TIMEOUT, not turns. The hook engine already
+        // races every hook against its per-hook timeout (engine.ts — Promise.race([hook, timeout]); default 600s,
+        // or the hook's own `timeout`), so this read-only verifier is time-bounded the CC way.
         hookAgentId: `${HOOK_AGENT_PREFIX}${ulid()}`,
       },
       HEADLESS_CB,

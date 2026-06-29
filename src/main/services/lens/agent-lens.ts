@@ -8,7 +8,7 @@
 //   • createLensHandle     → the agent-tool PanelHandle (review | understand).
 //
 // The reviewer is picked HERE (chooseVerifierRole) and the sub-agents run over makeLensDeps(opts) (step.ts /
-// pool.ts / runstep.ts — maxTurns=50, the global semaphore, the 1000-agent backstop). The panel + per-agent
+// pool.ts / runstep.ts — unbounded turns [stall-timeout + pinned-diff bound it], the global semaphore, the 1000-agent backstop). The panel + per-agent
 // Subject cards keep the engine's exact ids (contracts.ts) so the UI render + reload are unchanged.
 
 import { ulid } from '../../db/id'
@@ -112,7 +112,7 @@ function cardSummary(parsed: unknown): { cardNote?: string; vote?: string } {
 }
 
 // The spawnAgent hook the script-executor calls for every agent(): emit the Subject card, run the sub-agent over
-// step.ts (maxTurns=50 + pool slot + 1000-cap), parse a schema'd reply. A throw propagates so parallel()/
+// step.ts (stall-timeout + pool slot + 1000-cap), parse a schema'd reply. A throw propagates so parallel()/
 // pipeline() degrade that slot to null (never aborting the batch).
 function makeSpawnAgent(deps: LensDeps, reviewerRoleId: string, panelId: string, stepId: string) {
   let n = 0

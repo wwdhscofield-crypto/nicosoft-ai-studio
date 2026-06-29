@@ -45,8 +45,9 @@ function buildPersona(name: string, focus: string): string {
 const LENS_MAX_AGENTS = 1000
 // Workflow parity: re-run a STALLED agent up to this many times before giving up.
 const LENS_STALL_RETRIES = 5
-// LENS_MAX_TURNS (the per-agent turn cap, Workflow FORKED_AGENT_DEFAULT_MAX_TURNS=50) + the runRoleStep option
-// shape now live in ./runstep so the wiring unit-tests off-Electron (e2e/lens-maxturns.mts).
+// The lens sub-agent's runRoleStep option shape lives in ./runstep so the wiring unit-tests off-Electron
+// (e2e/lens-maxturns.mts). NO per-agent turn cap — a lens sub-agent runs unbounded like a Workflow code-review
+// sub-agent; the pinned diff + the stall-timeout watchdog (above) are what bound it.
 
 export function makeLensDeps(opts: RunStepOptions): LensDeps {
   let agentCount = 0
@@ -64,7 +65,7 @@ export function makeLensDeps(opts: RunStepOptions): LensDeps {
       let lastStall: unknown
       for (let attempt = 0; attempt <= LENS_STALL_RETRIES; attempt++) {
         try {
-          // The lens sub-agent's runRoleStep options (maxTurns cap, quiet/card-only, kit, dispatch) are built by
+          // The lens sub-agent's runRoleStep options (quiet/card-only, kit, dispatch, stall-timeout — no turn cap) are built by
           // the pure lensRunStepOptions so the wiring is unit-tested (e2e/lens-maxturns.mts) off-Electron.
           const res = await runRoleStep(lensRunStepOptions(opts, spec))
           // inputTokens = runRoleStep's contextTokens (current context), never the cumulative billing total (§3②).

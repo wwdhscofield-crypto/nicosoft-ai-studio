@@ -98,7 +98,8 @@ const VERDICT = { type: 'object', properties: { stands: { type: 'boolean' }, rea
 
 const tag = (lens) => (f) => ({ lens, file: f.file, line: f.line, summary: f.summary, severity: f.severity, evidence: f.evidence })
 // Pin the diff into every finder so a sub-agent REVIEWS this focused diff instead of self-reading the whole
-// repo (that blind self-read was the channel-killer maxTurns + diff-pinning fixed). diff.ts already char-caps it.
+// repo (that blind self-read was the channel-killer; diff-pinning + the stall-timeout watchdog fix it — no turn
+// cap, matching CC's unbounded code-review sub-agents). diff.ts already char-caps it.
 const diffBlock = diff ? '\\n\\nThe pinned diff under review:\\n' + diff : '\\n\\n(No diff provided — read the target files directly for this lens.)'
 
 phase('Review')

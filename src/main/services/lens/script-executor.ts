@@ -316,7 +316,7 @@ export interface AgentOpts {
 export interface OrchestrationHooks {
   // The host agent-spawn seam: receives the script's prompt + opts, returns the sub-agent's result as
   // JSON-safe data (text, or parsed structured output). 批 5 wires this to lens step.ts (runAgent over
-  // pool.ts + maxTurns=50); unit tests inject a fake to prove the primitives off-channel.
+  // pool.ts; unbounded turns, stall-timeout-bounded); unit tests inject a fake to prove the primitives off-channel.
   spawnAgent: (prompt: string, opts: AgentOpts) => Promise<unknown>
   onLog?: (msg: string) => void
   onPhase?: (title: string) => void
