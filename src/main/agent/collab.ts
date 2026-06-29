@@ -83,6 +83,7 @@ interface ExpertRunner {
 
 const DEFAULT_WAIT_MS = 120_000
 const MAX_ROUNDTRIPS = 12 // per ordered pair (from→to); beyond this assign_task degrades to send (§7)
+const MAX_TODO_NUDGES = 2 // dangling-todo hand-off reminders per expert before it may park with unfinished todos (B4: bounded re-fire — a partial first reconcile gets a 2nd nudge; the cap still stops an insistent expert from looping)
 // Injected as a USER turn when a wait() times out with no mail. Keeps the next request VALID (ends in a user
 // message — not an "assistant prefill" the endpoint rejects, which would throw and drop the expert) AND gives a
 // blocked expert one chance to wrap up / report instead of hanging. One-shot per wait episode — after it, the
@@ -231,7 +232,7 @@ export class CollabSession {
   private async runExpert(e: ExpertRunner, signal: AbortSignal): Promise<void> {
     const handle = this.buildHandle(e.spec.roleId)
     let nudged = false // already gave a one-shot "your wait timed out" turn since this expert's last real input?
-    let todoNudged = false // 批H (P2): already gave the one-shot "you have dangling todos" hand-off reminder?
+    let todoNudges = 0 // 批H (P2) + B4: count of dangling-todo hand-off reminders given (bounded re-fire, cap MAX_TODO_NUDGES)
     try {
       while (!signal.aborted) {
         // 1. Inject unread mail as a single user turn so the expert sees who said what (and the conversation
@@ -263,14 +264,15 @@ export class CollabSession {
 
         // 批H (dogfood2 P2): hand-off reconcile. If this expert just ran and is now FINISHING — nothing left to
         // wait for (no wait(), no in-flight async handle, no mail/results) — but its todo list still has
-        // non-completed items, nudge it ONCE to finish or hand them off before parking. A prompt rule didn't hold
-        // (Shuri parked with 1 in_progress + 2 todo while claiming done); this is the structural gate. One-shot
-        // (todoNudged) so an expert that insists can't loop here.
-        if (ran && !todoNudged && !e.waitRequested && e.pendingHandles.size === 0 && e.pendingResults.length === 0 && e.mailbox.length === 0) {
+        // non-completed items, nudge it to finish or hand them off before parking. A prompt rule didn't hold
+        // (Shuri parked with 1 in_progress + 2 todo while claiming done); this is the structural gate. B4: bounded
+        // re-fire (cap MAX_TODO_NUDGES) — a partial first reconcile (gpt-5.5 marks some todos but misses one) gets a
+        // second nudge; the cap still stops an expert that insists from looping here.
+        if (ran && todoNudges < MAX_TODO_NUDGES && !e.waitRequested && e.pendingHandles.size === 0 && e.pendingResults.length === 0 && e.mailbox.length === 0) {
           const dangling = (e.spec.getTodos?.() ?? []).filter((t) => t.status !== 'completed')
           if (dangling.length > 0) {
             pushUserText(e, `Before you finish: your todo list still has ${dangling.length} unfinished item(s) — ${dangling.map((t) => `"${t.content}" (${t.status})`).join('; ')}. Complete them now, or if a teammate / the elected reviewer owns an item, mark it completed / handed-off via TodoWrite. Do NOT hand off with items left in_progress or todo.`)
-            todoNudged = true
+            todoNudges++
             continue
           }
         }
