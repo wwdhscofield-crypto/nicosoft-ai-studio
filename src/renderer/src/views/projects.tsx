@@ -677,7 +677,7 @@ function ProjectDetail({
             <Avatar expert={STUDIO_DATA.EXPERT_BY_ID.coordinator} size={22} />
             <div className="wb-dock-body">
               <div className="wb-dock-who">
-                Danny <span className="wb-dock-at">@you</span>
+                {STUDIO_DATA.EXPERT_BY_ID.coordinator?.name} <span className="wb-dock-at">@you</span>
                 {!running ? (
                   <button className="wb-dock-toggle" onClick={() => setDockExpanded((v) => !v)}>
                     {dockExpanded ? 'Collapse' : 'Expand'}
@@ -698,7 +698,7 @@ function ProjectDetail({
                 void send()
               }
             }}
-            placeholder={convId ? 'Reply to Danny, or send the team a new instruction…' : 'No conversation linked to this project yet'}
+            placeholder={convId ? `Reply to ${STUDIO_DATA.EXPERT_BY_ID.coordinator?.name ?? 'the coordinator'}, or send the team a new instruction…` : 'No conversation linked to this project yet'}
             disabled={!convId || running}
           />
           <button className="wb-dock-send" onClick={() => void send()} disabled={!convId || running || !draft.trim()}>

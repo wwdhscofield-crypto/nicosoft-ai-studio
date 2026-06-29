@@ -101,7 +101,7 @@ export function ApprovalDialog({
             <TerminalIcon />
           </span>
           <span className="ap-title">
-            {STUDIO_DATA.EXPERT_BY_ID[prompt.roleId ?? 'engineer']?.name ?? 'Flynn'} {t('ap.wantsToRun')} <span className="ap-tool">{prompt.toolName}</span>
+            {STUDIO_DATA.EXPERT_BY_ID[prompt.roleId ?? 'engineer']?.name ?? prompt.roleId ?? 'Expert'} {t('ap.wantsToRun')} <span className="ap-tool">{prompt.toolName}</span>
           </span>
         </div>
         {prompt.reason ? <div className="ap-reason">{prompt.reason}</div> : null}

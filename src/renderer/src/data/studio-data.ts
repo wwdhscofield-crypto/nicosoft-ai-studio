@@ -59,7 +59,7 @@ const EXTENSIONS: ExtensionsData = {
 }
 
 const GREETINGS: Record<string, Greeting> = {
-  generalist: { greeting: "Hi, I'm Amélie. I handle the everyday stuff — ask me anything, or I'll point you to the right expert.", chips: ['Explain this error message', 'Brainstorm names for my app', 'Plan a 3-day trip'] },
+  generalist: { greeting: `Hi, I'm ${N.generalist}. I handle the everyday stuff — ask me anything, or I'll point you to the right expert.`, chips: ['Explain this error message', 'Brainstorm names for my app', 'Plan a 3-day trip'] },
   engineer: { greeting: 'I build the backend — APIs, databases, services, business logic. Paste code or describe what the server should do.', chips: ['Design a REST API', 'Why is this query slow?', 'Add auth to this endpoint'] },
   shuri: { greeting: 'I build the frontend — UI, components, styling, interactions. Tell me what to build, or paste a component.', chips: ['Build a login form', 'Make this responsive', 'Why is this layout broken?'] },
   coordinator: { greeting: "I coordinate the team. Tell me what you need and I'll route it to the right expert — or convene several and merge their work.", chips: ['Translate and debug this error', 'Research, then summarize', 'Draft and schedule an email'] },
