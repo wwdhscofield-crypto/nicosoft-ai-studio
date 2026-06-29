@@ -20,6 +20,7 @@ import { chooseVerifierRole } from './verifier'
 import { shapeFor, tierFromDepth } from './tiers'
 import { makeLensDeps, READER_SYSTEM } from './step'
 import { runScript, parseScript } from './script-executor'
+import { displayName } from '../../agent/roles/prompts'
 import { canAuthorScript, CODE_REVIEW_TEMPLATE, codeReviewArgs, buildAuthorPrompt } from './code-review'
 import { normalizeReviewResult, cardPhase, parseStructured, describeTarget, type ScriptReview } from './normalize'
 import { panelCardId, subjectCardId, readerCardId, type LensDeps, type AgentSpec } from './contracts'
@@ -365,7 +366,7 @@ export async function runConsolidatedReview(
   const reviewer = chooseVerifierRole(implementers)
   const implSet = new Set(Array.isArray(implementers) ? implementers : [implementers])
   if (implSet.has(reviewer) || !rolesService.getBinding(reviewer)?.endpointId) {
-    return { ok: false, message: 'studio_lens (review) needs at least one configured expert independent of the implementer(s) to act as the reviewer, but none is bound. Configure another expert (e.g. Analyst/Shuri/Flynn) and retry.', confirmed: [], refuted: [], produced: [], report: null }
+    return { ok: false, message: `studio_lens (review) needs at least one configured expert independent of the implementer(s) to act as the reviewer, but none is bound. Configure another expert (e.g. ${displayName('analyst')}/${displayName('shuri')}/${displayName('engineer')}) and retry.`, confirmed: [], refuted: [], produced: [], report: null }
   }
   const paths = target.changed
   const run = await runReviewViaScript(opts, reviewer, target, baseRef, 'thorough', ulid(), persist)

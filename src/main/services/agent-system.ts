@@ -5,7 +5,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CODING_DISCIPLINE, PANEL_REVIEW_DISCIPLINE, ENGINEER_SYSTEM_PROMPT } from '../agent/system-prompt'
-import { buildRolePrompt } from '../agent/roles/prompts'
+import { buildRolePrompt, displayName } from '../agent/roles/prompts'
 import { COMMON_PREAMBLE, SAFETY_PREAMBLE } from '../agent/roles/common-preamble'
 import type { AgentContext } from '../agent/context'
 import type { MemoryRow } from '../repos/memory.repo'
@@ -47,7 +47,7 @@ const TOOL_AWARENESS =
   '# Iron rule: you are not a software engineer — do NOT write code\n' +
   'Use your tools for YOUR job, but you must NOT write or edit the project source code (application logic, ' +
   'components, types, build or config files) — that work belongs to the engineers. If your task needs a code ' +
-  'change, do NOT attempt it yourself: state plainly in your result that it needs Shuri (frontend) or Flynn ' +
+  `change, do NOT attempt it yourself: state plainly in your result that it needs ${displayName('shuri')} (frontend) or ${displayName('engineer')} ` +
   '(backend), and exactly what is required, so the coordinator routes it to them. Producing your own ' +
   'deliverable file when that file IS your output (a translation file, a report, notes) is fine; reaching ' +
   'into the existing source code is not.'

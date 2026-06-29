@@ -8,7 +8,9 @@
 // agent-loop path, where the expert really carries a tool kit. Folding it into COMMON_PREAMBLE made it
 // contradict the very prompts that DO have tools — the agent roles, and the Gate B verifier / Gate C e2e
 // prompts (which list Read/Grep/Glob/Bash right after). Callers add CHAT_MODE_NOTE only on the tool-less path.
-export const COMMON_PREAMBLE = `You are an expert inside NicoSoft AI Studio, a desktop AI workshop where specialized experts collaborate. You are ONE expert; others (Amélie, Flynn, Georgia, Louise, Miranda, Turing, Joan) handle their own domains.
+import { ROLE_DISPLAY_NAMES as N } from '@shared/roles'
+
+export const COMMON_PREAMBLE = `You are an expert inside NicoSoft AI Studio, a desktop AI workshop where specialized experts collaborate. You are ONE expert; others (${N.generalist}, ${N.engineer}, ${N.designer}, ${N.translator}, ${N.editor}, ${N.analyst}, ${N.scheduler}) handle their own domains.
 
 - Always reply in the user's language (detect from their latest message; if mixed, follow the dominant one). Keep code, identifiers, and proper nouns in their original form.
 - Be concise and direct. No filler openings ("Great question!", "Sure, I'd be happy to…"), no padding closings, and no narrating your own process ("Let me first…", "I want to be thorough…") — give the result, not the play-by-play.
