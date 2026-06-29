@@ -9,13 +9,16 @@ import { ulid } from '../db/id'
 import { join } from 'node:path'
 import type { AgentContext, PermissionRequest, PermissionDecision, StudioLensResult } from '../agent/context'
 import type { AgentLlmEvent } from '../agent/llm'
-import { runAgent, type AgentEvent, type AgentResult, type CompactCarry } from '../agent/loop'
+import { MAIN_DISPATCH_STALL_TIMEOUT_MS, runAgent, type AgentEvent, type AgentResult, type CompactCarry } from '../agent/loop'
 import { promptTokensFromUsage } from '../agent/compact'
 import { isContentBlock } from '../agent/types'
-import type { ServerToolSchema } from '../agent/types'
+import type { AgentMessage, ServerToolSchema } from '../agent/types'
 import { displayName } from '../agent/roles/prompts'
 import { sendMessageTool, assignTaskTool, waitTool } from '../agent/tools/consult'
 import { CollabSession, type ExpertSpec, type CollabEvent } from '../agent/collab'
+import { runHooks } from '../agent/hooks/engine'
+import { hookRegistry } from '../agent/hooks/registry'
+import { baseHookPayload, hookContextFromAgent } from '../agent/hooks/adapter'
 import { AsyncRegistry, formatAsyncHandle } from '../agent/async-registry'
 import { sessionBus } from '../agent/session-bus'
 import { awaitAsyncTool } from '../agent/tools/await-async'
@@ -60,6 +63,18 @@ export interface CollabExpertInput {
 // Bridges a CollabSession's per-expert activity out to the coordinator (→ UI + audit). onEvent is the
 // consult interaction stream (send/assign/wait/…); onExpertStream/onExpertEvent mirror a normal agent
 // run's stream, tagged with roleId; requestPermission pops a teammate's mutating-tool approval to the user.
+function assistantVisibleText(message: AgentMessage): string {
+  return message.content
+    .filter((b): b is { type: 'text'; text: string } => isContentBlock(b) && b.type === 'text')
+    .map((b) => b.text)
+    .join('')
+}
+
+function replaceAssistantDisplay(message: AgentMessage, text: string): AgentMessage {
+  const nonText = message.content.filter((b) => !(isContentBlock(b) && b.type === 'text'))
+  return { ...message, content: [{ type: 'text', text }, ...nonText] }
+}
+
 export interface CollabHooks {
   onEvent: (e: CollabEvent) => void
   onExpertStream: (roleId: string, ev: AgentLlmEvent) => void
@@ -183,6 +198,50 @@ export async function runCollabSession(
   const cacheReadByRole = new Map<string, number>() // per expert: LAST turn's cache-read share → per-message "(+N cached)" note (overwrite, NOT accumulated)
   const reasonByRole = new Map<string, AgentResult['reason']>() // per expert: its loop's terminal reason → bubbles incomplete/thrash_stop up to coordinator:done (not just text)
   const roster = experts.map((x) => ({ id: x.roleId, name: displayName(x.roleId) ?? x.roleId }))
+  const emitCollabHook = (event: 'TeammateIdle' | 'TaskCreated' | 'TaskCompleted', payload: Record<string, unknown>): void => {
+    if (!hookRegistry.hasAny(event)) return
+    const first = experts[0]
+    const hookCtx: AgentContext = {
+      cwd: first?.cwd ?? process.cwd(),
+      signal,
+      roleId: first?.roleId,
+      convId,
+      permissionMode: first?.permissionMode ?? 'default',
+      sessionDir: join(dataDir(), 'sessions', convId),
+      readFileState: new Map(),
+      requestPermission: async () => ({ allow: false, message: 'Collaboration lifecycle hooks cannot request tool permissions.' }),
+      todos: [],
+    }
+    void runHooks(event, { ...baseHookPayload(event, hookCtx), ...payload }, hookContextFromAgent(hookCtx)).catch(() => undefined)
+  }
+  const submittedPromptByRole = new Map<string, string>()
+  if (hookRegistry.hasAny('UserPromptSubmit')) {
+    await Promise.all(experts.map(async (x) => {
+      const hookCtx: AgentContext = {
+        cwd: x.cwd,
+        signal,
+        roleId: x.roleId,
+        convId,
+        permissionMode: x.permissionMode ?? 'default',
+        sessionDir: join(dataDir(), 'sessions', convId, x.roleId),
+        readFileState: new Map(),
+        requestPermission: async () => ({ allow: false, message: 'Hooks cannot request tool permissions during prompt submission.' }),
+        todos: [],
+      }
+      const promptHook = await runHooks(
+        'UserPromptSubmit',
+        { ...baseHookPayload('UserPromptSubmit', hookCtx), prompt: x.initialPrompt, session_title: undefined },
+        hookContextFromAgent(hookCtx),
+      )
+      if (promptHook.permissionBehavior === 'deny') throw new Error(promptHook.permissionReason ?? (promptHook.blockingErrors.join('; ') || 'User prompt blocked by hook'))
+      const rewritten = typeof promptHook.updatedInput?.prompt === 'string' ? promptHook.updatedInput.prompt : undefined
+      const contexts = promptHook.additionalContexts
+      const prompt = promptHook.suppressOriginalPrompt
+        ? rewritten ?? (contexts.join('\n\n') || '[original prompt suppressed by hook]')
+        : [rewritten ?? x.initialPrompt, ...contexts].filter(Boolean).join('\n\n')
+      submittedPromptByRole.set(x.roleId, prompt)
+    }))
+  }
   const lspByExpert: LSPManager[] = [] // one per dev expert; tree-killed in the finally
   const runIdsByExpert: string[] = []
   const specs: ExpertSpec[] = experts.map((x) => {
@@ -229,7 +288,7 @@ export async function runCollabSession(
     return {
       roleId: x.roleId,
       name: roster.find((r) => r.id === x.roleId)?.name ?? x.roleId,
-      initialPrompt: x.initialPrompt,
+      initialPrompt: submittedPromptByRole.get(x.roleId) ?? x.initialPrompt,
       getTodos: () => todos, // 批H (P2): expose the live todo list so the scheduler's hand-off reconcile can check it
       runTurn: async (messages, collab, sig) => {
         hooks.onExpertActive?.(x.roleId, true) // expert is actively working this turn → show its live readout
@@ -295,6 +354,7 @@ export async function runCollabSession(
           contextWindow: x.contextWindow ?? 200_000,
           thinking: x.thinking,
           seedCompact: compactCarry, // §4a — carry the anchor in from the prior wake
+          stallTimeoutMs: MAIN_DISPATCH_STALL_TIMEOUT_MS,
           onStream: (ev) => hooks.onExpertStream(x.roleId, ev),
         })
         let result!: AgentResult
@@ -329,7 +389,17 @@ export async function runCollabSession(
                 }
               }
             }
-            hooks.onExpertEvent(x.roleId, value)
+            let emitted = value
+            if (emitted.type === 'assistant' && hookRegistry.hasAny('MessageDisplay')) {
+              const md = await runHooks(
+                'MessageDisplay',
+                { ...baseHookPayload('MessageDisplay', ctx), turn_id: ctx.runId ?? `${convId}:${x.roleId}`, message_id: `${ctx.runId ?? x.roleId}:${turnOut}`, index: turnOut, final: true, delta: assistantVisibleText(emitted.message) },
+                hookContextFromAgent(ctx),
+              )
+              if (md.permissionBehavior === 'deny') continue
+              if (md.displayContent !== undefined) emitted = { ...emitted, message: replaceAssistantDisplay(emitted.message, md.displayContent) }
+            }
+            hooks.onExpertEvent(x.roleId, emitted)
           }
         } finally {
           // Clear the live readout when the turn ends — on a normal park AND on a thrown/aborted turn (gen.next()
@@ -350,6 +420,9 @@ export async function runCollabSession(
   // they come up; clear on teardown when the registry is disposed.
   const onEvent = (e: CollabEvent): void => {
     hooks.onEvent(e)
+    if (e.kind === 'wait') emitCollabHook('TeammateIdle', { teammate_name: e.roleId, team_name: 'collab' })
+    else if (e.kind === 'assign') emitCollabHook('TaskCreated', { task_id: `${e.roleId}:${e.to}:${Date.now()}`, task_subject: e.text, task_description: e.text, teammate_name: e.to, team_name: 'collab' })
+    else if (e.kind === 'done') emitCollabHook('TaskCompleted', { task_id: e.roleId, task_subject: `Expert ${e.roleId} completed`, teammate_name: e.roleId, team_name: 'collab' })
     hooks.onServices?.(registry.list())
   }
   try {

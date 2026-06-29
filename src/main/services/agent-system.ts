@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { CODING_DISCIPLINE, PANEL_REVIEW_DISCIPLINE, ENGINEER_SYSTEM_PROMPT } from '../agent/system-prompt'
 import { buildRolePrompt } from '../agent/roles/prompts'
 import { COMMON_PREAMBLE, SAFETY_PREAMBLE } from '../agent/roles/common-preamble'
+import type { AgentContext } from '../agent/context'
 import type { MemoryRow } from '../repos/memory.repo'
 import { DEV_PROMPT, DEV_ROLES } from './agent-tools'
 
@@ -56,6 +57,29 @@ const TOOL_AWARENESS =
 // always win; on conflict the agent follows the system rule and tells the user. Missing dir → null.
 const CONVENTION_FILES = ['CLAUDE.md', 'AGENTS.md', join('.claude', 'CLAUDE.md')]
 const MAX_CONVENTION_CHARS = 8000
+function emitInstructionsLoaded(cwd: string, filePath: string): void {
+  void (async () => {
+    const { hookRegistry } = await import('../agent/hooks/registry')
+    if (!hookRegistry.hasAny('InstructionsLoaded')) return
+    const [{ runHooks }, { baseHookPayload, hookContextFromAgent }] = await Promise.all([
+      import('../agent/hooks/engine'),
+      import('../agent/hooks/adapter'),
+    ])
+    const signal = new AbortController().signal
+    const ctx: AgentContext = {
+      cwd,
+      signal,
+      convId: '',
+      permissionMode: 'default',
+      sessionDir: cwd,
+      readFileState: new Map(),
+      requestPermission: async () => ({ allow: false, message: 'InstructionsLoaded hooks cannot request tool permissions.' }),
+      todos: [],
+    }
+    await runHooks('InstructionsLoaded', { ...baseHookPayload('InstructionsLoaded', ctx), file_path: filePath, memory_type: 'project', load_reason: 'agent_system' }, hookContextFromAgent(ctx)).catch(() => undefined)
+  })()
+}
+
 function readProjectConventions(cwd: string | undefined): string | null {
   if (!cwd) return null
   const parts: string[] = []
@@ -64,7 +88,10 @@ function readProjectConventions(cwd: string | undefined): string | null {
     if (!existsSync(p)) continue
     try {
       const body = readFileSync(p, 'utf8').trim()
-      if (body) parts.push(`--- ${rel} ---\n${body}`)
+      if (body) {
+        emitInstructionsLoaded(cwd, p)
+        parts.push(`--- ${rel} ---\n${body}`)
+      }
     } catch {
       /* unreadable → skip */
     }

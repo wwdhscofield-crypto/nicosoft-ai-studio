@@ -11,7 +11,7 @@ import { join, relative } from 'node:path'
 import { ulid } from '../db/id'
 import type { AgentContext, RequestPermission, AskUser, WrittenFile } from '../agent/context'
 import type { AgentLlmEvent } from '../agent/llm'
-import { runAgent, type AgentEvent, type AgentResult } from '../agent/loop'
+import { MAIN_DISPATCH_STALL_TIMEOUT_MS, runAgent, type AgentEvent, type AgentResult } from '../agent/loop'
 import { promptTokensFromUsage } from '../agent/compact'
 import { isContentBlock } from '../agent/types'
 import type { AgentMessage, AnyBlock, ImageBlock, ServerToolSchema, ToolResultBlock } from '../agent/types'
@@ -33,6 +33,7 @@ import { runHooks } from '../agent/hooks/engine'
 import { hookRegistry } from '../agent/hooks/registry'
 import { hookContextFromAgent, baseHookPayload } from '../agent/hooks/adapter'
 import { fileWatchManager } from '../agent/hooks/file-watch'
+import * as skillService from './skill.service'
 import { manager as skillManager } from './skill.service'
 import { DEV_ROLES, PLAYWRIGHT_TOOLS, PREVIEW_AGENT_TOOLS, SERVICE_TOOLS, SUBAGENT_TOOLS, toolsForAgentRole } from './agent-tools'
 import { AsyncRegistry } from '../agent/async-registry'
@@ -82,6 +83,7 @@ export interface AgentLoopInput {
   onTodosChange?: (roleId: string, todos: AgentContext['todos']) => void // TodoWrite writes back → shared conv-level list + per-role live push (roleId injected at ctx.setTodos)
   expectsFileChanges?: boolean // implementation-gated run: quiescing with zero file edits triggers one nudge turn (loop.ts)
   maxTurns?: number // hard cap on agent-loop turns (lens sub-agents pass 50 = Workflow FORKED_AGENT_DEFAULT_MAX_TURNS); undefined → unbounded
+  stallTimeoutMs?: number // content-level stream stall watchdog; defaults to the main-dispatch budget
   // 批C2b: a CONV-LEVEL async registry (solo-async) for the direct-chat path, so launch_async handles outlive the
   // run and a parked turn can resume across turns. When set, runAgentLoop uses it and does NOT dispose it in the
   // finally (conv-delete / app-exit owns that). Absent (dispatched / collab-sub) → a per-run registry, disposed here.
@@ -100,6 +102,28 @@ export interface AgentLoopInput {
 // here we persist each ImageBlock to the media store (→ an nsai-media:// attachment for display + DB) and
 // hand back a REDACTED copy of the block with the base64 swapped for a short marker. The model's own
 // message array (inside runAgent) keeps the original block untouched, so its vision is unaffected.
+function appendTextToSeed(seed: AgentMessage[], text: string): AgentMessage[] {
+  if (!text) return seed
+  const i = seed.length - 1
+  const last = seed[i]
+  if (last?.role === 'user') {
+    return [...seed.slice(0, -1), { ...last, content: [...last.content, { type: 'text', text }] }]
+  }
+  return [...seed, { role: 'user', content: [{ type: 'text', text }] }]
+}
+
+function assistantVisibleText(message: AgentMessage): string {
+  return message.content
+    .filter((b): b is { type: 'text'; text: string } => isContentBlock(b) && b.type === 'text')
+    .map((b) => b.text)
+    .join('')
+}
+
+function replaceAssistantDisplay(message: AgentMessage, text: string): AgentMessage {
+  const nonText = message.content.filter((b) => !(isContentBlock(b) && b.type === 'text'))
+  return { ...message, content: [{ type: 'text', text }, ...nonText] }
+}
+
 async function persistToolResultImages(
   convId: string,
   block: ToolResultBlock,
@@ -162,6 +186,7 @@ export async function runAgentLoop(
   // Per-run language server (batch 4) — only dev roles (they have a project cwd + the lsp tool). Lazily
   // spawns typescript-language-server on the first query; tree-killed in the finally so none lingers.
   const lsp = DEV_ROLES.has(loop.roleId) ? new LSPManager(cwd) : undefined
+  let seed = loop.seed
   const ctx: AgentContext = {
     cwd,
     signal,
@@ -203,6 +228,29 @@ export async function runAgentLoop(
     onSubAgentToolEvent: cb.onStream,
   }
 
+  agentEvents.emit({ type: 'session:start', convId: loop.convId, roleId: loop.roleId, ts: Date.now() })
+  // SessionStart hooks: consume initial prompt/title/context outputs before the agent generator captures seed.
+  // watchPaths arm the FileChanged loop; reloadSkills refreshes the in-memory skill registry.
+  if (hookRegistry.hasAny('SessionStart')) {
+    const ss = await runHooks(
+      'SessionStart',
+      {
+        ...baseHookPayload('SessionStart', ctx),
+        source: 'agent',
+        agent_type: loop.roleId,
+        model: loop.model,
+        session_title: convRepo.getById(loop.convId)?.title ?? undefined,
+      },
+      hookContextFromAgent(ctx),
+    )
+    if (ss.permissionBehavior === 'deny') throw new Error(ss.permissionReason ?? (ss.blockingErrors.join('; ') || 'SessionStart hook blocked the session'))
+    if (ss.sessionTitle) convRepo.rename(loop.convId, ss.sessionTitle)
+    if (ss.reloadSkills) skillService.loadEnabled()
+    for (const msg of ss.initialUserMessages) seed = appendTextToSeed(seed, msg)
+    if (ss.additionalContexts.length) seed = appendTextToSeed(seed, ss.additionalContexts.join('\n\n'))
+    if (ss.watchPaths.length > 0) await fileWatchManager.arm(loop.convId, ss.watchPaths, { cwd, sessionDir, roleId: loop.roleId })
+  }
+
   const gen = runAgent({
     protocol: loop.protocol,
     baseUrl: loop.baseUrl,
@@ -213,7 +261,7 @@ export async function runAgentLoop(
     conversationId: loop.convId,
     endpointId: loop.endpointId,
     roleId: loop.roleId,
-    messages: loop.seed,
+    messages: seed,
     tools: loop.tools,
     serverTools: loop.serverTools,
     ctx,
@@ -222,11 +270,13 @@ export async function runAgentLoop(
     maxTurns: loop.maxTurns,
     thinking: loop.thinking,
     imageModel: loop.imageModel,
+    stallTimeoutMs: loop.stallTimeoutMs ?? MAIN_DISPATCH_STALL_TIMEOUT_MS,
     onStream: cb.onStream,
     onRetry: cb.onRetry,
   })
 
   let result!: AgentResult
+  let sessionEndReason: string | undefined
   let inTokens = 0 // TOTAL prompt tokens incl. cache, accumulated across turns → billing (usage_events)
   let lastContext = 0 // current context size = LAST turn's prompt (display ↑). OVERWRITE, never accumulate — accumulating ANY per-turn input (fresh/non-cached/total) re-counts history N× and balloons on long runs (engineer hit 5.3M).
   let lastCacheRead = 0 // cache-read share of the LAST turn's prompt (display "(+N cached)"). OVERWRITE alongside lastContext so fresh = lastContext − lastCacheRead pairs with the same turn.
@@ -237,19 +287,14 @@ export async function runAgentLoop(
   // run (incl. aborted/max_turns); a run that dies on a hard LLM error throws past this and writes none.
   const startedAt = Date.now()
   const toolCalls = { total: 0, errors: 0, byName: {} as Record<string, number> }
-  agentEvents.emit({ type: 'session:start', convId: loop.convId, roleId: loop.roleId, ts: Date.now() })
-  // SessionStart hooks: their hookSpecificOutput.watchPaths arm the file watcher (watchPaths→FileChanged loop).
-  // Gated by hasAny so a session with no SessionStart hook pays nothing.
-  if (hookRegistry.hasAny('SessionStart')) {
-    const ss = await runHooks('SessionStart', { ...baseHookPayload('SessionStart', ctx) }, hookContextFromAgent(ctx))
-    if (ss.watchPaths.length > 0) await fileWatchManager.arm(loop.convId, ss.watchPaths, { cwd, sessionDir, roleId: loop.roleId })
-  }
+  let displayIndex = 0
   try {
     for (;;) {
       const { value, done } = await gen.next()
       if (done) {
         log({ t: 'done', runId: loop.runId, reason: value.reason, turns: value.turns })
         agentEvents.emit({ type: 'session:end', convId: loop.convId, roleId: loop.roleId, turns: value.turns, reason: value.reason, ts: Date.now() })
+        sessionEndReason = value.reason
         result = value
         break
       }
@@ -289,10 +334,23 @@ export async function runAgentLoop(
         }
         emitted = { type: 'tool_results', message: { role: 'user', content } }
       }
+      if (emitted.type === 'assistant' && hookRegistry.hasAny('MessageDisplay')) {
+        const md = await runHooks(
+          'MessageDisplay',
+          { ...baseHookPayload('MessageDisplay', ctx), turn_id: loop.runId, message_id: `${loop.runId}:${displayIndex}`, index: displayIndex, final: true, delta: assistantVisibleText(emitted.message) },
+          hookContextFromAgent(ctx),
+        )
+        if (md.permissionBehavior === 'deny') continue
+        if (md.displayContent !== undefined) emitted = { ...emitted, message: replaceAssistantDisplay(emitted.message, md.displayContent) }
+        displayIndex++
+      }
       log({ t: 'event', runId: loop.runId, event: emitted })
       cb.onEvent(emitted)
     }
   } finally {
+    if (hookRegistry.hasAny('SessionEnd')) {
+      await runHooks('SessionEnd', { ...baseHookPayload('SessionEnd', ctx), reason: sessionEndReason ?? (signal.aborted ? 'aborted' : 'error') }, hookContextFromAgent(ctx)).catch(() => undefined)
+    }
     transcript.end()
     clearActiveServices(loop.convId, registry)
     broadcastConvServices(loop.convId, []) // clear the Tasks panel's Services section on teardown
@@ -383,6 +441,7 @@ export interface DispatchedAgentInput {
   includeHistory: boolean
   expectsFileChanges?: boolean // implementation-gated dispatch → loop nudges once on a zero-edit quiesce
   maxTurns?: number // hard cap on agent-loop turns (lens sub-agents pass 50); undefined → unbounded
+  stallTimeoutMs?: number // content-level stream stall watchdog; defaults to the main-dispatch budget
   memories: MemoryRow[]
   summary: string | null
   imageModel?: string // image backend slug for ns_generate_image (dispatched designer / Georgia); Gemini only
@@ -474,6 +533,7 @@ export async function runDispatchedAgent(
       permissionMode: d.permissionMode ?? 'default',
       expectsFileChanges: d.expectsFileChanges,
       maxTurns: d.maxTurns,
+      stallTimeoutMs: d.stallTimeoutMs,
       imageModel: d.imageModel,
       initialTodos: d.initialTodos,
       onTodosChange: d.onTodosChange,

@@ -14,7 +14,7 @@
 // is PreToolUse-only), permissionDecisionReason, updatedInput, updatedToolOutput|updatedMCPToolOutput,
 // additionalContext}. A hookEventName that disagrees with the fired event is rejected.
 
-import type { HookOutcome } from './types'
+import type { HookOutcome, HookPermissionDecision, PermissionBehavior } from './types'
 import type { HookEventName } from './events'
 
 const MISSING_FILE_RE = /no such file|cannot open|can't open|not found|command not found|enoent/i
@@ -48,6 +48,27 @@ export function parseHookResult(args: { stdout: string; stderr: string; exitCode
     return { outcome: 'success', additionalContext: text } // not valid JSON → advisory text
   }
   return applyJsonProtocol(json, event)
+}
+
+function asString(v: unknown): string | undefined {
+  return typeof v === 'string' ? v : undefined
+}
+
+function asRecord(v: unknown): Record<string, unknown> | undefined {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined
+}
+
+function parsePermissionDecision(v: unknown): HookPermissionDecision | undefined {
+  const r = asRecord(v)
+  if (!r) return undefined
+  const behavior = r.behavior
+  if (behavior !== 'allow' && behavior !== 'deny' && behavior !== 'ask' && behavior !== 'defer' && behavior !== 'passthrough') return undefined
+  const updatedInput = asRecord(r.updatedInput)
+  return { behavior, ...(updatedInput ? { updatedInput } : {}) }
+}
+
+function parsePermissionBehavior(v: unknown): PermissionBehavior | undefined {
+  return v === 'allow' || v === 'deny' || v === 'ask' || v === 'defer' || v === 'passthrough' ? v : undefined
 }
 
 function applyJsonProtocol(json: Record<string, unknown>, event: HookEventName): HookOutcome {
@@ -88,11 +109,39 @@ function applyJsonProtocol(json: Record<string, unknown>, event: HookEventName):
       out.permissionBehavior = 'defer' // defer is a PreToolUse-only level; ignored on other events
     }
     if (typeof h.permissionDecisionReason === 'string') out.hookPermissionDecisionReason = h.permissionDecisionReason
-    if (h.updatedInput && typeof h.updatedInput === 'object' && !Array.isArray(h.updatedInput)) out.updatedInput = h.updatedInput as Record<string, unknown>
+    const updatedInput = asRecord(h.updatedInput)
+    if (updatedInput) out.updatedInput = updatedInput
     if (h.updatedToolOutput !== undefined) out.updatedToolOutput = h.updatedToolOutput
     else if (h.updatedMCPToolOutput !== undefined) out.updatedToolOutput = h.updatedMCPToolOutput
     if (typeof h.additionalContext === 'string') out.additionalContext = h.additionalContext
     if (Array.isArray(h.watchPaths)) out.watchPaths = h.watchPaths.filter((p): p is string => typeof p === 'string')
+    if (h.suppressOriginalPrompt === true) out.suppressOriginalPrompt = true
+    if (typeof h.sessionTitle === 'string') out.sessionTitle = h.sessionTitle
+    if (typeof h.displayContent === 'string') out.displayContent = h.displayContent
+    if (h.retry === true) out.retry = true
+    if (typeof h.initialUserMessage === 'string') out.initialUserMessage = h.initialUserMessage
+    if (typeof h.newCustomInstructions === 'string') out.newCustomInstructions = h.newCustomInstructions
+    if (h.reloadSkills === true) out.reloadSkills = true
+    if (typeof h.userDisplayMessage === 'string') out.userDisplayMessage = h.userDisplayMessage
+    if (typeof h.blockedBy === 'string') {
+      out.blockedBy = h.blockedBy
+      out.blockingError = h.blockedBy
+      out.outcome = 'blocking'
+    }
+
+    const decision = parsePermissionDecision(h.decision) ?? parsePermissionDecision(h.permissionRequestResult)
+    if (decision) {
+      out.decision = decision
+      if (decision.updatedInput) out.updatedInput = decision.updatedInput
+      if (decision.behavior !== 'passthrough') out.permissionBehavior = decision.behavior
+      if (decision.behavior === 'deny') {
+        out.blockingError = asString(h.permissionDecisionReason) ?? reason ?? 'Blocked by hook'
+        out.outcome = 'blocking'
+      }
+    } else {
+      const permissionBehavior = parsePermissionBehavior(h.permissionBehavior)
+      if (permissionBehavior) out.permissionBehavior = permissionBehavior
+    }
   }
   return out
 }

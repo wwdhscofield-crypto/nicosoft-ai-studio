@@ -59,56 +59,86 @@ export function isHookEvent(name: string): name is HookEventName {
 //   • canBlock     — a hook can change the outcome (deny a tool, prevent continuation, inject a blocking
 //                    reason). Pure-notification events ignore a blocking decision.
 //   • canInjectContext — additionalContext from a hook is meaningful for this event (fed back to the model).
+//   • outputs      — the event-specific hookSpecificOutput keys that may leave the engine. Emit sites must
+//                    consume every key they allow; keys not in this matrix are dropped here.
+export type HookOutputKey =
+  | 'permission'
+  | 'updatedInput'
+  | 'updatedToolOutput'
+  | 'additionalContext'
+  | 'blocking'
+  | 'preventContinuation'
+  | 'watchPaths'
+  | 'suppressOriginalPrompt'
+  | 'sessionTitle'
+  | 'displayContent'
+  | 'retry'
+  | 'initialUserMessage'
+  | 'newCustomInstructions'
+  | 'decision'
+  | 'reloadSkills'
+  | 'userDisplayMessage'
+  | 'blockedBy'
+
 export interface HookEventMeta {
   isToolEvent: boolean
   isStopClass: boolean
   canBlock: boolean
   canInjectContext: boolean
+  outputs: readonly HookOutputKey[]
 }
 
-const TOOL: HookEventMeta = { isToolEvent: true, isStopClass: false, canBlock: true, canInjectContext: true }
-const STOP: HookEventMeta = { isToolEvent: false, isStopClass: true, canBlock: true, canInjectContext: true }
-const BLOCKING: HookEventMeta = { isToolEvent: false, isStopClass: false, canBlock: true, canInjectContext: true }
-const NOTIFY: HookEventMeta = { isToolEvent: false, isStopClass: false, canBlock: false, canInjectContext: true }
-const PLAIN: HookEventMeta = { isToolEvent: false, isStopClass: false, canBlock: false, canInjectContext: false }
+const PLAIN: HookEventMeta = { isToolEvent: false, isStopClass: false, canBlock: false, canInjectContext: false, outputs: [] }
+const TOOL_PRE: HookEventMeta = { isToolEvent: true, isStopClass: false, canBlock: true, canInjectContext: true, outputs: ['permission', 'updatedInput', 'additionalContext', 'blocking'] }
+const TOOL_POST: HookEventMeta = { isToolEvent: true, isStopClass: false, canBlock: true, canInjectContext: true, outputs: ['updatedToolOutput', 'additionalContext', 'preventContinuation', 'blocking'] }
+const STOP: HookEventMeta = { isToolEvent: false, isStopClass: true, canBlock: true, canInjectContext: true, outputs: ['additionalContext', 'blocking', 'preventContinuation'] }
+const CONTEXT_BLOCKING: HookEventMeta = { isToolEvent: false, isStopClass: false, canBlock: true, canInjectContext: true, outputs: ['additionalContext', 'blocking'] }
+const CONTEXT_ONLY: HookEventMeta = { isToolEvent: false, isStopClass: false, canBlock: false, canInjectContext: true, outputs: ['additionalContext'] }
+const NO_OUTPUT_NOTIFY: HookEventMeta = { isToolEvent: false, isStopClass: false, canBlock: false, canInjectContext: false, outputs: [] }
 
 // The matrix. Default any unlisted event to PLAIN (never happens — every HOOK_EVENTS member is here — but the
 // lookup is total so a future append can't crash the engine before its row is filled in).
 export const EVENT_META: Record<HookEventName, HookEventMeta> = {
-  PreToolUse: TOOL,
-  PostToolUse: TOOL,
-  PostToolUseFailure: TOOL,
-  PostToolBatch: BLOCKING,
-  Notification: NOTIFY,
-  UserPromptSubmit: BLOCKING,
-  UserPromptExpansion: NOTIFY,
-  SessionStart: NOTIFY,
-  SessionEnd: NOTIFY,
+  PreToolUse: TOOL_PRE,
+  PostToolUse: TOOL_POST,
+  PostToolUseFailure: { ...CONTEXT_ONLY, isToolEvent: true },
+  PostToolBatch: CONTEXT_ONLY,
+  Notification: NO_OUTPUT_NOTIFY,
+  UserPromptSubmit: { ...CONTEXT_BLOCKING, outputs: ['additionalContext', 'blocking', 'updatedInput', 'suppressOriginalPrompt', 'sessionTitle'] },
+  UserPromptExpansion: CONTEXT_BLOCKING,
+  SessionStart: { ...CONTEXT_BLOCKING, outputs: ['additionalContext', 'blocking', 'initialUserMessage', 'sessionTitle', 'watchPaths', 'reloadSkills'] },
+  SessionEnd: NO_OUTPUT_NOTIFY,
   Stop: STOP,
-  StopFailure: NOTIFY,
-  SubagentStart: NOTIFY,
+  StopFailure: NO_OUTPUT_NOTIFY,
+  SubagentStart: CONTEXT_BLOCKING,
   SubagentStop: STOP,
-  PreCompact: NOTIFY,
-  PostCompact: NOTIFY,
-  PermissionRequest: TOOL,
-  PermissionDenied: TOOL,
-  Setup: NOTIFY,
-  TeammateIdle: BLOCKING,
-  TaskCreated: NOTIFY,
-  TaskCompleted: BLOCKING,
-  Elicitation: BLOCKING,
-  ElicitationResult: NOTIFY,
-  ConfigChange: NOTIFY,
-  WorktreeCreate: NOTIFY,
-  WorktreeRemove: NOTIFY,
-  InstructionsLoaded: NOTIFY,
-  CwdChanged: NOTIFY,
-  FileChanged: NOTIFY,
-  MessageDisplay: NOTIFY,
+  PreCompact: { isToolEvent: false, isStopClass: false, canBlock: true, canInjectContext: false, outputs: ['blocking', 'newCustomInstructions', 'userDisplayMessage', 'blockedBy'] },
+  PostCompact: { isToolEvent: false, isStopClass: false, canBlock: false, canInjectContext: false, outputs: ['userDisplayMessage'] },
+  PermissionRequest: { isToolEvent: true, isStopClass: false, canBlock: true, canInjectContext: false, outputs: ['decision', 'updatedInput', 'blocking'] },
+  PermissionDenied: { isToolEvent: true, isStopClass: false, canBlock: false, canInjectContext: false, outputs: ['retry'] },
+  Setup: CONTEXT_BLOCKING,
+  TeammateIdle: NO_OUTPUT_NOTIFY,
+  TaskCreated: NO_OUTPUT_NOTIFY,
+  TaskCompleted: NO_OUTPUT_NOTIFY,
+  // No emit surface yet (Studio MCP has no elicitation lifecycle) — kept registered as extension points; when the
+  // surface lands, re-add the elicitationResponse/elicitationResultResponse output keys (parse + engine + types).
+  Elicitation: { isToolEvent: false, isStopClass: false, canBlock: true, canInjectContext: false, outputs: ['blocking'] },
+  ElicitationResult: { isToolEvent: false, isStopClass: false, canBlock: true, canInjectContext: false, outputs: ['blocking'] },
+  ConfigChange: NO_OUTPUT_NOTIFY,
+  WorktreeCreate: NO_OUTPUT_NOTIFY,
+  WorktreeRemove: NO_OUTPUT_NOTIFY,
+  InstructionsLoaded: NO_OUTPUT_NOTIFY,
+  CwdChanged: NO_OUTPUT_NOTIFY,
+  FileChanged: NO_OUTPUT_NOTIFY,
+  MessageDisplay: { isToolEvent: false, isStopClass: false, canBlock: true, canInjectContext: false, outputs: ['displayContent', 'blocking'] },
 }
 
 export function eventMeta(event: HookEventName): HookEventMeta {
   return EVENT_META[event] ?? PLAIN
+}
+
+export function eventAllowsOutput(event: HookEventName, key: HookOutputKey): boolean {
+  return eventMeta(event).outputs.includes(key)
 }
 
 // The base payload every hook receives (Studio naming; session_id IS the convId). Per-event fields are layered

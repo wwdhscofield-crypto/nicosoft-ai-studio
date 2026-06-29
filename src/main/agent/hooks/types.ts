@@ -112,6 +112,11 @@ export interface HookExecContext {
 // precedence deny > defer > ask > allow (passthrough is a no-op). Only allow/ask carry updatedInput.
 export type PermissionBehavior = 'allow' | 'deny' | 'ask' | 'defer' | 'passthrough'
 
+export interface HookPermissionDecision {
+  behavior: PermissionBehavior
+  updatedInput?: Record<string, unknown>
+}
+
 // What a single hook produces. Every field is optional; the engine merges them across all matched hooks (see
 // engine.ts). `outcome` is classification (success/blocking/non_blocking_error/cancelled) — usually computed by
 // the executor, defaulting to 'success'.
@@ -127,6 +132,16 @@ export interface HookOutcome {
   preventContinuation?: boolean // truly stop (no wake) — stop-class events only
   stopReason?: string
   watchPaths?: string[] // SessionStart/FileChanged: paths to (re-)arm the file watcher on (watchPaths→FileChanged loop)
+  suppressOriginalPrompt?: boolean // UserPromptSubmit: drop the original prompt after hook processing
+  sessionTitle?: string // UserPromptSubmit/SessionStart: title override
+  displayContent?: string // MessageDisplay: replace displayed content
+  retry?: boolean // PermissionDenied: retry the denied tool request once
+  initialUserMessage?: string // SessionStart: inject an initial user message
+  newCustomInstructions?: string // PreCompact: custom instructions passed to compaction
+  decision?: HookPermissionDecision // PermissionRequest: approve/deny/ask/defer + optional updated input
+  reloadSkills?: boolean // SessionStart: request skill reload
+  userDisplayMessage?: string // PreCompact/PostCompact: user-visible compaction message
+  blockedBy?: string // PreCompact: reason compaction was blocked
 }
 
 // The merged result of running all hooks for one event (engine output). The loops/tool pipeline apply it.
@@ -141,6 +156,16 @@ export interface MergedHookResult {
   preventContinuation: boolean
   stopReason?: string
   watchPaths: string[] // accumulated paths to arm the file watcher on (watchPaths→FileChanged loop)
+  suppressOriginalPrompt: boolean
+  sessionTitle?: string
+  displayContent?: string
+  retry: boolean
+  initialUserMessages: string[]
+  newCustomInstructions: string[]
+  decision?: HookPermissionDecision
+  reloadSkills: boolean
+  userDisplayMessages: string[]
+  blockedBy?: string
   counts: { success: number; blocking: number; non_blocking_error: number; cancelled: number }
 }
 
@@ -152,6 +177,12 @@ export function emptyMergedResult(): MergedHookResult {
     blockingErrors: [],
     preventContinuation: false,
     watchPaths: [],
+    suppressOriginalPrompt: false,
+    retry: false,
+    initialUserMessages: [],
+    newCustomInstructions: [],
+    reloadSkills: false,
+    userDisplayMessages: [],
     counts: { success: 0, blocking: 0, non_blocking_error: 0, cancelled: 0 },
   }
 }

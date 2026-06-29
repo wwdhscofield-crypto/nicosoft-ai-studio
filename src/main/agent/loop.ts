@@ -37,6 +37,10 @@ import type {
   Usage,
 } from './types'
 
+// Main agent dispatch content-stall watchdog. Wider than the 600s lens verifier watchdog; it only resets on
+// model-visible content/tool deltas, never on provider keepalive pings (which are not AgentLlmEvent values).
+export const MAIN_DISPATCH_STALL_TIMEOUT_MS = 900_000
+
 export interface RunAgentParams {
   protocol: 'anthropic' | 'openai' | 'gemini'
   baseUrl: string
@@ -73,6 +77,9 @@ export interface RunAgentParams {
   // True when this runAgent IS a sub-agent loop (Task / async pool child). Sub-agents fire SubagentStop (at the
   // parent), never the top-level Stop hook — so this suppresses Stop here. Undefined/false on the main loop.
   isSubAgentLoop?: boolean
+  // Content-level stream stall watchdog. The timer starts only after real LLM content/tool deltas and is never
+  // reset by provider keepalive pings; undefined preserves the previous no-extra-watchdog behavior.
+  stallTimeoutMs?: number
 }
 
 export type AgentEvent =
@@ -80,7 +87,7 @@ export type AgentEvent =
   | { type: 'tool_results'; message: AgentMessage }
   // Surfaced to the UI so context compaction is VISIBLE (it was silent — only console). 'micro' = old tool-result
   // bodies cleared this turn; 'auto' = the transcript was LLM-summarized. freedTokens ≈ context reclaimed.
-  | { type: 'compaction'; kind: 'micro' | 'auto'; freedTokens: number }
+  | { type: 'compaction'; kind: 'micro' | 'auto'; freedTokens: number; message?: string }
 
 // Cross-invocation compaction anchor. The autocompact estimate is normally seeded only by the running
 // loop's own API usage. In collab an expert runs as MANY short runAgent calls (one per mailbox wake), so
@@ -325,11 +332,56 @@ export async function* runAgent(
   // produced NOTHING, fail loudly instead of fabricating an empty success.
   let emptyTurnRetries = 0
   const MAX_EMPTY_TURN_RETRIES = 2
+  const isStallResetEvent = (ev: AgentLlmEvent): boolean => {
+    return ev.type === 'text' || ev.type === 'reasoning' || ev.type === 'tool_use_start' || ev.type === 'tool_use_input'
+  }
+
+  const createContentStallWatchdog = (turn: number, stallMs: number): { signal: AbortSignal; note: (ev: AgentLlmEvent) => void; dispose: () => void } => {
+    const ctrl = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let sawContent = false
+    let paused = false
+
+    const clear = (): void => {
+      if (timer) clearTimeout(timer)
+      timer = undefined
+    }
+    const arm = (): void => {
+      clear()
+      if (!sawContent || paused) return
+      timer = setTimeout(() => {
+        console.warn(`[agent] llm stream content stall ${stallMs}ms — aborting run=${ctx.runId} turn=${turn}`)
+        ctrl.abort(new Error(`LLM stream content stall for ${stallMs}ms`))
+      }, stallMs)
+    }
+
+    return {
+      signal: ctrl.signal,
+      note: (ev) => {
+        if (!isStallResetEvent(ev)) return
+        sawContent = true
+        if (ev.type === 'tool_use_start') {
+          paused = true
+          clear()
+          return
+        }
+        paused = false
+        arm()
+      },
+      dispose: clear,
+    }
+  }
+
   // After compaction folds the transcript — including the model's own TodoWrite calls — into one summary
   // message, the model loses sight of its todo list and stops maintaining statuses (dogfood round8: 11
   // items, all the work finished, none ever marked completed after two autocompacts). Re-inject the
   // CURRENT list into the post-compaction context. Appended as a text block on the trailing user message
   // (the summary) — a separate user message would break strict role alternation on Anthropic upstreams.
+  const assistantText = (msg: AgentMessage): string => msg.content
+    .filter((b): b is { type: 'text'; text: string } => isContentBlock(b) && b.type === 'text')
+    .map((b) => b.text)
+    .join('')
+
   const appendTodoSnapshot = (msgs: AgentMessage[]): void => {
     const todos = ctx.todos
     if (!todos || todos.length === 0) return
@@ -355,13 +407,20 @@ export async function* runAgent(
   const makeSpawnSubAgent =
     (signal: AbortSignal): SpawnSubAgent =>
     async ({ prompt, parentToolId }) => {
+      const childId = parentToolId ?? 'task'
+      let childPrompt = prompt
+      if (hookRegistry.hasAny('SubagentStart')) {
+        const start = await runHooks('SubagentStart', { ...baseHookPayload('SubagentStart', ctx), agent_id: childId, agent_type: 'task' }, hookContextFromAgent(ctx))
+        if (start.permissionBehavior === 'deny') return start.permissionReason ?? (start.blockingErrors.join('; ') || 'Sub-agent start blocked by hook')
+        if (start.additionalContexts.length) childPrompt = `${childPrompt}\n\n${start.additionalContexts.join('\n\n')}`
+      }
       const sub = runAgent({
         protocol: params.protocol,
         baseUrl,
         apiKey,
         model,
         system: SUBAGENT_SYSTEM,
-        messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+        messages: [{ role: 'user', content: [{ type: 'text', text: childPrompt }] }],
         tools: subAgentTools,
         isSubAgentLoop: true, // fires SubagentStop (below), not the top-level Stop hook
         // askUser nulled (like the headless scheduler): a sub-agent has no interactive surface — without this
@@ -404,7 +463,7 @@ export async function* runAgent(
       // SubagentStop hook: the parent fires it when a sub-agent finishes. A hook can attach context that rides
       // back on the sub-agent's summary (sub-agent re-entry on block is a later refinement).
       if (hookRegistry.hasAny('SubagentStop')) {
-        const ss = await runHooks('SubagentStop', { ...baseHookPayload('SubagentStop', ctx), stop_hook_active: false }, hookContextFromAgent(ctx))
+        const ss = await runHooks('SubagentStop', { ...baseHookPayload('SubagentStop', ctx), stop_hook_active: false, agent_id: childId, agent_transcript_path: ctx.sessionDir ? `${ctx.sessionDir}/transcript.jsonl` : undefined, agent_type: 'task' }, hookContextFromAgent(ctx))
         if (ss.additionalContexts.length) last = `${last}\n\n${ss.additionalContexts.join('\n\n')}`
       }
       return last
@@ -416,13 +475,19 @@ export async function* runAgent(
   if (ctx.subAgents instanceof AsyncSubAgentPool) {
     const asyncChildTools = tools.filter((t) => t.name !== 'Task' && !t.name.startsWith('agent_') && t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens' && !t.name.startsWith('preview_') && !t.name.startsWith('monitor_') && t.name !== 'schedule_wakeup')
     const runChild: RunChild = async (childMessages, signal, readFileState, todos, parentToolId, subAgentId) => {
+      let messagesForChild = childMessages
+      if (hookRegistry.hasAny('SubagentStart')) {
+        const start = await runHooks('SubagentStart', { ...baseHookPayload('SubagentStart', ctx), agent_id: subAgentId ?? parentToolId ?? 'async-sub-agent', agent_type: 'async' }, hookContextFromAgent(ctx))
+        if (start.permissionBehavior === 'deny') return [...childMessages, { role: 'assistant', content: [{ type: 'text', text: start.permissionReason ?? (start.blockingErrors.join('; ') || 'Sub-agent start blocked by hook') }] }]
+        if (start.additionalContexts.length) messagesForChild = [...childMessages, { role: 'user', content: [{ type: 'text', text: start.additionalContexts.join('\n\n') }] }]
+      }
       const sub = runAgent({
         protocol: params.protocol,
         baseUrl,
         apiKey,
         model,
         system: SUBAGENT_SYSTEM,
-        messages: childMessages,
+        messages: messagesForChild,
         tools: asyncChildTools,
         isSubAgentLoop: true, // async sub-agent: no top-level Stop hook
         // askUser nulled (see the Task spawn above): a background sub-agent has no interactive surface, and
@@ -487,18 +552,44 @@ export async function* runAgent(
         autoFloorHit = true
         console.warn(`[agent] autocompact floor: estimate ${estimate} still over threshold ${threshold} right after compacting — proactive compaction disabled for this run`)
       } else if (messages.length >= 4) { // fewer = just the summary + the current turn, nothing to fold
-        console.log(`[agent] proactive autocompact run=${ctx.runId} turn=${turns} estimate=${estimate} threshold=${threshold} msgs=${messages.length}`)
-        const compacted = await autocompact(messages, compactConfig)
-        if (compacted !== messages) {
-          messages = compacted
-          lastUsage = undefined
-          lastUsageAt = 0
-          compactions.auto++
+        let customInstructions: string | undefined
+        let compactMessage: string | undefined
+        let compactBlocked = false
+        if (hookRegistry.hasAny('PreCompact')) {
+          const pre = await runHooks(
+            'PreCompact',
+            { ...baseHookPayload('PreCompact', ctx), trigger: 'auto', custom_instructions: '' },
+            hookContextFromAgent(ctx),
+          )
+          customInstructions = pre.newCustomInstructions.join('\n\n') || undefined
+          compactMessage = pre.userDisplayMessages.join('\n\n') || pre.blockedBy
+          compactBlocked = pre.permissionBehavior === 'deny' || pre.blockedBy != null
+        }
+        if (compactBlocked) {
           prevAutoTurn = turns
-          consecutiveAutoFails = 0 // a real compaction succeeded → reset the cross-wake breaker
-          appendTodoSnapshot(messages)
-          yield { type: 'compaction', kind: 'auto', freedTokens: Math.max(0, estimate - estimateTokens(messages)) }
+          yield { type: 'compaction', kind: 'auto', freedTokens: 0, message: compactMessage }
         } else {
+          console.log(`[agent] proactive autocompact run=${ctx.runId} turn=${turns} estimate=${estimate} threshold=${threshold} msgs=${messages.length}`)
+          const compacted = await autocompact(messages, { ...compactConfig, customInstructions })
+          if (compacted !== messages) {
+            messages = compacted
+            lastUsage = undefined
+            lastUsageAt = 0
+            compactions.auto++
+            prevAutoTurn = turns
+            consecutiveAutoFails = 0 // a real compaction succeeded → reset the cross-wake breaker
+            appendTodoSnapshot(messages)
+            if (hookRegistry.hasAny('PostCompact')) {
+              const summaryText = messages.flatMap((m) => m.content).filter((b): b is { type: 'text'; text: string } => (b as { type?: string }).type === 'text').map((b) => b.text).join('\n')
+              const post = await runHooks(
+                'PostCompact',
+                { ...baseHookPayload('PostCompact', ctx), trigger: 'auto', compact_summary: summaryText },
+                hookContextFromAgent(ctx),
+              )
+              compactMessage = post.userDisplayMessages.join('\n\n') || compactMessage
+            }
+            yield { type: 'compaction', kind: 'auto', freedTokens: Math.max(0, estimate - estimateTokens(messages)), message: compactMessage }
+          } else {
           // B5/#10: autocompact returned the transcript UNCHANGED — the summary call failed (LLM error) or
           // produced nothing. Without advancing prevAutoTurn the estimate is still over threshold next turn,
           // so the loop would re-attempt a full-transcript (~400K-char) summary EVERY turn for the rest of
@@ -517,6 +608,7 @@ export async function* runAgent(
         }
       }
     }
+    }
 
     // assigned in the stream loop below; the catch only continues or throws, so it's always set after.
     let assistant!: AssistantTurn
@@ -532,11 +624,14 @@ export async function* runAgent(
     try {
       // Stream the turn: each tool_use block is yielded as it finishes, so execution starts
       // immediately (read-only tools batch in parallel) instead of waiting for the whole message.
+      const stallWatchdog = params.stallTimeoutMs ? createContentStallWatchdog(turns, params.stallTimeoutMs) : undefined
       const forwardLlmEvent: typeof params.onStream = (ev) => {
         // Forward both streaming usage pings and exactly-once turn-final usage unchanged. Downstream
         // services decide which channel overwrites live readout and which channel accumulates session totals.
+        stallWatchdog?.note(ev)
         params.onStream?.(ev)
       }
+      const llmSignal = stallWatchdog ? AbortSignal.any([ctx.signal, stallWatchdog.signal]) : ctx.signal
       const gen = callWithTools(
         {
           protocol: params.protocol,
@@ -553,17 +648,21 @@ export async function* runAgent(
           endpointId: params.endpointId,
           roleId: params.roleId,
           thinking: params.thinking,
-          signal: ctx.signal,
+          signal: llmSignal,
         },
         forwardLlmEvent,
       )
-      for (;;) {
-        const step = await gen.next()
-        if (step.done) {
-          assistant = step.value
-          break
+      try {
+        for (;;) {
+          const step = await gen.next()
+          if (step.done) {
+            assistant = step.value
+            break
+          }
+          streamExec.add(step.value)
         }
-        streamExec.add(step.value)
+      } finally {
+        stallWatchdog?.dispose()
       }
       reactiveCompacted = false // a successful send clears the bounce guard
       requestRetries = 0 // …and gives the next request a fresh retry budget
@@ -734,6 +833,10 @@ export async function* runAgent(
         if (!stop.preventContinuation && stop.blockingErrors.length > 0) {
           stopHookBlockCount++
           if (stopHookBlockCount > STOP_HOOK_BLOCK_CAP) {
+            const error = `Stop hook block cap exceeded after ${stopHookBlockCount} consecutive blocks`
+            if (hookRegistry.hasAny('StopFailure')) {
+              await runHooks('StopFailure', { ...baseHookPayload('StopFailure', ctx), error, error_details: stop.blockingErrors, last_assistant_message: assistantText(assistantMsg) }, hookContextFromAgent(ctx))
+            }
             console.warn(`[agent] stop-hook breaker run=${ctx.runId}: a hook blocked the turn from ending ${stopHookBlockCount}× consecutively — overriding and ending. (For Stop hooks, check stop_hook_active and pass while it's true.)`)
           } else {
             messages.push({

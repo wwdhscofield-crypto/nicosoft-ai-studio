@@ -20,7 +20,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ulid } from '../../db/id'
 import * as settingsService from '../../services/settings.service'
-import { eventMeta, type HookEventName, type HookPayload } from './events'
+import { eventAllowsOutput, eventMeta, type HookEventName, type HookPayload } from './events'
 import { hookRegistry, type MatchedHook } from './registry'
 import { emptyMergedResult, type HookExecContext, type HookOutcome, type MergedHookResult, type PermissionBehavior } from './types'
 
@@ -179,27 +179,47 @@ function mergeResults(event: HookEventName, results: HookOutcome[]): MergedHookR
         reason = r.hookPermissionDecisionReason ?? r.blockingError
       }
     }
-    if (r.permissionBehavior && r.permissionBehavior !== 'passthrough') {
+    if (r.permissionBehavior && r.permissionBehavior !== 'passthrough' && eventAllowsOutput(event, 'permission')) {
       const next = upgrade(perm, r.permissionBehavior)
       if (next !== perm || next === r.permissionBehavior) {
         perm = next
         if (perm === r.permissionBehavior) reason = r.hookPermissionDecisionReason ?? reason
       }
       // updatedInput is carried only by the hook that IS the merged allow/ask state (a deny/defer drops it).
-      if ((r.permissionBehavior === 'allow' || r.permissionBehavior === 'ask') && perm === r.permissionBehavior && r.updatedInput) {
+      if ((r.permissionBehavior === 'allow' || r.permissionBehavior === 'ask') && perm === r.permissionBehavior && r.updatedInput && eventAllowsOutput(event, 'updatedInput')) {
         merged.updatedInput = r.updatedInput
       }
-    } else if (r.updatedInput) {
+    } else if (r.updatedInput && eventAllowsOutput(event, 'updatedInput')) {
       merged.updatedInput = r.updatedInput // a pure input rewrite (no permission decision) — later overwrites
     }
-    if (r.updatedToolOutput !== undefined) merged.updatedToolOutputs.push(r.updatedToolOutput)
-    if (r.additionalContext && meta.canInjectContext) merged.additionalContexts.push(r.additionalContext)
-    if (r.systemMessage) merged.systemMessages.push(r.systemMessage)
-    if (r.preventContinuation) {
+    if (r.updatedToolOutput !== undefined && eventAllowsOutput(event, 'updatedToolOutput')) merged.updatedToolOutputs.push(r.updatedToolOutput)
+    if (r.additionalContext && meta.canInjectContext && eventAllowsOutput(event, 'additionalContext')) merged.additionalContexts.push(r.additionalContext)
+    if (r.systemMessage && eventAllowsOutput(event, 'additionalContext')) merged.systemMessages.push(r.systemMessage)
+    if (r.preventContinuation && eventAllowsOutput(event, 'preventContinuation')) {
       merged.preventContinuation = true
       if (r.stopReason) merged.stopReason = r.stopReason
     }
-    if (r.watchPaths?.length) merged.watchPaths.push(...r.watchPaths)
+    if (r.watchPaths?.length && eventAllowsOutput(event, 'watchPaths')) merged.watchPaths.push(...r.watchPaths)
+    if (r.suppressOriginalPrompt && eventAllowsOutput(event, 'suppressOriginalPrompt')) merged.suppressOriginalPrompt = true
+    if (r.sessionTitle && eventAllowsOutput(event, 'sessionTitle')) merged.sessionTitle = r.sessionTitle
+    if (r.displayContent && eventAllowsOutput(event, 'displayContent')) merged.displayContent = r.displayContent
+    if (r.retry && eventAllowsOutput(event, 'retry')) merged.retry = true
+    if (r.initialUserMessage && eventAllowsOutput(event, 'initialUserMessage')) merged.initialUserMessages.push(r.initialUserMessage)
+    if (r.newCustomInstructions && eventAllowsOutput(event, 'newCustomInstructions')) merged.newCustomInstructions.push(r.newCustomInstructions)
+    if (r.reloadSkills && eventAllowsOutput(event, 'reloadSkills')) merged.reloadSkills = true
+    if (r.userDisplayMessage && eventAllowsOutput(event, 'userDisplayMessage')) merged.userDisplayMessages.push(r.userDisplayMessage)
+    if (r.blockedBy && eventAllowsOutput(event, 'blockedBy')) merged.blockedBy = r.blockedBy
+    if (r.decision && eventAllowsOutput(event, 'decision')) {
+      const next = upgrade(perm, r.decision.behavior)
+      if (next !== perm || next === r.decision.behavior) {
+        perm = next
+        const decision = eventAllowsOutput(event, 'updatedInput') ? r.decision : { behavior: r.decision.behavior }
+        merged.decision = decision
+        if (r.decision.updatedInput && (r.decision.behavior === 'allow' || r.decision.behavior === 'ask') && eventAllowsOutput(event, 'updatedInput')) {
+          merged.updatedInput = r.decision.updatedInput
+        }
+      }
+    }
   }
 
   // Matrix gate: a non-blocking event never carries a permission/blocking/stop decision out of the engine.

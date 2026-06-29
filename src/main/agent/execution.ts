@@ -49,11 +49,30 @@ function formatZodError(error: ZodError): string {
   return error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ')
 }
 
+function appendHookContexts(block: ToolResultBlock, contexts: string[]): ToolResultBlock {
+  if (!contexts.length) return block
+  const extra = contexts.join('\n\n')
+  if (typeof block.content === 'string') return { ...block, content: `${block.content}\n\n${extra}` }
+  if (Array.isArray(block.content)) return { ...block, content: [...block.content, { type: 'text', text: extra }] }
+  return block
+}
+
+function stringifyHookRewrite(value: unknown): string {
+  return typeof value === 'string' ? value : JSON.stringify(value)
+}
+
+function toolErrorText(block: ToolResultBlock): string {
+  if (typeof block.content === 'string') return block.content
+  return JSON.stringify(block.content)
+}
+
 // Resolve a tool's checkPermissions into allow/deny, consulting permissionMode + the UI callback.
 async function checkPermission(
   tool: Tool,
   input: Record<string, unknown>,
   ctx: AgentContext,
+  toolUseId: string,
+  skipPermissionHook = false,
 ): Promise<{ allow: boolean; message?: string; updatedInput?: Record<string, unknown> }> {
   // Bypass auto-approves every tool EXCEPT two carve-outs:
   //   • A system-software install — bypass runs unattended, so it must never SILENTLY install software on
@@ -73,6 +92,31 @@ async function checkPermission(
   }
 
   const result = await tool.checkPermissions(input, ctx)
+  if (!skipPermissionHook && hookRegistry.hasAny('PermissionRequest')) {
+    const permission = await runHooks(
+      'PermissionRequest',
+      {
+        ...baseHookPayload('PermissionRequest', ctx),
+        tool_name: tool.name,
+        tool_input: input,
+        tool_use_id: toolUseId,
+        permission_suggestions: result,
+      },
+      hookContextFromAgent(ctx),
+    )
+    const decision = permission.decision
+    if (permission.permissionBehavior === 'deny' || decision?.behavior === 'deny') return { allow: false, message: permission.permissionReason ?? (permission.blockingErrors.join('; ') || 'Permission denied by hook') }
+    const hookInput = decision?.updatedInput ?? permission.updatedInput
+    if (decision?.behavior === 'allow' || permission.permissionBehavior === 'allow') return { allow: true, updatedInput: hookInput }
+    if (hookInput) {
+      // Re-evaluate permission against the hook's rewritten input. The recursive check returns the TOOL's own
+      // updatedInput (undefined on the ask path), so thread hookInput back as the applied input when it allows —
+      // otherwise an approved-but-rewritten call would run with the ORIGINAL input (the rewrite silently dropped).
+      const rechecked = await checkPermission(tool, hookInput, ctx, toolUseId, true)
+      return rechecked.allow ? { ...rechecked, updatedInput: rechecked.updatedInput ?? hookInput } : rechecked
+    }
+  }
+
   if (result.behavior === 'deny') return { allow: false, message: result.message }
   const allowedInput = result.behavior === 'allow' ? result.updatedInput : undefined
   const askReason = result.behavior === 'ask' ? result.message : undefined
@@ -98,35 +142,84 @@ async function runOne(
   tools: readonly Tool[],
   ctx: AgentContext,
   onPreventContinuation?: () => void,
+  onFinalInput?: (input: Record<string, unknown>) => void,
 ): Promise<ToolResultBlock> {
   const tool = findTool(tools, toolUse.name)
   if (!tool) return errorResult(toolUse.id, `No such tool available: ${toolUse.name}`)
-  if (ctx.signal.aborted) return errorResult(toolUse.id, 'Tool execution cancelled')
+  const startedAt = Date.now()
+  let effectiveInput: Record<string, unknown> = toolUse.input && typeof toolUse.input === 'object' && !Array.isArray(toolUse.input) ? (toolUse.input as Record<string, unknown>) : {}
+  const hookContexts: string[] = []
+
+  const finish = async (block: ToolResultBlock): Promise<ToolResultBlock> => {
+    try {
+      const duration_ms = Date.now() - startedAt
+      if (block.is_error === true && hookRegistry.hasAny('PostToolUseFailure')) {
+        const failure = await runHooks(
+          'PostToolUseFailure',
+          {
+            ...baseHookPayload('PostToolUseFailure', ctx),
+            tool_name: tool.name,
+            tool_input: effectiveInput,
+            tool_use_id: toolUse.id,
+            error: toolErrorText(block),
+            is_interrupt: ctx.signal.aborted,
+            duration_ms,
+          },
+          hookContextFromAgent(ctx),
+        )
+        hookContexts.push(...failure.additionalContexts)
+      }
+      if (hookRegistry.hasAny('PostToolUse')) {
+        const post = await runHooks(
+          'PostToolUse',
+          {
+            ...baseHookPayload('PostToolUse', ctx),
+            tool_name: tool.name,
+            tool_input: effectiveInput,
+            tool_use_id: toolUse.id,
+            tool_response: block.content,
+            is_error: block.is_error === true,
+            duration_ms,
+          },
+          hookContextFromAgent(ctx),
+        )
+        const rewrite = post.updatedToolOutputs.at(-1)
+        if (rewrite !== undefined) block = { ...block, content: stringifyHookRewrite(rewrite) }
+        hookContexts.push(...post.additionalContexts)
+        if (post.preventContinuation) onPreventContinuation?.()
+      }
+      block = appendHookContexts(block, hookContexts)
+      return await persistLargeResult(block, tool.maxResultSizeChars, ctx.sessionDir)
+    } catch (err) {
+      return errorResult(toolUse.id, err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  if (ctx.signal.aborted) return await finish(errorResult(toolUse.id, 'Tool execution cancelled'))
 
   // 1. schema validation (Zod) — the model frequently emits invalid input. safeParse never throws.
   const parsed = tool.inputSchema.safeParse(toolUse.input)
-  if (!parsed.success) return errorResult(toolUse.id, `InputValidationError: ${formatZodError(parsed.error)}`)
+  if (!parsed.success) return await finish(errorResult(toolUse.id, `InputValidationError: ${formatZodError(parsed.error)}`))
   const input = parsed.data as Record<string, unknown>
+  effectiveInput = input
 
   // 2-5. value-validate → permission → call → serialize → persist, ALL wrapped: any throw must still
   // yield exactly one tool_result or the dangling tool_use wedges the conversation (§3.5).
   try {
     const valid = await tool.validateInput(input, ctx)
-    if (!valid.result) return errorResult(toolUse.id, valid.message)
+    if (!valid.result) return await finish(errorResult(toolUse.id, valid.message))
 
     // PreToolUse hooks: can DENY the call (→ error result), REWRITE the input (updatedInput), or attach context
     // that rides back on the tool result. Runs before permission so a hook can veto a tool the user would
     // otherwise approve. Skipped cheaply when nothing listens.
-    let effectiveInput = input
-    const hookContexts: string[] = []
     if (hookRegistry.hasAny('PreToolUse')) {
       const pre = await runHooks(
         'PreToolUse',
-        { ...baseHookPayload('PreToolUse', ctx), tool_name: tool.name, tool_input: input },
+        { ...baseHookPayload('PreToolUse', ctx), tool_name: tool.name, tool_input: input, tool_use_id: toolUse.id },
         hookContextFromAgent(ctx),
       )
       if (pre.permissionBehavior === 'deny') {
-        return errorResult(toolUse.id, `Blocked by a PreToolUse hook: ${pre.permissionReason ?? (pre.blockingErrors.join('; ') || 'condition not met')}`)
+        return await finish(errorResult(toolUse.id, `Blocked by a PreToolUse hook: ${pre.permissionReason ?? (pre.blockingErrors.join('; ') || 'condition not met')}`))
       }
       if (pre.updatedInput) {
         // A hook's rewritten input must clear the SAME gates the model's original did. Re-validate it against
@@ -136,56 +229,48 @@ async function runOne(
         // (parallel read-batch vs serialized write) from the ORIGINAL input, so a safe→unsafe rewrite would run
         // a mutation inside a parallel read batch and break write-serialization.
         const reparsed = tool.inputSchema.safeParse(pre.updatedInput)
-        if (!reparsed.success) return errorResult(toolUse.id, `PreToolUse hook produced invalid input: ${formatZodError(reparsed.error)}`)
+        if (!reparsed.success) return await finish(errorResult(toolUse.id, `PreToolUse hook produced invalid input: ${formatZodError(reparsed.error)}`))
         const rewritten = reparsed.data as Record<string, unknown>
         if (tool.isConcurrencySafe(input) && !tool.isConcurrencySafe(rewritten)) {
-          return errorResult(toolUse.id, 'PreToolUse hook rewrite turned a concurrency-safe call into an unsafe one, which is not allowed after scheduling.')
+          return await finish(errorResult(toolUse.id, 'PreToolUse hook rewrite turned a concurrency-safe call into an unsafe one, which is not allowed after scheduling.'))
         }
         const revalid = await tool.validateInput(rewritten, ctx)
-        if (!revalid.result) return errorResult(toolUse.id, `PreToolUse hook produced invalid input: ${revalid.message}`)
+        if (!revalid.result) return await finish(errorResult(toolUse.id, `PreToolUse hook produced invalid input: ${revalid.message}`))
         effectiveInput = rewritten
       }
       hookContexts.push(...pre.additionalContexts)
     }
 
-    const decision = await checkPermission(tool, effectiveInput, ctx)
-    if (!decision.allow) return errorResult(toolUse.id, decision.message ?? 'Permission denied')
-
-    const toolCtx: AgentContext = { ...ctx, currentToolUseId: toolUse.id }
-    const result = await tool.call(decision.updatedInput ?? effectiveInput, toolCtx)
-    let block = tool.mapResult(result.data, toolUse.id)
-
-    // PostToolUse hooks: can REWRITE the output (updatedToolOutput — last wins) or attach context. Errors are
-    // surfaced too (the failure is the signal a PostToolUse hook reacts to).
-    if (hookRegistry.hasAny('PostToolUse')) {
-      const post = await runHooks(
-        'PostToolUse',
-        { ...baseHookPayload('PostToolUse', ctx), tool_name: tool.name, tool_input: effectiveInput, tool_response: block.content, is_error: block.is_error === true },
+    let decision = await checkPermission(tool, effectiveInput, ctx, toolUse.id)
+    if (!decision.allow && hookRegistry.hasAny('PermissionDenied')) {
+      const denied = await runHooks(
+        'PermissionDenied',
+        { ...baseHookPayload('PermissionDenied', ctx), tool_name: tool.name, tool_input: effectiveInput, tool_use_id: toolUse.id, reason: decision.message ?? 'Permission denied' },
         hookContextFromAgent(ctx),
       )
-      const rewrite = post.updatedToolOutputs.at(-1)
-      if (rewrite !== undefined) block = { ...block, content: typeof rewrite === 'string' ? rewrite : JSON.stringify(rewrite) }
-      hookContexts.push(...post.additionalContexts)
-      // continue:false from a PostToolUse hook ends the turn after this tool (the reference's
-      // hook_stopped_continuation). Signalled up to the executor → loop, which stops the turn once all of this
-      // turn's tool results are recorded — so the conversation stays valid (no dangling tool_use).
-      if (post.preventContinuation) onPreventContinuation?.()
+      if (denied.retry) decision = await checkPermission(tool, effectiveInput, ctx, toolUse.id)
+    }
+    if (!decision.allow) return await finish(errorResult(toolUse.id, decision.message ?? 'Permission denied'))
+    if (decision.updatedInput) {
+      const reparsed = tool.inputSchema.safeParse(decision.updatedInput)
+      if (!reparsed.success) return await finish(errorResult(toolUse.id, `Permission hook produced invalid input: ${formatZodError(reparsed.error)}`))
+      const rewritten = reparsed.data as Record<string, unknown>
+      if (tool.isConcurrencySafe(effectiveInput) && !tool.isConcurrencySafe(rewritten)) {
+        return await finish(errorResult(toolUse.id, 'Permission hook rewrite turned a concurrency-safe call into an unsafe one, which is not allowed after scheduling.'))
+      }
+      const revalid = await tool.validateInput(rewritten, ctx)
+      if (!revalid.result) return await finish(errorResult(toolUse.id, `Permission hook produced invalid input: ${revalid.message}`))
+      const repermission = await checkPermission(tool, rewritten, ctx, toolUse.id, true)
+      if (!repermission.allow) return await finish(errorResult(toolUse.id, repermission.message ?? 'Permission denied after hook rewrite'))
+      effectiveInput = repermission.updatedInput ?? rewritten
     }
 
-    // Fold any hook-attached context onto the tool result so the model sees it. String content is appended;
-    // array content (image tools: generate_image/view_image) gets the context as an extra text block so it is
-    // not silently dropped — and the existing image blocks are preserved.
-    if (hookContexts.length) {
-      const extra = hookContexts.join('\n\n')
-      if (typeof block.content === 'string') {
-        block = { ...block, content: `${block.content}\n\n${extra}` }
-      } else if (Array.isArray(block.content)) {
-        block = { ...block, content: [...block.content, { type: 'text', text: extra }] }
-      }
-    }
-    return await persistLargeResult(block, tool.maxResultSizeChars, ctx.sessionDir)
+    const toolCtx: AgentContext = { ...ctx, currentToolUseId: toolUse.id }
+    onFinalInput?.(effectiveInput)
+    const result = await tool.call(effectiveInput, toolCtx)
+    return await finish(tool.mapResult(result.data, toolUse.id))
   } catch (err) {
-    return errorResult(toolUse.id, err instanceof Error ? err.message : String(err))
+    return await finish(errorResult(toolUse.id, err instanceof Error ? err.message : String(err)))
   }
 }
 
@@ -206,6 +291,7 @@ export class StreamingToolExecutor {
   private readonly order: ToolUseBlock[] = []
   private readonly results = new Map<string, ToolResultBlock>()
   private readonly executing = new Map<string, { safe: boolean; promise: Promise<void> }>()
+  private readonly executedInputs = new Map<string, Record<string, unknown>>()
   private readonly queue: ToolUseBlock[] = []
   // Set when a PostToolUse hook returns continue:false (preventContinuation): the loop ends the turn after this
   // turn's tool results are recorded (the reference's hook_stopped_continuation). Read by loop.ts after drain().
@@ -234,6 +320,8 @@ export class StreamingToolExecutor {
       this.queue.shift()
       const promise = runOne(block, this.tools, this.ctx, () => {
         this.continuationPrevented = true
+      }, (input) => {
+        this.executedInputs.set(block.id, input)
       }).then((r) => {
         this.results.set(block.id, r)
         this.executing.delete(block.id)
@@ -250,6 +338,23 @@ export class StreamingToolExecutor {
       if (running.length > 0) await Promise.race(running)
       this.pump()
     }
-    return this.order.map((b) => this.results.get(b.id) as ToolResultBlock)
+    let ordered = this.order.map((b) => this.results.get(b.id) as ToolResultBlock)
+    if (ordered.length > 0 && hookRegistry.hasAny('PostToolBatch')) {
+      const toolCalls = this.order.map((b, i) => ({
+        tool_name: b.name,
+        tool_input: this.executedInputs.get(b.id) ?? b.input,
+        tool_use_id: b.id,
+        tool_response: ordered[i]?.content,
+        is_error: ordered[i]?.is_error === true,
+      }))
+      const batch = await runHooks('PostToolBatch', { ...baseHookPayload('PostToolBatch', this.ctx), tool_calls: toolCalls }, hookContextFromAgent(this.ctx))
+      if (batch.additionalContexts.length) {
+        const last = ordered.length - 1
+        ordered = ordered.map((r, i) => (i === last ? appendHookContexts(r, batch.additionalContexts) : r))
+        const lastTool = findTool(this.tools, this.order[last]?.name ?? '')
+        if (lastTool) ordered[last] = await persistLargeResult(ordered[last], lastTool.maxResultSizeChars, this.ctx.sessionDir)
+      }
+    }
+    return ordered
   }
 }

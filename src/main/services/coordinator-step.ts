@@ -282,6 +282,7 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
         toolNames: opts.toolNames,
         expectsFileChanges: opts.expectsFileChanges,
         maxTurns: opts.maxTurns,
+        stallTimeoutMs: opts.stallTimeoutMs,
         imageModel: binding.imageModel ?? undefined,
         // DIRECT: run the loop with Danny's front-door persona + his recalled context, not the
         // dispatched-expert coding system. Gate B's verifier passes its own persona via opts.systemPromptOverride.

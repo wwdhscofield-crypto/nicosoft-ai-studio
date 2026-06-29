@@ -38,6 +38,10 @@ import { manager as skillManager } from './skill.service'
 import { DEV_ROLES, ENGINEER_ROLE_ID, PLAYWRIGHT_TOOLS, PREVIEW_AGENT_TOOLS, SERVICE_TOOLS, SUBAGENT_TOOLS, toolsForAgentRole } from './agent-tools'
 import { buildAgentSystem } from './agent-system'
 import { conversationToAgentMessages, runAgentLoop, type AgentCallbacks } from './agent-dispatch'
+import type { AgentContext } from '../agent/context'
+import { runHooks } from '../agent/hooks/engine'
+import { hookRegistry } from '../agent/hooks/registry'
+import { baseHookPayload, hookContextFromAgent } from '../agent/hooks/adapter'
 import { getSoloAsync, parkSolo } from './solo-async'
 
 // 批C2b: a RESUME is a turn the runtime starts itself after a parked async op completes — not a user message.
@@ -63,6 +67,8 @@ export async function run(
   const runId = ulid()
   // Tools scoped to this agent role: a CORE subset (doc 16 §5) + MCP + Skill, by roleId + scope.
   const roleId = input.roleId ?? ENGINEER_ROLE_ID
+  let submittedPrompt = input.prompt
+  let userPromptContexts: string[] = []
   let tools = [...toolsForAgentRole(roleId), launchAsyncTool, awaitAsyncTool] // 批C2a: solo direct chat can launch/await async ops (studio_lens launches through ctx.async too)
   if (DEV_ROLES.has(roleId)) tools = [...tools, ...SERVICE_TOOLS, ...PLAYWRIGHT_TOOLS, ...PREVIEW_AGENT_TOOLS, ...SUBAGENT_TOOLS, lspTool as unknown as Tool]
   // Read needs a folder boundary; without a cwd, drop it for non-dev roles so the model can't read the
@@ -78,11 +84,36 @@ export async function run(
   // resume (批C2b): the completion note isn't the user's words — persisting it would inject a robotic user bubble.
   // The note is seeded only into this run's in-memory seed below; the assistant's reply still persists.
   if (opts?.resumeNote == null) {
+    if (hookRegistry.hasAny('UserPromptSubmit')) {
+      const hookCtx: AgentContext = {
+        cwd: input.cwd,
+        signal,
+        roleId,
+        runId,
+        convId,
+        permissionMode: input.permissionMode ?? 'default',
+        sessionDir: join(dataDir(), 'sessions', convId),
+        readFileState: new Map(),
+        requestPermission: async () => ({ allow: false, message: 'Hooks cannot request tool permissions during prompt submission.' }),
+        todos: [],
+      }
+      const promptHook = await runHooks(
+        'UserPromptSubmit',
+        { ...baseHookPayload('UserPromptSubmit', hookCtx), prompt: input.prompt, session_title: convRepo.getById(convId)?.title ?? undefined },
+        hookContextFromAgent(hookCtx),
+      )
+      if (promptHook.permissionBehavior === 'deny') throw new LlmError('bad_request', promptHook.permissionReason ?? (promptHook.blockingErrors.join('; ') || 'User prompt blocked by hook'))
+      const rewritten = typeof promptHook.updatedInput?.prompt === 'string' ? promptHook.updatedInput.prompt : undefined
+      userPromptContexts = promptHook.additionalContexts
+      if (promptHook.suppressOriginalPrompt) submittedPrompt = rewritten ?? (userPromptContexts.join('\n\n') || '[original prompt suppressed by hook]')
+      else submittedPrompt = [rewritten ?? submittedPrompt, ...userPromptContexts].filter(Boolean).join('\n\n')
+      if (promptHook.sessionTitle) convRepo.rename(convId, promptHook.sessionTitle)
+    }
     const userImages = (input.images ?? []).map((i) => ({ url: i.dataUrl }))
     convService.append(convId, {
       author: 'user',
       expertId: roleId,
-      content: input.prompt,
+      content: submittedPrompt,
       attachments: userImages,
       runId,
     })
@@ -121,7 +152,7 @@ export async function run(
     // Claude-OAuth-routed upstreams reject assistant prefill ("the conversation must end with a user message"); the
     // native API tolerates it. History normally ends on the just-persisted user prompt, but guard the invariant here
     // too so a persistence-order change can't reintroduce a routed 400.
-    seed = [...seed, { role: 'user', content: [{ type: 'text', text: input.prompt }] }]
+    seed = [...seed, { role: 'user', content: [{ type: 'text', text: submittedPrompt }] }]
   }
 
   // Exact prompt tokens for this turn (system + seed + tool schemas) — free via count_tokens, falls

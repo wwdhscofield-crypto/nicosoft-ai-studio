@@ -212,6 +212,7 @@ export interface CompactConfig {
   apiKey: string
   model: string
   signal?: AbortSignal
+  customInstructions?: string
 }
 
 // Summarize the whole conversation into one user message. On failure, returns the original messages
@@ -219,13 +220,17 @@ export interface CompactConfig {
 export async function autocompact(messages: AgentMessage[], config: CompactConfig): Promise<AgentMessage[]> {
   try {
     const transcript = messagesToTranscript(messages)
+    const extraInstructions = config.customInstructions?.trim()
+    const prompt = extraInstructions
+      ? `${COMPACT_PROMPT}\nAdditional compaction instructions from hooks:\n${extraInstructions}\n\n${transcript}`
+      : COMPACT_PROMPT + transcript
     const turn = await collectTurn({
       protocol: config.protocol,
       baseUrl: config.baseUrl,
       apiKey: config.apiKey,
       model: config.model, // session model — quality over cost
       system: COMPACT_SYSTEM,
-      messages: [{ role: 'user', content: [{ type: 'text', text: COMPACT_PROMPT + transcript }] }],
+      messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
       tools: [],
       maxTokens: COMPACT_MAX_OUTPUT,
       signal: config.signal,

@@ -18,6 +18,10 @@ import { monitorService } from './services/monitor.service'
 import { selfRhythmService } from './services/self-rhythm.service'
 import { registerHookExecutors } from './agent/hooks/executors'
 import { fileWatchManager } from './agent/hooks/file-watch'
+import type { AgentContext } from './agent/context'
+import { runHooks } from './agent/hooks/engine'
+import { hookRegistry } from './agent/hooks/registry'
+import { baseHookPayload, hookContextFromAgent } from './agent/hooks/adapter'
 import { registerPluginHooks } from './services/plugin.service'
 import { initUpdateService, checkSilently } from './services/update.service'
 import { PREVIEW_PARTITION, markPreviewGuestAllowed } from './services/active-preview'
@@ -251,6 +255,22 @@ ipcMain.on('app:maximize', (e) => {
 function applyThemePref(pref: string | null): void {
   nativeTheme.themeSource = pref === 'light' || pref === 'dark' ? pref : 'system'
 }
+
+function emitSetupHook(trigger: string): void {
+  if (!hookRegistry.hasAny('Setup')) return
+  const signal = new AbortController().signal
+  const ctx: AgentContext = {
+    cwd: process.cwd(),
+    signal,
+    convId: '',
+    permissionMode: 'default',
+    sessionDir: app.getPath('userData'),
+    readFileState: new Map(),
+    requestPermission: async () => ({ allow: false, message: 'Setup hooks cannot request tool permissions.' }),
+    todos: [],
+  }
+  void runHooks('Setup', { ...baseHookPayload('Setup', ctx), trigger }, hookContextFromAgent(ctx)).catch(() => undefined)
+}
 ipcMain.handle('theme:set', (_e, pref: string) => applyThemePref(pref))
 
 app.whenReady().then(() => {
@@ -272,6 +292,7 @@ app.whenReady().then(() => {
   registerIpc()
   registerHookExecutors() // fill the hook engine's executor table (command/prompt/agent/http/mcp_tool)
   registerPluginHooks() // surface enabled plugins' manifest hooks to the registry (source 'plugin')
+  emitSetupHook('app_start')
   initUpdateService() // wire autoUpdater (channel from the build's own version) before any check can run
   // Connect every enabled MCP server (best effort) so their tools are ready when an agent role runs.
   void connectMcpServers().catch(() => {})

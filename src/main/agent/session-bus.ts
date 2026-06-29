@@ -20,6 +20,8 @@
 // queues and flushes when the run goes idle. COLLAB never sets it (it leaves delivery to the CollabSession's
 // own per-expert scheduler, which already serializes running-vs-parked), so a collab inject delivers at once.
 
+import type { AgentContext } from './context'
+
 export type InjectionPriority = 'next' | 'later'
 
 export interface SessionInjection {
@@ -84,11 +86,35 @@ class SessionBus {
   // Push a message into a session and try to deliver it. The body is wrapped here (once) so every entry point
   // — Monitor, hooks, scheduler, self-rhythm, async-op completion — gets the identical notification shell.
   inject(convId: string, injection: SessionInjection): void {
+    this.emitNotificationHook(convId, injection)
     const s = this.get(convId)
     const entry: QueuedInjection = { note: wrapSystemNotification(injection.text, injection.source), roleId: injection.roleId }
     if (injection.priority === 'next') s.queue.unshift(entry)
     else s.queue.push(entry)
     this.flush(convId)
+  }
+
+  private emitNotificationHook(convId: string, injection: SessionInjection): void {
+    void (async () => {
+      const { hookRegistry } = await import('./hooks/registry')
+      if (!hookRegistry.hasAny('Notification')) return
+      const [{ runHooks }, { baseHookPayload, hookContextFromAgent }] = await Promise.all([
+        import('./hooks/engine'),
+        import('./hooks/adapter'),
+      ])
+      const signal = new AbortController().signal
+      const ctx: AgentContext = {
+        cwd: process.cwd(),
+        signal,
+        convId,
+        permissionMode: 'default',
+        sessionDir: process.cwd(),
+        readFileState: new Map(),
+        requestPermission: async () => ({ allow: false, message: 'Notification hooks cannot request tool permissions.' }),
+        todos: [],
+      }
+      await runHooks('Notification', { ...baseHookPayload('Notification', ctx), message: injection.text, title: injection.source, notification_type: injection.source }, hookContextFromAgent(ctx)).catch(() => undefined)
+    })()
   }
 
   // Arm (or refresh) the session's delivery closure. Latest wins — solo re-arms it on every run with the
