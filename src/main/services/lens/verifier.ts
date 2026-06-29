@@ -8,6 +8,7 @@ import * as rolesService from '../roles.service'
 import * as agentService from '../agent-dispatch'
 import { COORDINATOR_VERIFIER_PROMPT, subjectExaminePrompt, reverifyPrompt } from '../../agent/roles/prompts'
 import { runRoleStep, type RunStepOptions } from '../coordinator-step'
+import { LENS_MAX_TURNS } from './runstep' // = Workflow FORKED_AGENT_DEFAULT_MAX_TURNS (50) — shared runaway backstop
 
 // Delta-stall watchdog threshold for panel SUBJECTS (finders/skeptics): 3 min of zero stream activity = a frozen
 // LLM stream (P4 — the dogfood hang: 11 finders streamed 696 deltas then froze, and examine/ has NO timeout
@@ -119,6 +120,12 @@ export async function runVerifierStep(implementerRoleId: string | string[], opts
       // into that segment as a PanelCard row (via the sub_tool card above), never a separate prose segment.
       segmentKind: subject ? undefined : 'verifier',
       quiet: Boolean(subject),
+      // Runaway backstop (Workflow FORKED_AGENT_DEFAULT_MAX_TURNS=50 = LENS_MAX_TURNS): bound the TURN count so a
+      // verifier that can't converge — e.g. a model that keeps re-running broken project tooling instead of
+      // reporting it — is cut off instead of looping to the run's hard cap. ORTHOGONAL to stallTimeoutMs below:
+      // a long *silent* build is ONE turn (untouched by this), a thousand-command rabbit hole is many turns
+      // (stopped by this). The prompt makes the verifier converge by judgment; this is only the floor under it.
+      maxTurns: LENS_MAX_TURNS,
       // P4 watchdog: bound a panel SUBJECT (finder/skeptic) run so a frozen LLM stream can't hang the find/refute
       // barrier forever. The FLOOR verifier (no subject) is exempt — it may run a long, silent build.
       stallTimeoutMs: subject ? EXAMINE_SUBJECT_STALL_MS : undefined,
