@@ -154,6 +154,12 @@ const TOOL_SEARCH_TYPE = 'tool_search_tool_regex_20251119'
 // (carried across collab wakes via CompactCarry) the loop stops attempting proactive compaction for the
 // rest of the run, instead of re-issuing an expensive full-transcript summary every time it overflows.
 const MAX_AUTOCOMPACT_FAILS = 3
+// Depth GUARD for nested Task sub-agents (collab-review-flow #3 / spec §A.1.6). The spec wants worktree isolation to
+// nest with "no depth limit" (a sub's sub gets its own worktree), but unbounded nesting risks runaway fan-out×depth.
+// So Studio ALLOWS nesting up to this cap (a Task at depth < MAX may spawn its own Task) and strips Task at the cap.
+// This is a deliberate Studio safety guard (not in CC verbatim — CC bounds recursion its own way); tune if needed.
+// depth: 0 = top-level run, 1 = a Task child, 2 = its child… The async (agent_*) pool stays one-level (unchanged).
+const MAX_SUBAGENT_DEPTH = 3
 
 // Convert a Tool's zod inputSchema into the Anthropic tools param entry, optionally deferred.
 function toToolSchema(tool: Tool, defer: boolean): ToolSchema {
@@ -420,17 +426,20 @@ export async function* runAgent(
     else msgs.push({ role: 'user', content: [{ type: 'text', text }] })
   }
 
-  // Sub-agent spawner factory for the Task tool. Builds an isolated inner loop with the same LLM
-  // config but no Task tool (recursion bounded to one level) and a fresh readFileState/todos,
-  // sharing cwd / permission with the parent. The TURN's abort signal is threaded in (see the
-  // per-turn AbortController in the loop) so a reactive-compaction abort tears down an in-flight
-  // child too, instead of leaving it running detached. Inside a sub-agent spawnSubAgent is undefined
-  // (and Task is filtered out), so it can't recurse further.
+  // Sub-agent spawner factory for the Task tool. Builds an isolated inner loop with the same LLM config + a fresh
+  // readFileState/todos, sharing permission with the parent. The TURN's abort signal is threaded in (see the per-turn
+  // AbortController in the loop) so a reactive-compaction abort tears down an in-flight child too.
+  // NESTING (collab-review-flow #3 / spec §A.1.6): worktree-isolated Task delegation may nest — a child at depth
+  // < MAX_SUBAGENT_DEPTH keeps the Task tool (so its own runAgent re-creates spawnSubAgent at the per-turn ctx) and
+  // gets its own agent-{id} worktree; at the cap, Task is stripped and recursion stops. The depth GUARD bounds
+  // runaway fan-out×depth (a deliberate Studio safety cap; the spec wants no limit but unbounded nesting is unsafe).
   // Drop plan-mode tools too: a sub-agent returns a summary, it doesn't need plan-approval semantics, and its
   // EnterPlanMode/ExitPlanMode would otherwise flip the PARENT's plan state / hit the parent's Gate A.
-  // studio_lens is denied too (studio-lens §7 Phase 4 P0): a sub-agent — or a panel reviewer — must NOT be
-  // able to recursively trigger another panel fan-out (bounds fan-out × depth). ctx.panel is also nulled below.
-  const subAgentTools = tools.filter((t) => t.name !== 'Task' && t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens' && !t.name.startsWith('preview_') && !t.name.startsWith('monitor_') && t.name !== 'schedule_wakeup')
+  // studio_lens is denied at EVERY depth (studio-lens §7 Phase 4 P0): a sub-agent / panel reviewer must NOT trigger
+  // another panel fan-out (its own fan-out bound, independent of Task nesting). ctx.panel is also nulled below.
+  const childDepth = (ctx.subAgentDepth ?? 0) + 1
+  const childCanNest = childDepth < MAX_SUBAGENT_DEPTH
+  const subAgentTools = tools.filter((t) => (t.name !== 'Task' || childCanNest) && t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens' && !t.name.startsWith('preview_') && !t.name.startsWith('monitor_') && t.name !== 'schedule_wakeup')
   const makeSpawnSubAgent =
     (signal: AbortSignal): SpawnSubAgent =>
     async ({ prompt, parentToolId, isolation }) => {
@@ -465,7 +474,7 @@ export async function* runAgent(
           // setTodos nulled (alongside panel/spawnSubAgent/askUser): a sub-agent's TodoWrite is a private, run-local
           // checklist — without this it inherits the parent's setTodos and broadcasts the child's one-shot todos into
           // the PARENT conversation's live Tasks list (overwriting the real list / prematurely archiving a phase).
-          ctx: { ...ctx, cwd: childWorktree?.path ?? ctx.cwd, cwdRoot: childWorktree?.path ?? ctx.cwdRoot, setCwd: undefined, activeWorktree: undefined, signal, readFileState: new Map(), todos: [], setTodos: undefined, spawnSubAgent: undefined, panel: undefined, preview: undefined, askUser: undefined, writtenPaths: childWorktree ? new Set() : ctx.writtenPaths, isSubAgent: true, isWorktreeIsolated: isolation === 'worktree' },
+          ctx: { ...ctx, cwd: childWorktree?.path ?? ctx.cwd, cwdRoot: childWorktree?.path ?? ctx.cwdRoot, setCwd: undefined, activeWorktree: undefined, signal, readFileState: new Map(), todos: [], setTodos: undefined, spawnSubAgent: undefined, subAgentDepth: childDepth, panel: undefined, preview: undefined, askUser: undefined, writtenPaths: childWorktree ? new Set() : ctx.writtenPaths, isSubAgent: true, isWorktreeIsolated: isolation === 'worktree' },
           maxTokens,
           maxTurns,
           onStream: emitChildStream(parentToolId),

@@ -155,8 +155,12 @@ export async function runAgentLoop(
   // workspace under ~/.nsai so the file tools get a valid, confined cwd instead of escaping to the app's
   // process cwd. The agent works here; the system prompt tells it to ASK the user for a real folder before
   // persisting work that belongs in their project.
-  const cwd = loop.cwd || join(sessionDir, 'workspace')
-  if (!loop.cwd) await mkdir(cwd, { recursive: true })
+  const rawCwd = loop.cwd || join(sessionDir, 'workspace')
+  if (!loop.cwd) await mkdir(rawCwd, { recursive: true })
+  // realpath-normalize so a Bash `pwd` (which resolves symlinks, e.g. macOS /tmp→/private/tmp) matches ctx.cwd —
+  // otherwise the FIRST command on a symlinked project path falsely trips CwdChanged (the cwd-capture marker reads
+  // a realpath'd pwd ≠ the un-normalized ctx.cwd). One realpath at run start; the path exists by now (mkdir above).
+  const cwd = await realpath(rawCwd).catch(() => rawCwd)
   const transcript = createWriteStream(join(sessionDir, 'transcript.jsonl'), { flags: 'a' })
   // Without an 'error' listener a failed write (disk full / perms) crashes the main process — swallow.
   transcript.on('error', () => {})

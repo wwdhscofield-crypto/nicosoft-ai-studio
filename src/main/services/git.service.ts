@@ -123,7 +123,12 @@ export async function worktreeList(cwd: string): Promise<GitWorktreeEntry[]> {
 export async function worktreeAdd(cwd: string, input: { branch: string; path: string; baseRef: string; noCheckout?: boolean }): Promise<void> {
   const args = ['worktree', 'add']
   if (input.noCheckout) args.push('--no-checkout')
-  args.push('--no-track', '-B', input.branch, input.path, input.baseRef)
+  // -b (create-only), NOT -B (create-or-RESET): -B would silently force-reset a pre-existing `worktree-<slug>`
+  // branch to baseRef, discarding its commits — a footgun for EnterWorktree({name}) with a user-chosen name that
+  // collides with an existing branch. Auto-managed names (agent-a<random-hex>) never collide; the resume path
+  // handles an already-registered worktree before reaching here. A genuine stale-branch collision now FAILS loudly
+  // (caller surfaces it) instead of destroying work — and the retention sweep reaps stale worktrees+branches anyway.
+  args.push('--no-track', '-b', input.branch, input.path, input.baseRef)
   await git(cwd, args, LONG_TIMEOUT)
 }
 

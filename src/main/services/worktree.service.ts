@@ -45,6 +45,13 @@ const WORKTREE_DIR = join('.studio', 'worktrees')
 const BASE_FILE = 'STUDIO_WT_BASE'
 const AUTO_MANAGED_NAME = /^(agent-a[0-9a-f]{7,16}|wf_.+|bridge-.+|job-.+)$/
 const activeWorktrees = new Set<string>()
+// Retention cutoff for the stale-worktree sweep — mirrors CC's startup retention sweep (FOo, mtime-cutoff). An
+// auto-managed worktree idle this long, with no uncommitted/ahead changes and not active/locked, is reaped. Studio
+// is multi-project (no single startup root like CC), so the sweep runs per-repo at worktree-create time (see
+// createAgentWorktree) rather than once at boot. settings `worktree.retentionMs` overrides; default 24h.
+// (Confirm the exact CC cutoff vs the binary if precise parity is needed — this is a conservative default, not a
+// throttle CC lacks: CC's retention sweep has an mtime cutoff too.)
+const DEFAULT_RETENTION_MS = 24 * 60 * 60 * 1000
 
 function asStringArray(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim().length > 0) : []
@@ -192,6 +199,12 @@ export async function createAgentWorktree(ctxOrCwd: AgentContext | string, name:
   }
 
   if (await exists(path)) throw new Error(`Worktree path exists but is not registered with git: ${path}`)
+
+  // P2 GC: reap stale auto-managed worktrees in THIS repo before creating a new one (CC's startup retention sweep,
+  // adapted per-repo for Studio's multi-project model). Awaited (not fire-and-forget) so its prune/remove can't race
+  // this create's git ops; best-effort. It skips active/locked/dirty/ahead/recent worktrees, so it never touches
+  // live sessions or unsaved work.
+  await cleanupStaleAgentWorktrees(root, { cutoffMs: DEFAULT_RETENTION_MS }).catch(() => undefined)
 
   const baseRef = await resolveBaseRef(root, settings)
   await git.worktreeAdd(root, { branch, path, baseRef })

@@ -258,6 +258,13 @@ export async function runCollabSession(
     // it so the turn-1 estimate sees the expert's TRUE cumulative context (not char/4 of one wake) → autocompact
     // fires on time instead of overshooting. Starts empty → the first wake behaves exactly as before.
     let compactCarry: CompactCarry = { usageAt: 0, autoFails: 0 }
+    // P6 / collab-review-flow — cwd + worktree state persists across this expert's mailbox wakes. The per-turn ctx is
+    // rebuilt each wake, so WITHOUT this a Bash `cd` (CwdChanged) or EnterWorktree/ExitWorktree in one turn is LOST by
+    // the next (collab would silently revert to x.cwd). Mirrors solo's single long-lived ctx + syncMutableContextState.
+    let cwd = x.cwd
+    let cwdRoot: string | undefined = x.cwd // confinement root for Bash cd; EnterWorktree switches it to the worktree
+    let activeWorktree: AgentContext['activeWorktree']
+    let isWorktreeIsolated = false
     const toolNames = new Map<string, string>() // tool_use id → name, to pair tool:post with its tool (audit)
     const runId = ulid()
     runIdsByExpert.push(runId)
@@ -306,7 +313,17 @@ export async function runCollabSession(
           throw e
         }
         const ctx: AgentContext = {
-          cwd: x.cwd,
+          cwd,
+          cwdRoot,
+          activeWorktree,
+          isWorktreeIsolated,
+          // Top-level Bash `cd` / EnterWorktree update hook → write the new cwd back to the per-expert closure var so
+          // the NEXT wake seeds from it (solo gets this via syncMutableContextState; collab rebuilds ctx each turn).
+          // cwdRoot / activeWorktree / isWorktreeIsolated are mutated directly on ctx (EnterWorktree) → synced in the
+          // turn's finally below.
+          setCwd: (next) => {
+            cwd = next
+          },
           signal: sig,
           runId,
           roleId: x.roleId,
@@ -332,7 +349,7 @@ export async function runCollabSession(
             ? createLensHandle({
                 convId,
                 callerRoleId: x.roleId,
-                cwd: x.cwd,
+                cwd,
                 permissionMode: x.permissionMode ?? 'default',
                 signal: sig,
                 onStream: (ev) => hooks.onExpertStream(x.roleId, ev),
@@ -413,6 +430,13 @@ export async function runCollabSession(
           // Clear the live readout when the turn ends — on a normal park AND on a thrown/aborted turn (gen.next()
           // rejecting). Without the finally, an errored expert's bubble hangs on "Thinking…" until session end.
           hooks.onExpertActive?.(x.roleId, false) // turn batch finished → the expert parks; hide its live readout
+          // Persist this turn's cwd / worktree state for the next wake (P6). cd already wrote `cwd` via setCwd;
+          // EnterWorktree/ExitWorktree mutate ctx.{cwdRoot,activeWorktree,isWorktreeIsolated} directly, so capture
+          // them here (even on an aborted turn — the directory change already happened). Mirrors syncMutableContextState.
+          cwd = ctx.cwd
+          cwdRoot = ctx.cwdRoot
+          activeWorktree = ctx.activeWorktree
+          isWorktreeIsolated = ctx.isWorktreeIsolated ?? false
         }
         inTokensByRole.set(x.roleId, (inTokensByRole.get(x.roleId) ?? 0) + turnIn)
         contextByRole.set(x.roleId, turnContext) // overwrite with this run's last context size (not accumulated)

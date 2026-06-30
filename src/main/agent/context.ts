@@ -142,6 +142,10 @@ export interface AgentContext {
   cwdRoot?: string // immutable confinement root for Bash cd; EnterWorktree switches it to the active worktree
   setCwd?: (cwd: string) => void // top-level Bash cd / EnterWorktree update hook; sub-agents keep this local
   isSubAgent?: boolean // true inside a Task / background child loop; CwdChanged is top-level only
+  // Nesting depth of THIS run in the Task sub-agent tree: undefined/0 = top-level, 1 = a Task child, 2 = its child…
+  // Threaded so worktree-isolated Task delegation can NEST (spec §A.1.6: "no depth limit") while a depth GUARD
+  // (MAX_SUBAGENT_DEPTH in loop.ts) still bounds runaway fan-out×depth — a Studio safety cap, not in CC verbatim.
+  subAgentDepth?: number
   isBackgroundSubAgent?: boolean // true inside agent_spawn / agent_batch children for bgIsolation enforcement
   isWorktreeIsolated?: boolean // true when this run is already inside a Studio-managed worktree
   activeWorktree?: ActiveWorktreeSession // EnterWorktree session state for ExitWorktree
