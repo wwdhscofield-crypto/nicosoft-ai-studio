@@ -453,7 +453,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
     if (!out.text) {
       // Empty step output would feed garbage downstream — better to surface the failure and let the
       // user retry than silently continue. Subsequent steps would have no real input to chain on.
-      throw new LlmError('upstream', `step ${roleId} produced no output; pipeline halted`)
+      throw new LlmError('upstream', `step ${displayName(roleId)} produced no output; pipeline halted`)
     }
     // A gated step that did NOT deliver must not be silently chained onto — downstream experts would build on
     // undelivered/unverified work (P2a; single mode already surfaces this via an explicit coordinator verdict).
@@ -464,18 +464,18 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
     //     marker into out.text for the downstream hand-off (the no-verifier-bound sub-case relies on the note).
     if (out.gateOutcome === 'unresolved') {
       emitCoordinatorIntro(input.convId, [
-        `**Pipeline halted at ${roleId} — quality verification did not pass and the follow-up did not resolve it.**`,
+        `**Pipeline halted at ${displayName(roleId)} — quality verification did not pass and the follow-up did not resolve it.**`,
         '',
         'Verifier evidence:',
         (out.gateEvidence ?? 'no evidence captured').slice(0, 1500),
         '',
         'Later pipeline steps were NOT run, to avoid building on undelivered work. Review the evidence, then retry or adjust the task.'
       ].join('\n'), cb)
-      throw new LlmError('upstream', `step ${roleId} gate outcome unresolved; pipeline halted`)
+      throw new LlmError('upstream', `step ${displayName(roleId)} gate outcome unresolved; pipeline halted`)
     }
     if (out.gateOutcome === 'unverified') {
       emitCoordinatorIntro(input.convId, [
-        `**Note — ${roleId}'s change was delivered UNVERIFIED (independent verification could not run); the pipeline continues on it.**`,
+        `**Note — ${displayName(roleId)}'s change was delivered UNVERIFIED (independent verification could not run); the pipeline continues on it.**`,
         '',
         (out.gateEvidence ?? '').slice(0, 800)
       ].join('\n'), cb)

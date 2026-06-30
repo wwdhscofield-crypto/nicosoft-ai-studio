@@ -18,6 +18,21 @@ import { COMMON_PREAMBLE, CHAT_MODE_NOTE, SAFETY_PREAMBLE } from './common-pream
 import { ROLE_DISPLAY_NAMES as N } from '@shared/roles'
 export { displayName, roleIdFromName } from '@shared/roles'
 
+// One-line DOMAIN descriptor per role (what each one DOES). Keyed by role_id but the VALUES are pure
+// human-readable descriptions — used to tell a model who handles what WITHOUT exposing the role_id as an
+// address (the collab roster shows `<name> — <blurb>`; teammates are addressed by NAME, never by role_id).
+export const ROLE_BLURB: Record<string, string> = {
+  coordinator: 'routes & merges the team',
+  generalist: 'general chat, brainstorming, anything not specialized',
+  engineer: 'backend code — APIs, databases, services, business logic',
+  frontend: 'frontend code — UI, components, styling, interactions',
+  designer: 'visual generation — posters, illustrations, avatars, images',
+  translator: 'translation between languages',
+  editor: 'summarizing, condensing, note-taking from long text',
+  analyst: 'data analysis, statistics, math reasoning',
+  scheduler: 'email drafting, replies, scheduling'
+}
+
 export const COORDINATOR_ROUTER_PROMPT = `You are ${N.coordinator}, the router and coordinator of NicoSoft AI Studio.
 
 ROUTING: Given the user's message and recent context, decide which expert(s) should handle it. The experts:

@@ -16,7 +16,8 @@
 import type { AgentMessage } from './types'
 
 export interface CollabMessage {
-  from: string // sender roleId
+  from: string // sender roleId (internal routing)
+  fromName: string // sender DISPLAY NAME, captured at send time → the recipient's "[from <name>]" never needs a role_id
   text: string
 }
 
@@ -196,26 +197,39 @@ export class CollabSession {
   // Drop a message in the target's mailbox. wake=true (assign_task) also wakes a parked target. Returns a
   // status line for the tool result. Unknown target / self-send / empty are rejected. Per-pair roundtrip
   // cap (§7): once exceeded, assign_task soft-degrades to a non-waking send to force convergence.
+  // `to` is what the MODEL passed — accept the teammate's NAME (what the consult tools ask for) or its raw
+  // roleId; resolve to the internal roleId. Addressing by name keeps role_id out of the model's view entirely.
+  private resolveTargetId(to: string): string | undefined {
+    if (this.experts.has(to)) return to
+    const lc = to.trim().toLowerCase()
+    for (const [id, e] of this.experts) if (e.spec.name.toLowerCase() === lc) return id
+    return undefined
+  }
+
   private deliver(from: string, to: string, text: string, wake: boolean): string {
-    const target = this.experts.get(to)
-    if (!target) return `Unknown expert "${to}". Available: ${[...this.experts.keys()].filter((k) => k !== from).join(', ')}.`
-    if (to === from) return 'You cannot message yourself.'
+    const toId = this.resolveTargetId(to)
+    const target = toId ? this.experts.get(toId) : undefined
+    if (!target || !toId) {
+      const names = [...this.experts.values()].filter((e) => e.spec.roleId !== from).map((e) => e.spec.name)
+      return `Unknown teammate "${to}". Available: ${names.join(', ')}.`
+    }
+    if (toId === from) return 'You cannot message yourself.'
     if (!text.trim()) return 'Empty message — nothing sent.'
 
     const sender = this.experts.get(from)!
-    const count = (sender.pairCount.get(to) ?? 0) + 1
-    sender.pairCount.set(to, count)
+    const count = (sender.pairCount.get(toId) ?? 0) + 1
+    sender.pairCount.set(toId, count)
     const capped = wake && count > MAX_ROUNDTRIPS
     const effectiveWake = wake && !capped
 
-    target.mailbox.push({ from, text })
-    this.onEvent({ kind: effectiveWake ? 'assign' : 'send', roleId: from, to, text })
+    target.mailbox.push({ from, fromName: sender.spec.name, text })
+    this.onEvent({ kind: effectiveWake ? 'assign' : 'send', roleId: from, to: toId, text })
 
     let woke = false
     if (effectiveWake && target.status === 'parked' && target.wake) {
       target.wake('woken') // clears target.wake + resolves its park promise → its loop resumes and drains mail
       woke = true
-      this.onEvent({ kind: 'wake', roleId: to })
+      this.onEvent({ kind: 'wake', roleId: toId })
     }
     const name = target.spec.name
     if (capped) {
@@ -239,7 +253,7 @@ export class CollabSession {
         //    ends in a user message). Real input resets the one-shot timeout-nudge budget.
         const mail = e.mailbox.splice(0)
         if (mail.length) {
-          const body = mail.map((m) => `[from ${this.experts.get(m.from)?.spec.name ?? m.from}] ${m.text}`).join('\n\n')
+          const body = mail.map((m) => `[from ${m.fromName}] ${m.text}`).join('\n\n')
           pushUserText(e, body) // fold into a trailing tool_results user turn rather than risk two adjacent user msgs
           nudged = false
         }

@@ -10,7 +10,7 @@ import type { ToolResultBlock } from '../types'
 const NO_TEAM = 'Collaboration tools work only when you are part of a coordinator team. Nothing was sent.'
 
 const messageSchema = z.object({
-  target: z.string().describe("the teammate's roleId, from your teammates list"),
+  target: z.string().describe("the teammate's NAME, from your teammates list (e.g. \"Shuri\")"),
   message: z.string().describe('the message body'),
 })
 
@@ -20,7 +20,7 @@ export const sendMessageTool = buildTool<typeof messageSchema, { status: string 
   prompt: () =>
     'Notify a teammate WITHOUT interrupting them: the message lands in their mailbox and they read it on ' +
     'their next turn. Use for FYIs, "done — it\'s at <path>", or non-urgent context. If you need them to ' +
-    'act on it now, use assign_task instead. Address them by roleId (see your teammates list).',
+    'act on it now, use assign_task instead. Address them by NAME (see your teammates list).',
   isReadOnly: () => true,
   isConcurrencySafe: () => true,
   async call(input, ctx) {
@@ -37,7 +37,7 @@ export const assignTaskTool = buildTool<typeof messageSchema, { status: string }
   prompt: () =>
     'Hand a teammate a task and WAKE them to act on it now: the message lands in their mailbox and they ' +
     'run a turn immediately. Use when you need something from them to proceed (e.g. "I need GET /users ' +
-    'returning {id,name}"). You keep going — they work in parallel. Address them by roleId.',
+    'returning {id,name}"). You keep going — they work in parallel. Address them by NAME.',
   isReadOnly: () => true,
   isConcurrencySafe: () => true,
   async call(input, ctx) {

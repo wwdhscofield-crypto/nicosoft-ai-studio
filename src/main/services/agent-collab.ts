@@ -13,7 +13,7 @@ import { MAIN_DISPATCH_STALL_TIMEOUT_MS, runAgent, type AgentEvent, type AgentRe
 import { promptTokensFromUsage } from '../agent/compact'
 import { isContentBlock } from '../agent/types'
 import type { AgentMessage, ServerToolSchema } from '../agent/types'
-import { displayName } from '../agent/roles/prompts'
+import { displayName, ROLE_BLURB } from '../agent/roles/prompts'
 import { sendMessageTool, assignTaskTool, waitTool } from '../agent/tools/consult'
 import { CollabSession, type ExpertSpec, type CollabEvent } from '../agent/collab'
 import { runHooks } from '../agent/hooks/engine'
@@ -104,13 +104,19 @@ function buildCollabSystem(roleId: string, teammates: { id: string; name: string
   // wait-for-everyone flow below only applies with ≥1 teammate (2+ experts).
   if (teammates.length === 0) return buildAgentSystem(roleId, [], null, skillManager.listingForRole(roleId), cwd, false)
   const base = buildAgentSystem(roleId, [], null, skillManager.listingForRole(roleId), cwd, true) // collab=true (2+ experts): skip the SOLO "every agent self-runs studio_lens before done" discipline — only the ELECTED driver runs the ONE consolidated panel AFTER everyone is done, not each expert and not early (the per-expert flood AND the premature drive were the bugs)
-  const roster = teammates.map((t) => `- ${t.name} (roleId: ${t.id})`).join('\n')
+  // Roster lists each teammate by NAME + a domain blurb (what they do) — NEVER the role_id. The model addresses
+  // teammates by name everywhere (prose, todos, and the consult tools, which take a name). Exposing the role_id
+  // here made a weak model parrot it ("the frontend teammate" instead of "Shuri").
+  const roster = teammates.map((t) => `- ${t.name} — ${ROLE_BLURB[t.id] ?? 'specialist'}`).join('\n')
   return (
     base +
     '\n\n## Working as a team\n' +
     'You are collaborating with other experts on one shared project, working in parallel — each owns part ' +
     'of it. Your teammates:\n' +
     roster +
+    '\n\nAlways refer to a teammate by their NAME (the names listed above) — in your todos, messages, and prose, ' +
+    'and as the send_message / assign_task target. Never call a teammate by their domain ("the frontend") or any ' +
+    'internal id; use the name.' +
     '\n\nCoordinate with the consult tools: assign_task hands someone work and wakes them now (e.g. ask the ' +
     'backend for an endpoint you need); send_message notifies without interrupting (e.g. "done, it\'s at ' +
     '<path>"); wait pauses you until a teammate replies. For runtime integration use the service tools: ' +
@@ -423,9 +429,10 @@ export async function runCollabSession(
   // they come up; clear on teardown when the registry is disposed.
   const onEvent = (e: CollabEvent): void => {
     hooks.onEvent(e)
-    if (e.kind === 'wait') emitCollabHook('TeammateIdle', { teammate_name: e.roleId, team_name: 'collab' })
-    else if (e.kind === 'assign') emitCollabHook('TaskCreated', { task_id: `${e.roleId}:${e.to}:${Date.now()}`, task_subject: e.text, task_description: e.text, teammate_name: e.to, team_name: 'collab' })
-    else if (e.kind === 'done') emitCollabHook('TaskCompleted', { task_id: e.roleId, task_subject: `Expert ${e.roleId} completed`, teammate_name: e.roleId, team_name: 'collab' })
+    // teammate_name is a NAME field → use displayName, never the role_id (task_id stays an internal id).
+    if (e.kind === 'wait') emitCollabHook('TeammateIdle', { teammate_name: displayName(e.roleId), team_name: 'collab' })
+    else if (e.kind === 'assign') emitCollabHook('TaskCreated', { task_id: `${e.roleId}:${e.to}:${Date.now()}`, task_subject: e.text, task_description: e.text, teammate_name: e.to ? displayName(e.to) : '', team_name: 'collab' })
+    else if (e.kind === 'done') emitCollabHook('TaskCompleted', { task_id: e.roleId, task_subject: `${displayName(e.roleId)} completed their part`, teammate_name: displayName(e.roleId), team_name: 'collab' })
     hooks.onServices?.(registry.list())
   }
   try {
