@@ -36,7 +36,7 @@ export interface StudioLensResult {
   findings?: Array<{ subject: string; passed: boolean; refuted?: boolean; feedback: string }>
 }
 export interface PanelHandle {
-  examine(input: { paths?: string[]; mode: 'review' | 'understand'; parentToolId?: string }): Promise<StudioLensResult>
+  examine(input: { paths?: string[]; mode: 'review' | 'understand' }): Promise<StudioLensResult>
 }
 
 export interface ReadFileEntry {

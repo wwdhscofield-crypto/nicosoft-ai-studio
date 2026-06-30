@@ -100,15 +100,17 @@ export const studioLensTool = buildTool<typeof inputSchema, StudioLensResult>({
     // (agent.service wires a conv-level registry) — launch the panel as a BACKGROUND handle instead of blocking, and
     // await_async it to pick up the verdict. The agent DECIDES for itself when to suspend; a long lens review is
     // exactly the case where it should park, not block. Collab parks via the scheduler; solo parks via parkSolo and
-    // the session-bus resumes it on completion. The panel card is rooted under the DRIVER's own studio_lens tool card
-    // on solo (ctx.currentToolUseId) so it groups into the Tasks-panel LensCard WITHOUT a Gate-B parent; collab passes
-    // undefined → the lens keeps its Gate-B parent (its sub-tool stream is roleId-tagged via the coordinator IPC).
+    // the session-bus resumes it on completion. BOTH paths root the panel card under the SAME 'coordinator-gate-b'
+    // sentinel (services/lens) — a parent id that matches NO top-level tool, so the renderer orphan-appends the
+    // StudioLens card as a TOP-LEVEL tool. That is load-bearing: the Tasks panel collects only top-level
+    // name==='StudioLens' cards, and the reviewer sub-tools (parentToolId=panelId) nest correctly ONLY when the panel
+    // card is itself top-level. (87593cd rooted solo's card under THIS studio_lens tool card instead → it became a
+    // sub-tool → Tasks lost it AND the reviewers leaked to the chat top level as stray verbs. Reverted to the unified
+    // sentinel; collab survived only because its sentinel never matched a top-level card and orphan-appended.)
     // 批A's delta-stall watchdog bounds the handle so it always settles (no indefinite park, N1).
     if (ctx.async) {
       const label = `${mode} panel over ${input.paths.length} path(s): ${input.paths.slice(0, 3).join(', ')}${input.paths.length > 3 ? ' …' : ''}`
-      // solo → root the panel card under this studio_lens tool card so it groups without Gate-B; collab → Gate-B default.
-      const parentToolId = ctx.collab ? undefined : ctx.currentToolUseId
-      const handle = ctx.async.launch('lens', label, () => ctx.panel!.examine({ paths: input.paths, mode, parentToolId }))
+      const handle = ctx.async.launch('lens', label, () => ctx.panel!.examine({ paths: input.paths, mode }))
       return {
         data: {
           ok: true,
