@@ -211,6 +211,10 @@ async function runReviewViaScript(
   baseRef: string,
   breadthInput: 'thorough' | 'conservative',
   stepId: string,
+  // The chat parent the panel card groups under. COLLAB defaults to 'coordinator-gate-b' (a sentinel that the
+  // coordinator IPC resolves via its roleId-tagged sub-tool stream). SOLO passes the driver's own studio_lens
+  // tool-use id so the card groups under that card directly (no Gate-B card exists on the solo agent stream).
+  panelParentId = 'coordinator-gate-b',
 ): Promise<ScriptReview> {
   // Docs-only target on the conservative (Gate-B floor) path → no code risk → no panel, zero LLM. An EXPLICIT
   // review (thorough) is honored even for a .md (the user asked).
@@ -236,7 +240,7 @@ async function runReviewViaScript(
   deps.cb.onToolEvent?.(reviewerRoleId, {
     type: 'sub_tool_start',
     toolUseId: panelId,
-    parentToolId: 'coordinator-gate-b',
+    parentToolId: panelParentId,
     name: 'StudioLens',
     input: { mode: 'review', subjects: [], orchestration: willAuthor ? 'authored' : 'template' },
   })
@@ -274,7 +278,7 @@ async function runReviewViaScript(
     // there is no reviewer segment to settle). The findings themselves are persisted by the caller (Gate-B folds the
     // subjects; the agent tool returns them) — not here.
     const summary = `${review.confirmed.length} confirmed, ${review.refuted.length} dropped across ${review.subjects.length} lens(es)`
-    deps.cb.onToolEvent?.(reviewerRoleId, { type: 'sub_tool_done', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'StudioLens', isError: false, result: summary })
+    deps.cb.onToolEvent?.(reviewerRoleId, { type: 'sub_tool_done', toolUseId: panelId, parentToolId: panelParentId, name: 'StudioLens', isError: false, result: summary })
   }
   return review
 }
@@ -337,6 +341,7 @@ export async function runConsolidatedReview(
   // TOOL: the reviewer never surfaces as a 'verifier' segment (runReviewViaScript emits none). Set on the collab
   // driver's studio_lens; unset on solo (chooseVerifierRole authors invisibly there).
   reviewerOverride?: string,
+  panelParentId?: string, // solo passes the studio_lens tool-use id; collab leaves undefined → Gate-B default
 ): Promise<ConsolidatedReviewOutcome> {
   const reviewer = reviewerOverride ?? chooseVerifierRole(implementers)
   const implSet = new Set(Array.isArray(implementers) ? implementers : [implementers])
@@ -347,7 +352,7 @@ export async function runConsolidatedReview(
     return { ok: false, message: `studio_lens (review) needs at least one configured expert independent of the implementer(s) to act as the reviewer, but none is bound. Configure another expert (e.g. ${displayName('analyst')}/${displayName('frontend')}/${displayName('engineer')}) and retry.`, confirmed: [], refuted: [], produced: [], report: null }
   }
   const paths = target.changed
-  const run = await runReviewViaScript(opts, reviewer, target, baseRef, 'thorough', ulid())
+  const run = await runReviewViaScript(opts, reviewer, target, baseRef, 'thorough', ulid(), panelParentId ?? 'coordinator-gate-b')
 
   if (run.failed) {
     return { ok: false, message: 'studio_lens could not complete: the review script failed to execute (likely a reviewer-endpoint or sandbox fault). Retry, or review the target manually — this is NOT an all-clear.', reviewer, confirmed: [], refuted: [], produced: [], report: null }
@@ -412,18 +417,18 @@ export async function runConsolidatedReview(
 // The reader itself (readOne / pinFileContent / READER_SYSTEM) is the CC away_summary shape and lives in
 // understand.ts (carved out so it unit-tests off-Electron — e2e/lens-understand.mts). This module just fans it out.
 
-export async function runLensUnderstand(callerRoleId: string, opts: RunStepOptions, paths: string[], stepId: string): Promise<{ map: string; parts: Array<{ path: string; summary: string }> }> {
+export async function runLensUnderstand(callerRoleId: string, opts: RunStepOptions, paths: string[], stepId: string, panelParentId = 'coordinator-gate-b'): Promise<{ map: string; parts: Array<{ path: string; summary: string }> }> {
   if (!lensEnabled() || paths.length === 0) return { map: '', parts: [] }
   try {
     const deps = makeLensDeps(opts)
     const panelId = panelCardId(stepId)
-    deps.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_start', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'StudioLens', input: { mode: 'understand', subjects: paths } })
+    deps.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_start', toolUseId: panelId, parentToolId: panelParentId, name: 'StudioLens', input: { mode: 'understand', subjects: paths } })
     const parts: Array<{ path: string; summary: string }> = []
     try {
       const results = await parallelExamineLimited(paths.map((path, i) => () => readOne(deps, callerRoleId, panelId, stepId, path, i, opts.cwd)))
       for (const r of results) if (r) parts.push(r)
     } finally {
-      deps.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_done', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'StudioLens', isError: false, result: `read ${parts.length} file(s)` })
+      deps.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_done', toolUseId: panelId, parentToolId: panelParentId, name: 'StudioLens', isError: false, result: `read ${parts.length} file(s)` })
     }
     const map = parts.map((p) => `### ${p.path}\n${p.summary}`).join('\n\n')
     return { map, parts }
@@ -489,7 +494,7 @@ export function createLensHandle(deps: LensHandleDeps): PanelHandle {
       }
 
       if (mode === 'understand') {
-        const { map, parts } = await runLensUnderstand(deps.callerRoleId, opts, paths, ulid())
+        const { map, parts } = await runLensUnderstand(deps.callerRoleId, opts, paths, ulid(), input.parentToolId)
         if (parts.length === 0) {
           return { ok: false, message: 'studio_lens (understand) could not read any of the target file(s) — check the paths, or read them directly.' }
         }
@@ -510,6 +515,7 @@ export function createLensHandle(deps: LensHandleDeps): PanelHandle {
         deps.callerRoleId,
         base || 'HEAD',
         deps.reviewerOverride, // collab driver → the driver authors the fan-out; undefined on solo → independent author
+        input.parentToolId, // solo → root the panel card under the studio_lens tool card; collab → undefined (Gate-B default)
       )
       return {
         ok: outcome.ok,

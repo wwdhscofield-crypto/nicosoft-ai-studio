@@ -96,19 +96,19 @@ export const studioLensTool = buildTool<typeof inputSchema, StudioLensResult>({
         }
       }
     }
-    // ASYNC drive — COLLAB ONLY (gate on ctx.collab, NOT just ctx.async). In a collaboration the driver launches the
-    // panel as a BACKGROUND handle, reports it started, KEEPS COORDINATING with teammates, and await_async-es the
-    // handle later (the scheduler parks/wakes it). That non-blocking shape only pays off when there IS other work to
-    // do meanwhile — i.e. a collab. A SOLO direct-chat run has no concurrent work: the driver launches the review and
-    // then has nothing to do but wait for the verdict. Going async there just ends the turn (parkSolo) with the panel
-    // DETACHED — its reviewers run AFTER the turn closed, so their activity forwards to a dead onStream (invisible in
-    // chat), the review can take minutes with no progress shown, and the run's persisted "final reply" freezes
-    // mid-task as "review running in background". So a SOLO run does the review SYNCHRONOUSLY (below): it blocks the
-    // turn, the panel streams its reviewers into the LIVE turn (visible via the active cb.onStream), and the driver
-    // continues to completion once the verdict lands. 批A's delta-stall watchdog still bounds the collab handle (N1).
-    if (ctx.async && ctx.collab) {
+    // ASYNC drive (dogfood2 P1/P3/P5 + C3): when an async registry is present — a collaboration OR a solo direct-chat
+    // (agent.service wires a conv-level registry) — launch the panel as a BACKGROUND handle instead of blocking, and
+    // await_async it to pick up the verdict. The agent DECIDES for itself when to suspend; a long lens review is
+    // exactly the case where it should park, not block. Collab parks via the scheduler; solo parks via parkSolo and
+    // the session-bus resumes it on completion. The panel card is rooted under the DRIVER's own studio_lens tool card
+    // on solo (ctx.currentToolUseId) so it groups into the Tasks-panel LensCard WITHOUT a Gate-B parent; collab passes
+    // undefined → the lens keeps its Gate-B parent (its sub-tool stream is roleId-tagged via the coordinator IPC).
+    // 批A's delta-stall watchdog bounds the handle so it always settles (no indefinite park, N1).
+    if (ctx.async) {
       const label = `${mode} panel over ${input.paths.length} path(s): ${input.paths.slice(0, 3).join(', ')}${input.paths.length > 3 ? ' …' : ''}`
-      const handle = ctx.async.launch('lens', label, () => ctx.panel!.examine({ paths: input.paths, mode }))
+      // solo → root the panel card under this studio_lens tool card so it groups without Gate-B; collab → Gate-B default.
+      const parentToolId = ctx.collab ? undefined : ctx.currentToolUseId
+      const handle = ctx.async.launch('lens', label, () => ctx.panel!.examine({ paths: input.paths, mode, parentToolId }))
       return {
         data: {
           ok: true,
