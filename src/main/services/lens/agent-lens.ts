@@ -363,10 +363,17 @@ export async function runConsolidatedReview(
   owner: string,
   baseRef = 'HEAD',
   persist = true,
+  // Collab team self-check (collab-review-flow §A): the elected DRIVER reviews its team's OWN combined change, so
+  // the panel's reviewer is the driver — NOT chooseVerifierRole's independent pick. Set only on the collab driver's
+  // studio_lens; unset everywhere else (solo studio_lens keeps its independent reviewer). Independence for a
+  // collaboration comes LATER, from Danny's single Turing final audit in runCollabReview — not from this panel.
+  reviewerOverride?: string,
 ): Promise<ConsolidatedReviewOutcome> {
-  const reviewer = chooseVerifierRole(implementers)
+  const reviewer = reviewerOverride ?? chooseVerifierRole(implementers)
   const implSet = new Set(Array.isArray(implementers) ? implementers : [implementers])
-  if (implSet.has(reviewer) || !rolesService.getBinding(reviewer)?.endpointId) {
+  // Independence guard applies ONLY to an auto-picked reviewer. A self-check NAMES its reviewer (the driver, who IS
+  // an implementer by design — so this guard would wrongly reject it); its independence is deferred to the final audit.
+  if (!reviewerOverride && (implSet.has(reviewer) || !rolesService.getBinding(reviewer)?.endpointId)) {
     return { ok: false, message: `studio_lens (review) needs at least one configured expert independent of the implementer(s) to act as the reviewer, but none is bound. Configure another expert (e.g. ${displayName('analyst')}/${displayName('frontend')}/${displayName('engineer')}) and retry.`, confirmed: [], refuted: [], produced: [], report: null }
   }
   const paths = target.changed
@@ -474,6 +481,11 @@ export interface LensHandleDeps {
   onReviewerStepStart?: (roleId: string, dispatch: string[] | null, model: string) => void
   onReviewerStepDone?: (roleId: string, text: string) => void
   onReviewerActive?: (roleId: string, active: boolean) => void
+  // Collab self-check (collab-review-flow §A): when set, the review uses THIS role as the reviewer (the elected
+  // driver reviewing the team's own change) instead of chooseVerifierRole's independent pick. Set only on the collab
+  // path (agent-collab.ts → the driver); unset on solo (agent-dispatch.ts) so solo keeps its independent reviewer.
+  // The single independent audit for a collaboration is Danny's later Turing pass, not this in-team panel.
+  reviewerOverride?: string
 }
 
 export function createLensHandle(deps: LensHandleDeps): PanelHandle {
@@ -538,6 +550,8 @@ export function createLensHandle(deps: LensHandleDeps): PanelHandle {
         `Independent multi-perspective review requested. Review the following ${paths.length} file(s) for defects: ${paths.join(', ')}.`,
         deps.callerRoleId,
         base || 'HEAD',
+        true, // persist
+        deps.reviewerOverride, // collab self-check → the driver reviews; undefined on solo → independent reviewer
       )
       return {
         ok: outcome.ok,

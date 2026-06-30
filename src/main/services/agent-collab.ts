@@ -7,7 +7,7 @@ import { mkdir } from 'node:fs/promises'
 import { dataDir } from '../db/connection'
 import { ulid } from '../db/id'
 import { join } from 'node:path'
-import type { AgentContext, PermissionRequest, PermissionDecision, StudioLensResult } from '../agent/context'
+import type { AgentContext, PermissionRequest, PermissionDecision } from '../agent/context'
 import type { AgentLlmEvent } from '../agent/llm'
 import { MAIN_DISPATCH_STALL_TIMEOUT_MS, runAgent, type AgentEvent, type AgentResult, type CompactCarry } from '../agent/loop'
 import { promptTokensFromUsage } from '../agent/compact'
@@ -159,12 +159,15 @@ function buildCollabSystem(roleId: string, teammates: { id: string; name: string
     '4. ONLY after EVERY teammate has confirmed their COMPLETE part is done does the ELECTED driver run studio_lens ' +
     'ONCE over the WHOLE combined change (all files, review mode): launch it as an async handle, report it started ' +
     '(name the handle + what it covers, like driving a workflow), await_async it to SUSPEND until the verdict, report it.\n' +
-    '5. DISTRIBUTE the findings: each confirmed defect goes to the expert who OWNS that file / area; that owner fixes ' +
-    'it, then the driver RE-RUNS the consolidated review over the fixed tree — repeat until it comes back clean. A ' +
-    'build that still carries confirmed defects is NOT done.\n' +
-    "(The panel's internal reviewers are independent of all of you, so one elected driver doesn't compromise the " +
-    'review\'s independence. A closeout gate also routes any still-open confirmed defect to its owner and re-reviews ' +
-    'until clean — the backstop, not a licence to stop at "found".)' +
+    '5. studio_lens is your TEAM self-check: the driver IS the reviewer of your own combined change, and its finder ' +
+    'fan-out hunts defects from many independent angles — that multi-perspective hunt is its value, not who reviews. ' +
+    'DISTRIBUTE the findings: each confirmed defect goes to the expert who OWNS that file / area; that owner FIXES it ' +
+    '— ONE round. Then you are done. Do NOT re-run the review to "confirm" or loop until spotless: disposition each ' +
+    'finding once (fix a real defect at its ROOT; refute a false alarm in one line and leave correct code AS-IS).\n' +
+    '(This panel is the TEAM reviewing ITSELF — the driver is the reviewer, so it is NOT an independent audit and is ' +
+    'not meant to be. Independence comes LATER and SEPARATELY: once you ALL finish, the coordinator routes the ' +
+    'combined result to ONE reviewer independent of every collaborator for the single final audit, then closes with ' +
+    'that verdict in hand. So your job here is a thorough team self-check + one fix round — never a fix-until-spotless loop.)' +
     // C3 §6.7: tell the collab expert it can launch long ops async and suspend instead of blocking the turn.
     '\n\n## Long ops — launch async and suspend, don\'t block\n' +
     'Any long / event-driven op (a long check / analysis / probe script, a background task) you can run in the ' +
@@ -184,7 +187,7 @@ export async function runCollabSession(
   hooks: CollabHooks,
   signal: AbortSignal,
   nowMs: () => number,
-): Promise<{ results: Map<string, { text: string; reason: AgentResult['reason']; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number }>; panelResult?: StudioLensResult }> {
+): Promise<{ results: Map<string, { text: string; reason: AgentResult['reason']; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number }> }> {
   // One service registry per collaboration, shared by all its experts (Flynn starts a backend, Shuri
   // lists + connects). Tree-killed in the finally below when the session ends — no zombie ports survive.
   const registry = new ServiceRegistry()
@@ -342,7 +345,11 @@ export async function runCollabSession(
                 // verifier bubble. Presence of onReviewerStepStart also gates persistence (solo leaves it unset).
                 onReviewerStepStart: hooks.onReviewerStepStart,
                 onReviewerStepDone: hooks.onReviewerStepDone,
-                onReviewerActive: hooks.onExpertActive
+                onReviewerActive: hooks.onExpertActive,
+                // Collab team self-check (collab-review-flow §A): the elected driver reviews the team's OWN combined
+                // change → reviewer = the driver itself, not chooseVerifierRole's independent pick. Independence comes
+                // later from Danny's single Turing final audit (runCollabReview), not from this in-team panel.
+                reviewerOverride: x.roleId
               })
             : undefined,
           onSubAgentToolEvent: (ev) => hooks.onExpertStream(x.roleId, ev),
@@ -449,19 +456,14 @@ export async function runCollabSession(
     sessionBus.armDelivery(convId, (note, roleId) => session.injectExternal(note, roleId))
     sessionBus.armIdleCheck(convId, () => session.pokeSettle())
     const texts = await session.run(signal)
-    // 批D (dogfood2 P1): the elected driver ran the consolidated panel from its OWN turn (批C) → its verdict is the
-    // 'panel' handle in the shared async registry. Extract it BEFORE the finally dispose so the coordinator
-    // (runCollabReview) uses THIS result instead of self-running a second independent panel (批E). Last completed
-    // panel handle = the driver's consolidated review (absent if the team never elected/ran one → 批E falls back).
-    // Filter to REVIEW mode: studio_lens also launches kind:'lens' for understand-mode (a file-map, not a verdict);
-    // without the `info` guard an understand handle landing last would .pop() in and masquerade as the review verdict
-    // (the launch label is `${mode} panel over …` from studio-lens.ts, so review handles start with 'review ').
-    const panelHandle = asyncRegistry.list().filter((h) => h.kind === 'lens' && h.status === 'done' && h.info?.startsWith('review ')).pop()
-    const panelResult = panelHandle?.result as StudioLensResult | undefined
+    // collab-review-flow: the elected driver ran studio_lens as the TEAM's self-check from its OWN turn (reviewer =
+    // the driver), surfaced in chat as the driver's own tool call + handled by owners during the build. Its verdict
+    // is NOT threaded to the coordinator anymore — the post-collab pass is the ONE independent Turing final audit
+    // (runCollabReview), not a re-run seeded by this panel. So nothing to extract here.
     const results = new Map(
       [...texts].map(([roleId, text]): [string, { text: string; reason: AgentResult['reason']; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number }] => [roleId, { text, reason: reasonByRole.get(roleId) ?? 'completed', inTokens: inTokensByRole.get(roleId) ?? 0, contextTokens: contextByRole.get(roleId) ?? 0, cacheReadTokens: cacheReadByRole.get(roleId) ?? 0, outTokens: outTokensByRole.get(roleId) ?? 0 }])
     )
-    return { results, panelResult }
+    return { results }
   } finally {
     // Unarm the bus delivery + idle-check so a late injection can't try to wake a torn-down session, then dispose
     // any session-scoped Monitor / self-wakeup armed during this collaboration. A collaboration only reaches

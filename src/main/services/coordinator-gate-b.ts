@@ -8,15 +8,15 @@ import * as settingsService from './settings.service'
 import * as gateOutcomeRepo from '../repos/gate-outcome.repo'
 import { displayName } from '../agent/roles/prompts'
 import { deriveAcceptanceCriteria } from './coordinator-route'
-import { gitHead, changedPathsSince, diffSince } from './lens/diff'
-import type { WrittenFile, LensReviewDefect } from '../agent/context'
+import { gitHead, changedPathsSince } from './lens/diff'
+import type { WrittenFile } from '../agent/context'
 import { describeSnapshot, snapshotWorkspace } from './git-snapshot'
 import { runRoleStep, type RunStepOptions } from './coordinator-step'
 import { ulid } from '../db/id'
 // Studio Lens (§3): the multi-lens fan-out is now the YAML engine — Gate-B drives it via runLensReview and
 // consumes the raw folded SubjectFinding[]. The SHARED single FLOOR verifier body stays in examine/verifier —
 // the floor (runGatedRoleStep + closeFloor + the subject integrator re-verify) calls the SAME runVerifierStep.
-import { runLensReview, lensEnabled, runConsolidatedReview } from './lens/agent-lens'
+import { runLensReview, lensEnabled } from './lens/agent-lens'
 import { subjectEvidence, type SubjectFinding } from './lens/types'
 import { runVerifierStep, chooseVerifierRole } from './lens/verifier'
 
@@ -510,129 +510,4 @@ async function integrateSubjectClosures(
     }
   }
   return { outcomes, inputTokens, outputTokens }
-}
-
-// =============================================================================================================
-// Collaborate closure loop — the "fix-until-clean before deliver" gate collaborate was missing.
-// =============================================================================================================
-// The enforced fix→re-verify loop above (runGatedRoleStep + MAX_FIX_ROUNDS + 'unresolved'→halt) runs ONLY in
-// single/pipeline. Collaborate's one gate (runCollabReview) was REVIEW-AND-REPORT: a consolidated review that
-// surfaced confirmed defects just NOTED them and the run ended — the multi-role build could ship with known,
-// unfixed defects (studio_lens catches them, nobody closes them = a capability regression). This drives the SAME
-// closure machinery for a collaboration:
-//   • the AUTHORITY for "done" is a CLEAN re-review, never the implementer's self-report (decision #5);
-//   • confirmed defects are consolidated by owning implementer → ONE coherent fix dispatch per owner
-//     (runGateBFailFollowUp, the Gate-B fix handler), then the post-fix tree is RE-REVIEWED;
-//   • bounded by MAX_FIX_ROUNDS; residue surviving the cap surfaces an explicit 'unresolved' (→ human), never a
-//     silent ship.
-// Round 1 reuses the elected driver's own panel result (seedConfirmed) so the closeout does not re-run the review
-// the collaborator already drove; rounds 2+ run a fresh structured runConsolidatedReview over the post-fix tree.
-export interface CollabClosureResult {
-  outcome: 'clean' | 'fixed' | 'unresolved' | 'unverified'
-  note: string // closeout note for Danny's synthesis — the closing voice reflecting the FIXED / residual state
-  rounds: number // fix rounds actually run
-  reviewer?: string // the role that ACTUALLY produced the last fresh verdict — for honest attribution (review #4)
-  inputTokens: number
-  outputTokens: number
-}
-
-const formatDefects = (ds: LensReviewDefect[]): string =>
-  ds.map((d) => `- [${d.severity}] ${d.title}${d.file ? ` (${d.file}${d.line ? `:${d.line}` : ''})` : ''} — ${d.lens}`).join('\n')
-
-export async function runCollabClosureLoop(
-  implementers: string[],
-  opts: RunStepOptions,
-  originalPrompt: string,
-  baseRef: string,
-  seedConfirmed: LensReviewDefect[] | undefined,
-  signal?: AbortSignal
-): Promise<CollabClosureResult> {
-  const reviewer = chooseVerifierRole(implementers)
-  // The fix handler must be an IMPLEMENTER, never the independent reviewer. Precise per-file owner routing needs a
-  // file→author map the collaboration does not surface today (AgentResult carries no writtenFiles), so every
-  // confirmed defect routes to the lead implementer, who fixes them on the shared tree — exactly Gate-B's "one
-  // implementer closes its change" model. The group-by-owner shape is kept so per-file routing can slot in later.
-  const leadImplementer = implementers.find((r) => r !== reviewer) ?? implementers[0]
-  const ownerOf = (_d: LensReviewDefect): string => leadImplementer
-  const gate = { originalPrompt, acceptance: [] as string[] }
-  let inputTokens = 0
-  let outputTokens = 0
-  let round = 0
-  let fixedAny = false
-  let reviewerUsed: string | undefined // the role that produced the last FRESH verdict — honest attribution (review #4)
-  let confirmed: LensReviewDefect[] | undefined = seedConfirmed
-
-  for (;;) {
-    // review #6 (abort safety): a user abort during a PRIOR fix dispatch must STOP here — otherwise the re-review
-    // below runs under an aborted signal, comes back falsely clean (select-step returns null → zero lenses), and
-    // fabricates a 'fixed'/'clean' verdict over a half-applied fix. Throw so the turn aborts, never a fake all-clear.
-    if (signal?.aborted) throw new Error('collaboration aborted during the closure loop')
-    // Current confirmed set: round 1 reuses the driver's panel (seed); after any fix, re-review fresh.
-    if (confirmed === undefined) {
-      const changed = await changedPathsSince(opts.cwd, baseRef)
-      if (changed.length === 0) {
-        return { outcome: fixedAny ? 'fixed' : 'clean', note: 'No combined change to review.', rounds: round, reviewer: reviewerUsed, inputTokens, outputTokens }
-      }
-      const diff = await diffSince(opts.cwd, baseRef)
-      // Structured review = the authoritative gate. runConsolidatedReview elects its OWN independent reviewer
-      // (≠ every implementer) + adversarial skeptics, so a single driver never compromises independence.
-      const review = await runConsolidatedReview(opts, implementers, { changed, diff }, originalPrompt, leadImplementer, baseRef)
-      // review #6: if the abort landed DURING this review, its empty/clean result is an artifact of the cancelled
-      // run, not a real verdict — bail rather than trust it as an all-clear.
-      if (signal?.aborted) throw new Error('collaboration aborted during the closure re-review')
-      if (!review.ok) {
-        // No real verdict (no independent reviewer bound / infra fault) → NOT an all-clear: deliver unverified with
-        // a loud note, like single/pipeline's verifier-infra path. (Only reachable on the fresh path; a seed already
-        // proved a reviewer could run.)
-        return { outcome: 'unverified', note: review.message, rounds: round, reviewer: review.reviewer ?? reviewerUsed, inputTokens, outputTokens }
-      }
-      reviewerUsed = review.reviewer ?? reviewerUsed
-      confirmed = review.confirmed.map((f) => ({ lens: f.lens, title: f.title, file: f.file, line: f.line, severity: f.severity, mechanism: f.mechanism }))
-    }
-
-    if (confirmed.length === 0) {
-      return {
-        outcome: fixedAny ? 'fixed' : 'clean',
-        note: fixedAny
-          ? `Consolidated review CLEAN after ${round} fix round(s) — every confirmed defect was fixed and re-reviewed clean.`
-          : 'Consolidated independent review: no defect survived adversarial refutation across the selected risk lenses (clean).',
-        rounds: round,
-        reviewer: reviewerUsed,
-        inputTokens,
-        outputTokens
-      }
-    }
-
-    // Confirmed defects remain. At the round cap → surface them unresolved (→ human); never ship silently.
-    if (round >= MAX_FIX_ROUNDS) {
-      return {
-        outcome: 'unresolved',
-        note: `${confirmed.length} confirmed defect(s) STILL OPEN after ${round} fix round(s) (cap ${MAX_FIX_ROUNDS}) — NOT auto-resolved, a human must close them. Do NOT present this as done:\n${formatDefects(confirmed)}`,
-        rounds: round,
-        reviewer: reviewerUsed,
-        inputTokens,
-        outputTokens
-      }
-    }
-
-    // Fix round: consolidate confirmed defects by owning implementer → ONE coherent fix dispatch per owner.
-    round++
-    fixedAny = true
-    const byOwner = new Map<string, LensReviewDefect[]>()
-    for (const d of confirmed) {
-      const o = ownerOf(d)
-      const arr = byOwner.get(o) ?? []
-      arr.push(d)
-      byOwner.set(o, arr)
-    }
-    for (const [handlerRole, defects] of byOwner) {
-      const merged = defects
-        .map((d, i) => `Finding ${i + 1} — [${d.severity}] ${d.title}${d.file ? ` (${d.file}${d.line ? `:${d.line}` : ''})` : ''} · ${d.lens} dimension:\n${d.mechanism}`)
-        .join('\n\n———\n\n')
-      const fix = await runGateBFailFollowUp(handlerRole, opts, gate, '(consolidated collaboration review — fix the confirmed defects below)', merged, signal, handlerRole)
-      inputTokens += fix.inputTokens
-      outputTokens += fix.outputTokens
-    }
-    confirmed = undefined // force a fresh structured re-review of the post-fix tree next iteration
-  }
 }

@@ -36,11 +36,6 @@ export interface CoordinatorRunInput {
   // expert honors modeByRole[roleId] (bypass = full auto, skipping coordinator self-approval); unset →
   // 'default'. Without this the coordinator path silently forced every dispatched expert to 'default'.
   modeByRole?: Record<string, PermissionMode>
-  // C2 §5.2: the elected collaboration reviewer (independent of all collaborators), used by runCollabReview's
-  // consolidated panel. Optional — when unset (the default this round) runCollabReview auto-picks via
-  // chooseVerifierRole(roles). Reserved for a future kickoff-handshake election / renderer override; an invalid
-  // pick (a collaborator, or an unbound / non-agent role) is ignored and falls back to the auto-pick.
-  electedReviewerRoleId?: string
 }
 
 export interface CoordinatorCallbacks {

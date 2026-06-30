@@ -27,10 +27,8 @@ import { LlmError, type ChatMessage } from '../llm/types'
 import { COORDINATOR_FACILITATOR_PROMPT, DISPATCHABLE_ROLE_IDS, displayName, roleIdFromName } from '../agent/roles/prompts'
 import { detectE2EIntent, disabledRoleIds, route, routeNeedsPlan } from './coordinator-route'
 import { emitCoordinatorIntro, resetPipelineTodos, runRoleStep, type RunStepOptions } from './coordinator-step'
-import { runGatedRoleStep, runCollabClosureLoop } from './coordinator-gate-b'
+import { runGatedRoleStep } from './coordinator-gate-b'
 import { chooseVerifierRole, runVerifierStep } from './lens/verifier'
-import type { StudioLensResult } from '../agent/context'
-import { gitHead, changedPathsSince } from './lens/diff'
 import { AGENT_ROLE_IDS } from './agent-dispatch'
 import { submitGateC } from './coordinator-gate-c'
 import { runCollaboration } from './coordinator-collab'
@@ -50,30 +48,26 @@ import type { AgentResult } from '../agent/loop'
 export type { CoordinatorCallbacks, CoordinatorRunInput, RouteDecision } from './coordinator-types'
 export { route, parseRouteDecision } from './coordinator-route'
 
-// Collaborate independent review (closure-loop §1.1): the one verification gate collaborate has (Gate-B is
-// single/pipeline only). Dispatch the bound verifier role — independent of EVERY collaborator — to adversarially
-// run the project's own build/checks on the real diff the experts produced, surfaced as a "<verifier> · Verifier"
-// segment. Returns a verdict note for Danny's closeout, or null when it can't run (no independent role bound, no
-// project cwd, or an infra fault) — never throws into the turn.
+// Collaborate's ONE independent final audit (collab-review-flow — the original 8c7a984 "independent Verifier
+// segment"). The team already SELF-CHECKED during the build: the elected driver drove studio_lens with the team
+// itself as reviewer (reviewerOverride) and owners fixed their findings one round. Here a reviewer INDEPENDENT of
+// EVERY collaborator (chooseVerifierRole → analyst/Turing) adversarially runs the project's own build/checks on the
+// combined diff, ONCE, surfaced as a "<verifier> · Verifier" segment. Danny then closes WITH the verdict in hand —
+// a FAIL is reported honestly, never silently reworked (no auto-fix loop; the team's one fix round already ran).
+// Returns a verdict note for Danny's closeout (UNVERIFIED when it can't run) — never throws into the turn.
 async function runCollabReview(
   input: CoordinatorRunInput,
   roles: string[],
   fullChain: string[],
   outputs: { role: string; text: string }[],
   cb: CoordinatorCallbacks,
-  signal: AbortSignal,
-  panelResult?: StudioLensResult
+  signal: AbortSignal
 ): Promise<{ note: string; inputTokens: number; outputTokens: number }> {
   // When verification can't run, we still return a note — an UNVERIFIED marker — so the synthesis closes HONESTLY
-  // instead of presenting unchecked work as done (matching single/pipeline's explicit unverified beat). Returning
-  // null here was the bug: synthesis got no note and Danny rounded it up to a normal done.
+  // instead of presenting unchecked work as done (matching single/pipeline's explicit unverified beat).
   const UNVERIFIED = 'Independent verification did NOT run for this collaboration (no independent reviewer is bound besides the collaborators, or the verifier could not run). The combined result is UNVERIFIED — do not present it as verified/done; say plainly it was not independently checked.'
-  // dogfood2 P1: no single pre-chosen `reviewer` var anymore. The FLOOR picks its own independent reviewer
-  // (chooseVerifierRole, below); the PANEL is the elected COLLABORATOR's (panelResult, 批C/D) or a coordinator
-  // fallback — each attributes to its OWN real reviewer (N2: the old shared var misreported authorship). No early
-  // UNVERIFIED return: if neither floor nor panel produces a note, the merge falls back to UNVERIFIED at the end.
   const cwd = input.cwdByRole?.[roles[0]] // collaborators share the project dir; the verifier git-diffs + builds it
-  if (!cwd) return { note: UNVERIFIED, inputTokens: 0, outputTokens: 0 } // no project boundary → floor can't git diff / build
+  if (!cwd) return { note: UNVERIFIED, inputTokens: 0, outputTokens: 0 } // no project boundary → can't git diff / build
   const implementationText = outputs.map((o) => `### ${displayName(o.role)}\n${o.text}`).join('\n\n')
   const opts: RunStepOptions = {
     convId: input.convId,
@@ -87,74 +81,17 @@ async function runCollabReview(
     signal
   }
   try {
-    // 1. FLOOR (independent safety net): an independent reviewer (NEVER a collaborator) runs the project's own
-    //    build/typecheck on the combined delta. Attribution uses the SAME chooseVerifierRole the step picks
-    //    internally (N2 fix — the old shared `reviewer` var could misreport the verdict's author).
+    // The ONE independent final audit: a reviewer INDEPENDENT of every collaborator runs the project's own
+    // build/typecheck on the combined delta. Attribution uses the SAME chooseVerifierRole the step picks internally.
     const floorReviewer = chooseVerifierRole(roles)
     const v = await runVerifierStep(roles, opts, { originalPrompt: input.prompt, acceptance: [] }, implementationText, signal)
-    let floorNote = v.skipped || v.infraFailure
-      ? null // ran but produced no verdict (no independent verifier / infra fault) → contributes no note
+    const note = v.skipped || v.infraFailure
+      ? UNVERIFIED // ran but produced no verdict (no independent verifier / infra fault) → close honestly as unverified
       : `Independent reviewer ${displayName(floorReviewer)} ran the project's own checks on the combined result — VERDICT: ${v.passed ? 'PASS' : 'FAIL'}.\n${v.feedback.slice(0, 2000)}`
-
-    // 2. CONSOLIDATED PANEL + CLOSURE LOOP (decision #1 — "fix-until-clean before deliver"): the consolidated
-    //    review is no longer review-AND-REPORT. When it finds confirmed defects, runCollabClosureLoop dispatches a
-    //    consolidated fix to the owning implementer and RE-REVIEWS (bounded by MAX_FIX_ROUNDS), so a multi-role
-    //    build can no longer ship with defects studio_lens already caught (the regression this whole change fixes).
-    //    A driver panel WITH defects seeds round 1 (no re-run of the review the collaborator drove); a CLEAN driver
-    //    panel is advisory only (review #8 — its reviewer excluded just the driver, not every collaborator), so the
-    //    loop still runs one fresh review independent of EVERY implementer. Best-effort: any fault leaves the floor.
-    let panelNote: string | null = null
-    let closureIn = 0
-    let closureOut = 0
-    try {
-      const base = await gitHead(cwd)
-      const changed = base ? await changedPathsSince(cwd, base) : []
-      if (changed.length > 0) {
-        // Seeding rule (review #8 — independence): a driver result WITH defects always seeds round 1 (the fix path's
-        // round-2 re-review is full-independent anyway). A CLEAN driver panel is trustworthy ONLY if ITS reviewer was
-        // independent of EVERY collaborator — the driver's panel excludes just the driver, so its reviewer CAN be a
-        // co-author. If it was (reviewer ∈ roles), drop the seed so the loop runs ONE fresh review whose reviewer
-        // excludes every implementer before declaring the combined build clean; if it was already fully independent,
-        // trust the clean verdict (no redundant re-review). ok:false / understand / no panel → undefined → fresh review.
-        const driverReviewerIndependent = !!panelResult?.reviewer && !roles.includes(panelResult.reviewer)
-        const seed = panelResult?.ok && (panelResult.confirmed?.length || driverReviewerIndependent) ? panelResult.confirmed : undefined
-        const closure = await runCollabClosureLoop(roles, opts, input.prompt, base || 'HEAD', seed, signal)
-        closureIn = closure.inputTokens
-        closureOut = closure.outputTokens
-        // Attribute to the role that ACTUALLY produced the verdict (review #4): the loop's own fresh reviewer when it
-        // ran, else the driver's panel reviewer, else neutral — never a stale name the fresh review didn't use.
-        const who = closure.reviewer ? displayName(closure.reviewer) : panelResult?.reviewer ? displayName(panelResult.reviewer) : "the team's elected reviewer"
-        panelNote =
-          closure.outcome === 'unverified'
-            ? `Consolidated review could NOT run (${closure.note}) — treat the combined result as NOT deep-reviewed.`
-            : closure.outcome === 'unresolved'
-              ? `Consolidated review + closure did NOT fully close — ${closure.note}`
-              : closure.outcome === 'fixed'
-                ? `Consolidated review + closure (over the full combined change, ${who}): ${closure.note}`
-                : `Consolidated review (${who}): ${closure.note}`
-        // FLOOR RE-VERIFY (review #2): the floor build/typecheck verdict above was captured BEFORE the closure's fix
-        // rounds mutated the tree — stale if a fix landed (and the lens re-review does NOT run the build). Re-run the
-        // floor over the post-fix tree so the build gate covers the tree we actually deliver: a fix that broke the
-        // build is caught, not masked by a stale PASS. Only when fixes happened.
-        if (closure.rounds > 0) {
-          const reFloor = await runVerifierStep(roles, opts, { originalPrompt: input.prompt, acceptance: [] }, implementationText, signal)
-          if (!reFloor.skipped && !reFloor.infraFailure) {
-            floorNote = `Independent reviewer ${displayName(floorReviewer)} re-ran the project's own checks AFTER the ${closure.rounds} closure fix round(s) — VERDICT: ${reFloor.passed ? 'PASS' : 'FAIL'}.\n${reFloor.feedback.slice(0, 2000)}`
-          }
-        }
-      }
-    } catch (e) {
-      if (signal.aborted) throw e // review #6: a user abort mid-closure must abort the turn, never fall through to a note
-      console.warn('[coordinator] collab closure loop failed (floor verdict stands):', e instanceof Error ? e.message : e)
-    }
-
-    // 3. Merge floor + panel into ONE reviewNote for synthesis. Both empty (floor couldn't run AND panel produced
-    //    nothing usable) → UNVERIFIED, never a silent done.
-    const merged = [floorNote, panelNote].filter(Boolean).join('\n\n---\n\n')
-    return { note: merged || UNVERIFIED, inputTokens: closureIn, outputTokens: closureOut }
+    return { note, inputTokens: v.inputTokens, outputTokens: v.outputTokens }
   } catch (e) {
-    if (signal.aborted) throw e // review #6: propagate a user abort, don't bury it as a UNVERIFIED done
-    console.warn('[coordinator] collab independent review failed (synthesis flagged UNVERIFIED):', e instanceof Error ? e.message : e)
+    if (signal.aborted) throw e // a user abort must propagate, don't bury it as a UNVERIFIED done
+    console.warn('[coordinator] collab independent final audit failed (synthesis flagged UNVERIFIED):', e instanceof Error ? e.message : e)
     return { note: UNVERIFIED, inputTokens: 0, outputTokens: 0 }
   }
 }
@@ -389,17 +326,18 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
     // reused when the chat was opened inside one), with a task per collaborating expert + the conversation
     // linked. Each expert that produces output marks its task done; the phase advances to done when all are.
     const project = await collabProject.ensureProjectForCollab(input.convId, input.prompt, decision.roles, input.cwdByRole)
-    const { outputs, reasons, panelResult } = await runCollaboration(input, decision.roles, fullChain, cb, signal, project)
+    const { outputs, reasons } = await runCollaboration(input, decision.roles, fullChain, cb, signal, project)
     if (signal.aborted) throw new LlmError('network', 'aborted mid-collaboration')
     if (outputs.length === 0) throw new LlmError('upstream', 'collaboration produced no output')
     collabProject.completeCollabTasks(project, outputs.map((o) => o.role))
-    // Independent review (closure-loop §1.1): collaborate skips Gate-B, so the experts' combined build would
-    // ship UNVERIFIED. Restore the independent reviewer — dispatch the bound verifier role (independent of EVERY
-    // collaborator → analyst/Turing by default) to adversarially run the project's own checks on the real diff
-    // the experts produced. It streams as its own "<verifier> · Verifier" segment; Danny then closes WITH the
-    // verdict in hand (honest closeout — a FAIL is reported, never silently reworked; no auto-fix loop, lighter
-    // than full Gate-B). Best-effort: no independent role bound / no project cwd / infra fault → skip cleanly.
-    const review = await runCollabReview(input, decision.roles, fullChain, outputs, cb, signal, panelResult)
+    // Independent FINAL audit (collab-review-flow): the team already self-checked during the build (the elected
+    // driver drove studio_lens with the team as reviewer, owners fixed one round). Collaborate skips Gate-B, so the
+    // combined build still needs ONE independent pass — dispatch the bound verifier role (independent of EVERY
+    // collaborator → analyst/Turing by default) to adversarially run the project's own checks on the real diff. It
+    // streams as its own "<verifier> · Verifier" segment; Danny then closes WITH the verdict in hand (honest
+    // closeout — a FAIL is reported, never silently reworked; no auto-fix loop). Best-effort: no independent role
+    // bound / no project cwd / infra fault → skip cleanly.
+    const review = await runCollabReview(input, decision.roles, fullChain, outputs, cb, signal)
     const synthInput = buildParallelSynthesisInput(input.prompt, outputs, review.note)
     const synth = await runRoleStep({
       convId: input.convId,
