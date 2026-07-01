@@ -23,7 +23,7 @@ import { runScript, parseScript } from './script-executor'
 import { displayName } from '../../agent/roles/prompts'
 import { canAuthorScript, CODE_REVIEW_TEMPLATE, codeReviewArgs, buildAuthorPrompt } from './code-review'
 import { normalizeReviewResult, cardPhase, parseStructured, describeTarget, type ScriptReview } from './normalize'
-import { panelCardId, subjectCardId, readerCardId, type LensDeps, type AgentSpec } from './contracts'
+import { panelCardId, subjectCardId, readerCardId, LENS_PANEL_ROOT, type LensDeps, type AgentSpec } from './contracts'
 import { buildChangedSet, gatherReviewDiff, gitHead } from './diff'
 import { endpointWithKey } from '../llm-once'
 import { parallelExamineLimited, withLensSlot } from './pool'
@@ -236,7 +236,7 @@ async function runReviewViaScript(
   deps.cb.onToolEvent?.(reviewerRoleId, {
     type: 'sub_tool_start',
     toolUseId: panelId,
-    parentToolId: 'coordinator-gate-b',
+    parentToolId: LENS_PANEL_ROOT,
     name: 'StudioLens',
     input: { mode: 'review', subjects: [], orchestration: willAuthor ? 'authored' : 'template' },
   })
@@ -274,7 +274,7 @@ async function runReviewViaScript(
     // there is no reviewer segment to settle). The findings themselves are persisted by the caller (Gate-B folds the
     // subjects; the agent tool returns them) — not here.
     const summary = `${review.confirmed.length} confirmed, ${review.refuted.length} dropped across ${review.subjects.length} lens(es)`
-    deps.cb.onToolEvent?.(reviewerRoleId, { type: 'sub_tool_done', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'StudioLens', isError: false, result: summary })
+    deps.cb.onToolEvent?.(reviewerRoleId, { type: 'sub_tool_done', toolUseId: panelId, parentToolId: LENS_PANEL_ROOT, name: 'StudioLens', isError: false, result: summary })
   }
   return review
 }
@@ -417,13 +417,13 @@ export async function runLensUnderstand(callerRoleId: string, opts: RunStepOptio
   try {
     const deps = makeLensDeps(opts)
     const panelId = panelCardId(stepId)
-    deps.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_start', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'StudioLens', input: { mode: 'understand', subjects: paths } })
+    deps.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_start', toolUseId: panelId, parentToolId: LENS_PANEL_ROOT, name: 'StudioLens', input: { mode: 'understand', subjects: paths } })
     const parts: Array<{ path: string; summary: string }> = []
     try {
       const results = await parallelExamineLimited(paths.map((path, i) => () => readOne(deps, callerRoleId, panelId, stepId, path, i, opts.cwd)))
       for (const r of results) if (r) parts.push(r)
     } finally {
-      deps.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_done', toolUseId: panelId, parentToolId: 'coordinator-gate-b', name: 'StudioLens', isError: false, result: `read ${parts.length} file(s)` })
+      deps.cb.onToolEvent?.(callerRoleId, { type: 'sub_tool_done', toolUseId: panelId, parentToolId: LENS_PANEL_ROOT, name: 'StudioLens', isError: false, result: `read ${parts.length} file(s)` })
     }
     const map = parts.map((p) => `### ${p.path}\n${p.summary}`).join('\n\n')
     return { map, parts }

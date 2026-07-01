@@ -26,3 +26,9 @@ export function roleIdFromName(name: string): string {
   for (const [id, n] of Object.entries(ROLE_DISPLAY_NAMES)) if (id === lower || n.toLowerCase() === lower) return id
   return lower
 }
+
+// Roles that run a FULL agent loop (tools + multi-turn transcript) when dispatched — the SINGLE source of
+// truth, imported by BOTH main (agent-tools re-exports it; agent-dispatch re-exports that) and renderer
+// (chat-helpers keys agent:run vs chat:send on it). Was two literals hand-synced across the IPC boundary.
+// coordinator is never a member (it never dispatches to itself). Environment-neutral: no node, no DOM.
+export const AGENT_ROLE_IDS: ReadonlySet<string> = new Set(['engineer', 'frontend', 'generalist', 'analyst', 'scheduler', 'translator', 'editor', 'designer'])

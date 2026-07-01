@@ -18,10 +18,11 @@ import { resolveDepth } from '../llm/thinking'
 import type { ChatMessage } from '../llm/types'
 import { COORDINATOR_ROUTER_PROMPT, COORDINATOR_INVESTIGATION_PROMPT, DISPATCHABLE_ROLE_IDS, displayName, roleIdFromName } from '../agent/roles/prompts'
 import { COORDINATOR_INVESTIGATION_TOOLS } from './agent-tools'
+import { runRoleStep } from './coordinator-step'
 import * as projectMap from './project-map.service'
 import { protocolFamily } from '@shared/thinking'
 import { CODE_FILE_RE } from './lang-registry'
-import type { RouteDecision } from './coordinator-types'
+import type { RouteDecision, CoordinatorCallbacks } from './coordinator-types'
 
 const ROUTER_HISTORY_LIMIT = 4 // last N messages handed to the router for context
 const PROJECT_MAP_MAX_CHARS = 4000 // bound on Danny's remembered project-shape summary (prompt asks ≤1200; headroom)
@@ -34,7 +35,7 @@ export interface RouteContext {
   convId?: string
 }
 
-export async function route(userInput: string, history: convRepo.MessageRow[], ctx: RouteContext = {}, signal?: AbortSignal): Promise<RouteDecision> {
+export async function route(userInput: string, history: convRepo.MessageRow[], ctx: RouteContext = {}, signal?: AbortSignal, cb?: CoordinatorCallbacks): Promise<RouteDecision> {
   const disabled = disabledRoleIds()
   const enabled = DISPATCHABLE_ROLE_IDS.filter((r) => !disabled.has(r))
   if (enabled.length === 0) return { mode: 'single', role: 'generalist', reason: 'no roles enabled', needsPlan: isNonTrivialTask(userInput) }
@@ -81,8 +82,10 @@ export async function route(userInput: string, history: convRepo.MessageRow[], c
   // task (investigate) AND there is a project to look at (cwd + convId). Chitchat / a clear single-specialist /
   // folder-free work all stay on the cheap decision — the tool-armed agent is never spun up for them (the
   // structural half of the anti-runaway guard). routeAsAgent never throws non-abort: it degrades to tier1.
-  if (tier1.investigate && ctx.cwd && ctx.convId) {
-    return await routeAsAgent(userInput, history, enabled, ctx.cwd, ctx.convId, tier1, signal)
+  // cb present = a real streamed turn (coordinator.service.run) → Danny's investigation can be VISIBLE via the
+  // shared step machinery. Without a cb, fall through to the tier-1 decision rather than run it silently (§3).
+  if (tier1.investigate && ctx.cwd && ctx.convId && cb) {
+    return await routeAsAgent(userInput, history, enabled, ctx.cwd, ctx.convId, tier1, cb, signal)
   }
   return tier1
 }
@@ -101,6 +104,7 @@ async function routeAsAgent(
   cwd: string,
   convId: string,
   tier1: RouteDecision,
+  cb: CoordinatorCallbacks,
   signal?: AbortSignal,
 ): Promise<RouteDecision> {
   try {
@@ -108,10 +112,8 @@ async function routeAsAgent(
     if (!binding?.endpointId || !binding.model) return tier1
     const ep = endpointRepo.getById(binding.endpointId)
     if (!ep || !ep.enabled) return tier1
-    const apiKey = keychain.getApiKey(binding.endpointId)
-    if (!apiKey) return tier1
-    const agentProtocol = protocolFamily(ep.protocol)
-    if (!agentProtocol) return tier1 // the investigation needs a tool-loop protocol; else keep the tier-1 decision
+    if (!keychain.getApiKey(binding.endpointId)) return tier1
+    if (!protocolFamily(ep.protocol)) return tier1 // the investigation needs a tool-loop protocol; else keep tier-1
 
     // PM recall (§4.3): the remembered map is the investigation's STARTING POINT — it never short-circuits the
     // agent, only calibrates how deep it digs (fresh map → confirm cheaply; stale/absent → investigate).
@@ -119,42 +121,36 @@ async function routeAsAgent(
     const brief = buildInvestigationBrief(userInput, history, enabled, recalled, tier1)
     const system = `${COORDINATOR_INVESTIGATION_PROMPT}\n\nCurrently available experts: ${enabled.map(displayName).join(', ')}. Route ONLY to these — others are disabled.`
 
-    const cb: agentService.AgentCallbacks = {
-      onStream: () => {}, // the routing investigation is internal groundwork — its turns are NOT streamed to the chat
-      onEvent: () => {},
-      // Danny's kit is read-only BY CONSTRUCTION (no write/exec tool exists in it), so nothing here ever needs
-      // approval; deny defensively — a routing investigation must never mutate. (Read-only tools auto-allow
-      // without consulting this, so it is a belt, not a gate.)
-      requestPermission: async () => ({ allow: false, message: 'The routing investigation is read-only.' }),
-    }
-
-    const res = await agentService.runDispatchedAgent(
-      {
-        convId,
-        roleId: 'coordinator',
-        prompt: brief,
-        cwd,
-        protocol: agentProtocol,
-        baseUrl: ep.baseUrl,
-        apiKey,
-        model: binding.model,
-        endpointId: binding.endpointId,
-        contextWindow: ep.availableModels.find((m) => m.slug === binding.model)?.contextLength || undefined,
-        cacheEnabled: ep.cacheEnabled,
-        includeHistory: false, // the brief is self-contained (it embeds the recent user turns + the request)
-        memories: [],
-        summary: null,
-        permissionMode: 'default',
-        systemPromptOverride: system,
-        toolset: COORDINATOR_INVESTIGATION_TOOLS,
-        lensStreamRoleId: 'coordinator', // lens Understand progress broadcasts as the coordinator's (Tasks panel)
-        thinking: resolveDepth(ep.protocol, binding.model, binding.thinkingDepth),
-      },
+    // §3 Danny visibility: the investigation runs through the SAME visible step machinery as every dispatched
+    // expert (runRoleStep → onStepStart / onDelta / onToolEvent / onStepDone), so his Glob/Read/Task work streams
+    // to the chat LIVE under roleId 'coordinator' — no longer the old silent no-op callbacks that made "Danny
+    // investigates" invisible. isDirect routes coordinator (not an AGENT_ROLE_ID) through the agent loop;
+    // systemPromptOverride swaps in the investigation persona; toolset is his verbatim read-only delegation kit;
+    // ephemeral keeps the turn OFF the dispatch transcript (visible ≠ persisted). His final message carries the
+    // JSON decision, parsed here — the visible prose is his human-readable investigation, the terminal JSON is
+    // machine-read (never surfaced as a decision). runRoleStep resolves thinking / contextWindow internally.
+    const res = await runRoleStep({
+      convId,
+      roleId: 'coordinator',
+      prompt: brief,
+      dispatch: null,
+      // segmentKind 'investigate' gives Danny's pre-routing investigation a first-class dispatched IDENTITY in the
+      // renderer WITHOUT faking a dispatch chain: it makes the segment foldable (a windowed step like every
+      // dispatched expert) and gives canMerge a clean boundary so the investigation's tools don't smear into the
+      // adjacent intro/direct segment. dispatch STAYS null — there's no routing to show yet (Danny is still
+      // deciding), so no DispatchBadge, and isSynthesis (coordinator + non-empty chain) stays false by construction.
+      segmentKind: 'investigate',
+      includeHistory: false, // the brief is self-contained (it embeds the recent user turns + the request)
+      isDirect: true,
+      cwd,
+      systemPromptOverride: system,
+      toolset: COORDINATOR_INVESTIGATION_TOOLS,
+      ephemeral: true,
       cb,
-      signal ?? new AbortController().signal,
-    )
-    // parseRouteDecision never fails hard — a degenerate final turn (prose, empty, an invalid/disabled role, or a
-    // non-agent role for collaborate) would silently collapse to a lenient single-generalist and DROP both the
+      signal: signal ?? new AbortController().signal,
+    })
+    // tryParseRouteDecision never fails hard — a degenerate final turn (prose, empty, an invalid/disabled role, or
+    // a non-agent role for collaborate) would silently collapse to a lenient single-generalist and DROP both the
     // richer tier-1 decision AND its plan gate. Danny DID investigate, so on a degenerate parse keep tier-1 (already
     // a better guess than a blind fallback); only a clean, validated decision overrides it.
     const decision = tryParseRouteDecision(res.text, enabled)
@@ -162,8 +158,7 @@ async function routeAsAgent(
       console.warn('[coordinator] routeAsAgent produced no clean decision — keeping the tier-1 decision')
       return tier1
     }
-    // PM remember (§4.4): persist the fresh shape keyed by cwd + current fingerprint so the next task on this
-    // project starts from it. Best-effort inside the service — never blocks or throws.
+    // PM remember (§4.4): persist the fresh shape keyed by cwd so the next task on this project starts from it.
     if (decision.projectMap) await projectMap.remember(cwd, decision.projectMap)
     console.log(`[coordinator] routeAsAgent ${JSON.stringify({ mode: decision.mode, role: (decision as { role?: string }).role, roles: (decision as { roles?: string[] }).roles, reason: decision.reason, needsPlan: decision.needsPlan })}`)
     return decision
@@ -227,7 +222,7 @@ function buildRouterMessages(
   // Reinforce the JSON contract on the LAST user message — OAuth gateways (nicosoft/*, with
   // identity injection) may overwrite system prompts, so the routing instructions MUST also live in a
   // user message to survive. (Lesson from Batch 2.)
-  const reinforcer = `\n\n---\nRoute the above. Respond with ONLY a JSON object — no markdown, no explanation, no leading text. Include needsPlan true ONLY when the task asks to WRITE or CHANGE code (implement / build / fix / refactor, producing a diff worth verifying), and false for read-only work (read / summarize / analyze / explain / answer) and trivial edits, no matter how many files it touches. The intro is a hand-off announcement to the USER: who handles it and the goal, one sentence — NEVER prescribe how they should work or stage it (no "first a plan, then implement" phasing; the expert owns their own process). Format — choose the ONE mode that fits:\n{"mode":"direct","reason":"<≤8 words>","needsPlan":false}\nor {"mode":"single","role":"<name>","intro":"<one sentence to the user>","reason":"<≤8 words>","needsPlan":<boolean>,"investigate":<boolean>}\nor {"mode":"pipeline","roles":["<name>","<name>"],"intro":"<one sentence>","reason":"<≤8 words>","needsPlan":<boolean>,"investigate":<boolean>} — SEQUENTIAL hand-off ONLY: one expert FULLY finishes and its output feeds the next (e.g. translate→debug).\nor {"mode":"collaborate","roles":["<name>","<name>"],"intro":"<one sentence>","reason":"<≤8 words>","needsPlan":<boolean>,"investigate":<boolean>} — CONCURRENT build: 2-3 builder experts (e.g. ${displayName('engineer')} backend + ${displayName('frontend')} frontend) build ONE shared project at the SAME TIME, coordinating live as they need each other's work.\nor {"mode":"parallel","roles":["<name>","<name>"],...} / {"mode":"council","roles":["<name>","<name>"],...} — independent takes / a debate on a QUESTION, not a build.\nPick the SMALLEST team that genuinely covers the task's real surfaces — one builder when a single domain covers it; add a second (pipeline / collaborate) only for a genuine second surface. Do NOT default to the biggest mode: over-sending wastes tokens and the team just sheds the extra expert. When the right team hinges on what the project actually contains (is there a frontend surface, or is it backend-only?), give your best guess and set "investigate": true — a closer look then confirms it. Use "collaborate" (never "pipeline") for CONCURRENT construction of one project; "pipeline" is only a genuine linear hand-off.`
+  const reinforcer = `\n\n---\nRoute the above. Respond with ONLY a JSON object — no markdown, no explanation, no leading text. Include needsPlan true ONLY when the task asks to WRITE or CHANGE code (implement / build / fix / refactor, producing a diff worth verifying), and false for read-only work (read / summarize / analyze / explain / answer) and trivial edits, no matter how many files it touches. The intro is a hand-off announcement to the USER: who handles it and the goal, one sentence — NEVER prescribe how they should work or stage it (no "first a plan, then implement" phasing; the expert owns their own process). Format — choose the ONE mode that fits:\n{"mode":"direct","reason":"<≤8 words>","needsPlan":false}\nor {"mode":"single","role":"<name>","intro":"<one sentence to the user>","reason":"<≤8 words>","needsPlan":<boolean>,"investigate":<boolean>}\nor {"mode":"pipeline","roles":["<name>","<name>"],"intro":"<one sentence>","reason":"<≤8 words>","needsPlan":<boolean>,"investigate":<boolean>} — SEQUENTIAL hand-off ONLY: one expert FULLY finishes and its output feeds the next (e.g. translate→debug).\nor {"mode":"collaborate","roles":["<name>","<name>"],"intro":"<one sentence>","reason":"<≤8 words>","needsPlan":<boolean>,"investigate":<boolean>} — CONCURRENT build: 2-3 builder experts (e.g. ${displayName('engineer')} backend + ${displayName('frontend')} frontend) build ONE shared project at the SAME TIME, coordinating live as they need each other's work.\nor {"mode":"parallel","roles":["<name>","<name>"],...} / {"mode":"council","roles":["<name>","<name>"],...} — independent takes / a debate on a QUESTION, not a build.\nPick the SMALLEST team that genuinely covers the task's real surfaces — one builder when a single domain covers it; add a second (pipeline / collaborate) only for a genuine second surface. Do NOT default to the biggest mode: over-sending wastes tokens and the team just sheds the extra expert. For any real build/change on an existing project (a folder that already holds real code), give your best-guess team and set "investigate": true — even when one specialist looks obvious — so a closer look at the current code aligns the change to how the project works and confirms the minimal team; set it false for chitchat, read-only work, a trivial edit, or a brand-new empty target. Use "collaborate" (never "pipeline") for CONCURRENT construction of one project; "pipeline" is only a genuine linear hand-off.`
   if (lastUserInHistory >= 0 && messages[lastUserInHistory].content === userInput) {
     messages[lastUserInHistory] = { ...messages[lastUserInHistory], content: userInput + reinforcer }
   } else {

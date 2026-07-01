@@ -112,11 +112,6 @@ export interface AgentRunInput {
   imageModel?: string
 }
 
-// Text streamed from the assistant as it generates (before the turn completes).
-export interface AgentTextDelta {
-  streamId: string
-  text: string
-}
 // 批C2b: a SOLO run resumed itself after a parked async op completed (solo-async). The backend started a fresh
 // streamId the renderer isn't subscribed to yet; this event tells the renderer to bind it to the conv (same as
 // agent.run's returned streamId for a user-initiated run) so the resumed turn streams into the conversation.
@@ -187,8 +182,8 @@ export interface ConvServices {
 // Live studio_lens panel progress for a conversation, broadcast conv-level (all windows, like conv:services) so
 // it survives the caller's turn-stream lifecycle: a SOLO lens runs async and the caller PARKS — its turn stream
 // finishes and any event through it would no-op, freezing the Tasks-panel LensCard at "creating". Lens progress
-// rides this convId-keyed channel instead (see ipc/lens-broadcast.ts). roleId: '' for solo (anchored to the
-// in-flight assistant turn); a driver's roleId for a future coordinator-driven lens.
+// rides this convId-keyed channel instead (see ipc/lens-broadcast.ts). roleId = the calling run's roleId (the
+// renderer anchors the card to that role's segment, same as every other stream event).
 export interface ConvLens {
   convId: string
   roleId: string
@@ -314,35 +309,9 @@ export interface AnalyticsSummary {
     examineImpact: { steps: number; caughtBeyondFloor: number; catches: number; falseReds: number }
   }
 }
-// A tool the model just started calling — streamed the moment the call begins, before the turn
-// finishes, so the renderer can show a running tool card immediately instead of waiting. The full
-// input (and thus the card's summary) arrives with the finished turn (AgentAssistant).
-export interface AgentToolStart {
-  streamId: string
-  id: string
-  name: string
-}
-// A finished assistant turn: its content blocks (text + tool_use + opaque server blocks).
-export interface AgentAssistant {
-  streamId: string
-  blocks: AgentBlockDto[]
-}
-// Context compaction surfaced to the UI: 'micro' = old tool-result bodies cleared; 'auto' = transcript summarized.
-export interface AgentCompaction {
-  streamId: string
-  kind: 'micro' | 'auto'
-  freedTokens: number
-}
-// The model's VISIBLE thinking streamed live (Anthropic extended thinking / OpenAI reasoning summary) → the UI's Thinking block.
-export interface AgentReasoning {
-  streamId: string
-  text: string
-}
-// Results of the tools the turn requested (one per tool_use, paired by toolUseId).
-export interface AgentToolResults {
-  streamId: string
-  results: AgentResultDto[]
-}
+// Sub-tool lifecycle BASE shapes. Every run's stream — solo included — rides the coordinator:* channels
+// now (the drain unification), so these are not wire events of their own anymore: they are the base the
+// roleId-tagged CoordinatorSubTool* payloads extend.
 export interface AgentSubToolStart {
   streamId: string
   parentToolId: string
@@ -390,29 +359,19 @@ export type AgentBlockDto =
   | { type: 'tool_use'; id: string; name: string; input: unknown }
   | { type: 'server'; serverType: string; query?: string; url?: string } // web_search_call: query (search) / url (open_page — a visited site)
   | { type: 'reasoning'; text: string } // the model's VISIBLE thinking (summary) — rendered as a distinct Thinking block, interleaved in emission order (before that turn's tools)
-// A permission request: the renderer shows an approval dialog and replies with the permissionId.
-export interface AgentPermissionRequest {
-  streamId: string
-  permissionId: string
-  toolName: string
-  input: unknown
-  reason?: string
-}
+// The renderer's approval answer (permission asks arrive on coordinator:permission for every mode; the
+// ANSWER returns on the owning handler's respond channel — agent:permission:respond for a solo stream).
 export interface AgentPermissionResponse {
   permissionId: string
   allow: boolean
   updatedInput?: Record<string, unknown>
 }
-// Tells the renderer a pending prompt was cancelled by a run/turn abort — drop the now-moot dialog.
-export interface AgentPermissionCancel {
-  streamId: string
-  permissionId: string
-}
-// AskUserQuestion: agent → renderer question, and the renderer's chosen answer back. questionId alone
-// locates the pending question (same pattern as permissionId).
+// AskUserQuestion (solo-only): agent → renderer question, and the renderer's chosen answer back. questionId
+// alone locates the pending question (same pattern as permissionId). roleId names the asking role in the dialog.
 export interface AgentQuestionRequest {
   streamId: string
   questionId: string
+  roleId: string
   question: string
   header?: string
   options: string[]
@@ -424,19 +383,6 @@ export interface AgentQuestionResponse {
 export interface AgentQuestionCancel {
   streamId: string
   questionId: string
-}
-export interface AgentDone {
-  streamId: string
-  reason: string
-  turns: number
-  inputTokens?: number // exact prompt context for this run (count_tokens), drives the composer readout
-  outputTokens?: number // real output tokens (upstream usage) — corrects the live chars/4 estimate at end
-  sentTokens?: number // cumulative billing input across the whole loop (total SENT) — billing/accounting only, never displayed (no settled per-turn readout)
-}
-export interface AgentErrorDto {
-  streamId: string
-  code: string
-  message: string
 }
 // A tool call rebuilt from a session transcript for history display (status + result already resolved).
 export interface ToolCallDto {
@@ -459,6 +405,13 @@ export interface RunTranscript {
   blocks: RunBlockDto[]
   servers: { serverType: string; query?: string; url?: string }[]
   citations: { url: string; title?: string }[]
+  // From the transcript 'run' line (absent on transcripts recorded before it carried them):
+  roleId?: string // which role ran it — attributes an ORPHAN run's rebuilt segment
+  ts?: number // the run's start wall-clock (ms) — positions an orphan segment among the persisted rows
+  // Present ⟺ this run persisted NO message row yet must rebuild as a visible segment on reload (Danny's
+  // ephemeral routing investigation). Runs without it that no row references (lens finders/skeptics,
+  // sub-agents) stay invisible on reload — by design.
+  ephemeralDisplay?: { segmentKind?: string }
 }
 
 // === Coordinator (router + multi-expert dispatch) ===
@@ -537,6 +490,16 @@ export interface CoordinatorErrorDto {
   code: string
   message: string
 }
+// Transient upstream failure mid-run → the renderer's "retrying (n/max)" banner. Rides the shared wire for
+// EVERY mode (a solo run's retries included; dispatched/collab experts retried invisibly before this).
+export interface CoordinatorRetry {
+  streamId: string
+  roleId: string
+  attempt: number
+  max: number
+  code: string
+  waitMs: number
+}
 // Agent-dispatched expert tool activity forwarded to the coordinator UI (doc 19 §11 phase 2). Same shapes
 // as the agent:* events but tagged with roleId — a coordinator turn can fan out to several experts, so the
 // renderer routes each tool card / approval to the right expert. Reuses AgentBlockDto / AgentResultDto.
@@ -551,7 +514,7 @@ export interface CoordinatorAssistant {
   roleId: string
   blocks: AgentBlockDto[]
 }
-// Context compaction surfaced per-expert to the UI (see AgentCompaction).
+// Context compaction surfaced per-expert to the UI: 'micro' = old tool-result bodies cleared; 'auto' = transcript summarized.
 export interface CoordinatorCompaction {
   streamId: string
   roleId: string

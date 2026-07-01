@@ -120,3 +120,17 @@ export async function remember(rawCwd: string | undefined, map: string, projectI
     console.warn('[coordinator] project-map remember failed (map not persisted this turn):', e instanceof Error ? e.message : e)
   }
 }
+
+// Format the remembered project map for injection into an executing agent's SYSTEM prompt. §4: project memory is
+// SYSTEM-WIDE — EVERY agent role + solo reads it (not just Danny's router), so an implementer orients fast without
+// re-scanning a known project. Danny's routeAsAgent stays the single WRITER (remember above); this is the shared
+// READ side, called by all agent entry points (agent.service / runDispatchedAgent / buildCollabSystem). Returns
+// undefined when there's nothing to inject (folder-free / no map yet / lookup failure) — degrades silently.
+export async function recallText(rawCwd: string | undefined): Promise<string | undefined> {
+  const recalled = await recall(rawCwd)
+  if (!recalled) return undefined
+  const note = recalled.fresh
+    ? 'still current'
+    : 'possibly STALE — the project changed since this was written; treat it as a rough starting point and trust the live code'
+  return `# PROJECT MAP (remembered shape of this project — ${note})\nA prior investigation recorded this project's structure. Use it to orient quickly; verify against the actual code when it matters.\n\n${recalled.map}`
+}

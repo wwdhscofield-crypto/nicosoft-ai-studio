@@ -26,7 +26,8 @@ import { resolveDepth } from '../llm/thinking'
 import { LlmError, type ChatMessage } from '../llm/types'
 import { COORDINATOR_FACILITATOR_PROMPT, DISPATCHABLE_ROLE_IDS, displayName, roleIdFromName } from '../agent/roles/prompts'
 import { detectE2EIntent, disabledRoleIds, route, routeNeedsPlan } from './coordinator-route'
-import { emitCoordinatorIntro, resetPipelineTodos, runRoleStep, type RunStepOptions } from './coordinator-step'
+import { emitCoordinatorIntro, runRoleStep, type RunStepOptions } from './coordinator-step'
+import { resetPipelineTodos } from './pipeline-todos'
 import { runGatedRoleStep, runGateBFailFollowUp } from './coordinator-gate-b'
 import { chooseVerifierRole, runVerifierStep } from './lens/verifier'
 import { AGENT_ROLE_IDS } from './agent-dispatch'
@@ -130,13 +131,13 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
   // L1 (coordinator dispatch §3): hand route() the coordinator's project folder + the conv id so it can
   // escalate a project-dependent build task to Danny's delegated investigation (routeAsAgent). Same cwd
   // Danny's DIRECT read-only kit uses below; unset (folder-free chat) → route stays on the tier-1 decision.
-  const decision = await route(input.prompt, history, { cwd: input.cwdByRole?.['coordinator'], convId: input.convId }, signal)
+  const decision = await route(input.prompt, history, { cwd: input.cwdByRole?.['coordinator'], convId: input.convId }, signal, cb)
   console.log(`[coordinator] route ${JSON.stringify({ mode: decision.mode, role: (decision as { role?: string }).role, roles: (decision as { roles?: string[] }).roles, reason: decision.reason, needsPlan: decision.needsPlan })}`)
   if (signal.aborted) throw new LlmError('network', 'aborted before dispatch')
 
   // Gate C (Block 2): the e2e signal is INDEPENDENT — it depends only on what the user explicitly asked
   // for, never on the routed roles (no decision.roles.includes('frontend')) and never on gateEnabled (Gate B).
-  decision.needsE2E = detectE2EIntent(input.prompt)
+  const needsE2E = detectE2EIntent(input.prompt)
 
   const gateEnabled = routeNeedsPlan(input.prompt, decision)
 
@@ -477,7 +478,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
   // turn's token totals. If the user explicitly asked for e2e, FIRE-AND-FORGET a verification task onto the
   // background queue and return IMMEDIATELY — we never await the queue. This lets `run()` return now so
   // `coordinator:done` fires and Danny ends his turn; the verdict arrives later via the queue's onDone.
-  if (decision.needsE2E) submitGateC(input, decision, cb)
+  if (needsE2E) submitGateC(input, decision, cb)
 
   return result
 }

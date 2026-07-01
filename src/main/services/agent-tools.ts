@@ -11,6 +11,7 @@ import { askUserQuestionTool } from '../agent/tools/ask-user-question'
 import { studioLensTool } from '../agent/tools/studio-lens'
 import { readTool } from '../agent/tools/read'
 import { globTool } from '../agent/tools/glob'
+import { grepTool } from '../agent/tools/grep'
 import { taskTool } from '../agent/tools/task'
 import { awaitAsyncTool } from '../agent/tools/await-async'
 import { startServiceTool, stopServiceTool, serviceLogsTool, listServicesTool } from '../agent/tools/service'
@@ -21,6 +22,7 @@ import { PREVIEW_TOOLS } from '../agent/tools/preview'
 import { monitorStartTool, monitorStopTool } from '../agent/tools/monitor'
 import { scheduleWakeupTool } from '../agent/tools/schedule-wakeup'
 import type { Tool } from '../agent/tool'
+import { AGENT_ROLE_IDS } from '@shared/roles'
 import * as settingsService from './settings.service'
 import { manager as mcpManager } from './mcp.service'
 import { manager as skillManager } from './skill.service'
@@ -31,14 +33,12 @@ export const ENGINEER_ROLE_ID = 'engineer'
 export const DEV_ROLES = new Set([ENGINEER_ROLE_ID, 'frontend'])
 export const DEV_PROMPT: Record<string, string> = { engineer: ENGINEER_SYSTEM_PROMPT, frontend: FRONTEND_SYSTEM_PROMPT }
 
-// Roles that run a full agent loop (tools + multi-turn transcript) when dispatched by the coordinator,
-// rather than a single llmChat turn. Same set the renderer's chat store keys agent:run vs chat:send on —
-// kept in sync across the IPC boundary by hand (main can't import the renderer copy, nor the reverse).
-// coordinator never dispatches to itself. translator + editor + designer run the full gemini agent loop —
-// Louise localizes whole files, Miranda reads/distills documents, Georgia generates images + reads briefs —
-// so a dispatched Louise/Miranda/Georgia needs tools (Georgia's ns_generate_image included). Lives here (not
-// agent-dispatch) so the kit builder can reference it without a cycle; agent-dispatch re-exports it.
-export const AGENT_ROLE_IDS = new Set(['engineer', 'frontend', 'generalist', 'analyst', 'scheduler', 'translator', 'editor', 'designer'])
+// Roles that run a full agent loop (tools + multi-turn transcript) when dispatched by the coordinator, rather
+// than a single llmChat turn. SINGLE SOURCE is @shared/roles.AGENT_ROLE_IDS (imported above) — previously a
+// literal hand-synced across the IPC boundary (this file + renderer chat-helpers); now both import the one copy.
+// Re-exported here so existing `agentService.AGENT_ROLE_IDS` callers (via agent-dispatch's re-export) and this
+// file's own kit builder (roleHasPanel/Monitor below) stay unchanged.
+export { AGENT_ROLE_IDS }
 
 // CORE tool subset per agent role (doc 16 §5). Engineer = full set; other roles get a tailored baseline.
 // Writes / exec / orchestration (Edit/MultiEdit/Bash/Task/TodoWrite) stay Engineer-only. WebSearch now works
@@ -97,7 +97,7 @@ export const SUBAGENT_TOOLS = [agentSpawnTool, agentSendTool, agentWaitTool, age
 // lens. Deliberately NO write/exec (Edit/Write/Bash) — Danny investigates + decides + delegates; he NEVER
 // implements. The read-only-by-construction kit IS the anti-runaway guard (delegation keeps his own context
 // lean), so no turn cap is imposed on the routing agent. Used verbatim via runDispatchedAgent's `toolset`.
-export const COORDINATOR_INVESTIGATION_TOOLS = [readTool, globTool, taskTool, studioLensTool, awaitAsyncTool] as unknown as Tool[]
+export const COORDINATOR_INVESTIGATION_TOOLS = [globTool, readTool, grepTool, taskTool, studioLensTool, awaitAsyncTool] as unknown as Tool[]
 
 export function toolsForAgentRole(roleId: string): Tool[] {
   let core =

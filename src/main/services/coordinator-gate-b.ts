@@ -17,6 +17,7 @@ import { ulid } from '../db/id'
 // consumes the raw folded SubjectFinding[]. The SHARED single FLOOR verifier body stays in examine/verifier —
 // the floor (runGatedRoleStep + closeFloor + the subject integrator re-verify) calls the SAME runVerifierStep.
 import { runLensReview, lensEnabled } from './lens/agent-lens'
+import { panelCardId, subjectCardId } from './lens/contracts'
 import { subjectEvidence, type SubjectFinding } from './lens/types'
 import { runVerifierStep, chooseVerifierRole } from './lens/verifier'
 
@@ -116,7 +117,7 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
   // onto the panel card (id=panel-<stepId>, the same id runStudioLens opened). Carries the structured
   // outcome / refute tally / fixed-by so the card row renders the final verdict + "→ fixed by X" without
   // re-parsing prose. A no-op when no panel ran (no card with that id exists → the orphan event is ignored).
-  const panelId = `panel-${stepId}`
+  const panelId = panelCardId(stepId)
   // closure-loop §3.2: the panel lives on the independent Verifier segment, so the final-state re-emit is
   // attributed to verifierRoleId (the renderer's card-anchored routing then lands it on the segment that owns
   // the panelId card, regardless of any later verifier / implementer-fix segments). chooseVerifierRole is the
@@ -125,7 +126,7 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
   const emitSubjectFinal = (lv: SubjectFinding, outcome: GateOutcome, handlerRoleId?: string): void => {
     opts.cb.onToolEvent?.(verifierRoleId, {
       type: 'sub_tool_done',
-      toolUseId: `gate-b-subject-${lv.key}-${stepId}`,
+      toolUseId: subjectCardId(lv.key, stepId),
       parentToolId: panelId,
       name: 'Subject',
       isError: outcome === 'unresolved' || outcome === 'unverified',

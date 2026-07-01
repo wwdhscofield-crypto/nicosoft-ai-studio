@@ -11,6 +11,7 @@ import * as rolesService from './roles.service'
 import * as agentService from './agent-collab'
 import * as convService from './conversation.service'
 import * as collabProject from './collab-project.service'
+import { forwardLlmEvent } from './agent-dispatch'
 import { resolveDepth } from '../llm/thinking'
 import { protocolFamily } from '@shared/thinking'
 import { isContentBlock } from '../agent/types'
@@ -74,49 +75,13 @@ export async function runCollaboration(
     // coordinator.handler broadcastConvTodos(convId, roleId, todos) + recordTodos.
     onTodos: (roleId, todos) => cb.onTodos?.(roleId, todos),
     onExpertActive: (roleId, active) => cb.onExpertActive?.(roleId, active),
-    // Forward the expert's fine-grained stream to the coordinator UI. EXHAUSTIVE over AgentLlmEvent
-    // (agent/llm.ts) on purpose: the tool/sub_tool lifecycle must reach the renderer the SAME way the
-    // solo path forwards it (agent.handler onStream), so a collab expert's studio_lens fan-out and its
-    // Task sub-agents render their sub-tool cards instead of being silently dropped at this seam. The
-    // `never` default turns a newly-added stream event type into a compile error here rather than a
-    // silent collab-only UI gap — that omission (sub_tool_* fell through the old if/else) WAS the bug.
-    onExpertStream: (roleId, ev) => {
-      switch (ev.type) {
-        case 'text':
-          cb.onDelta(roleId, ev.delta)
-          break
-        case 'reasoning':
-          cb.onReasoning?.(roleId, ev.delta)
-          break
-        case 'tool_use_start':
-          cb.onToolStart?.(roleId, ev.id, ev.name)
-          break
-        case 'sub_tool_start':
-        case 'sub_tool_done':
-        case 'sub_tool_delta':
-        case 'sub_tool_progress':
-          // Canonical sub-tool sink: coordinator.handler onToolEvent → coordinator:sub-tool:* → renderer
-          // PanelCard (anchored by roleId) — the SAME path the coordinator's own Gate-B panel uses.
-          // onExpertEvent routes AgentEvent tool activity here; the fine-grained sub_tool lifecycle
-          // (AgentLlmEvent, from a studio_lens fan-out or a Task sub-agent) must too.
-          cb.onToolEvent?.(roleId, ev)
-          break
-        case 'usage':
-          cb.onUsage?.(roleId, ev.inputTokens, ev.outputTokens, ev.cachedTokens)
-          break
-        case 'turn-final':
-          cb.onTurnFinalUsage?.(ev.usage)
-          break
-        case 'tool_use_input':
-          // Streaming tool-call JSON — not surfaced live (matches the solo path, agent.handler onStream,
-          // which also drops it). Explicit case so it stays a decision, not a silent omission.
-          break
-        default: {
-          const _exhaustive: never = ev
-          void _exhaustive
-        }
-      }
-    },
+    // Forward the expert's fine-grained stream to the coordinator UI through the ONE shared per-verb fan-out
+    // (agent-dispatch.forwardLlmEvent) — the coordinator callbacks ARE a RunStreamSink structurally, so the
+    // dispatch path, the solo path (agent.handler), and this seam all speak the identical mapping. The old
+    // hand-copied switch here is where sub_tool_* once fell through and collab-only sub-tool cards vanished.
+    onExpertStream: (roleId, ev) => forwardLlmEvent(cb, roleId, ev),
+    // An expert's tool image (already persisted + redacted by the shared drain) → surface live.
+    onToolImage: (_roleId, att) => cb.onToolImage?.(att),
     onExpertEvent: (roleId, ev) => {
       // Tool-card timeline (doc 19): persist each expert tool call onto the project as it streams, so the
       // Workbench lane shows a live READ/WRITE/BASH timeline. assistant events carry the tool_use blocks.
@@ -139,14 +104,16 @@ export async function runCollaboration(
 
   const outputs: { role: string; text: string; reason: AgentResult['reason'] }[] = []
   const reasons: AgentResult['reason'][] = [] // every expert's terminal reason, independent of the text gate
-  for (const [roleId, { text, reason, inTokens, contextTokens, cacheReadTokens, outTokens }] of results) {
+  for (const [roleId, { text, reason, inTokens, contextTokens, cacheReadTokens, outTokens, runId, attachments }] of results) {
     reasons.push(reason) // capture even an empty-text silent failure (incomplete / thrash_stop) so it bubbles up
-    if (text) {
+    if (text || attachments.length) {
       convService.append(input.convId, {
         author: 'expert',
         expertId: roleId,
         model: models.get(roleId) ?? '',
         content: text,
+        attachments, // tool-generated images (nsai-media:// refs) — reopening re-reads them from the DB
+        runId, // keys the reload rebuild: openConversation reattaches this expert's tool cards from the session transcript
         inputTokens: contextTokens, // DISPLAY: current context size (last turn, overwrite — drives the "/ window" meter)
         cacheReadTokens, // cache-read share of that last turn — persistent "(+N cached)" note
         outputTokens: outTokens,

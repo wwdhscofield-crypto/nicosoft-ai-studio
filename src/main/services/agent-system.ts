@@ -108,6 +108,7 @@ export function buildAgentSystem(
   skillListing: string,
   cwd?: string,
   collab = false,
+  projectMap?: string,
 ): string {
   // toolless:false — this is the agent-loop path (the role really has a tool kit), so buildRolePrompt must
   // NOT prepend the "no tools to call" chat-mode note. TOOL_AWARENESS below tells non-dev roles they can act.
@@ -138,6 +139,10 @@ export function buildAgentSystem(
         conventions,
     )
   }
+  // PROJECT MAP (§4): the remembered shape of this project — a SYSTEM-WIDE memory every executing agent reads
+  // (solo + dispatched + collab), not just Danny's router. Danny's routeAsAgent is the single writer; here it's
+  // read-only orientation so an implementer doesn't re-scan a known project. Absent → nothing injected.
+  if (projectMap) parts.push(projectMap)
   if (memories.length) {
     parts.push(
       "What you've learned about this user (engineering preferences, project conventions):\n" +

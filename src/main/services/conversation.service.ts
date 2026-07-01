@@ -5,6 +5,7 @@ import * as convRepo from '../repos/conversation.repo'
 import * as titleService from './title.service'
 import * as workspaceTasks from './workspace-tasks.service'
 import { disposeSoloAsync } from './solo-async'
+import { resetPipelineTodos } from './pipeline-todos'
 import { monitorService } from './monitor.service'
 import { selfRhythmService } from './self-rhythm.service'
 import { hookRegistry } from '../agent/hooks/registry'
@@ -126,6 +127,7 @@ export function remove(convId: string): void {
   hookRegistry.clearConv(convId) // forget this conv's once-hook firing marks + stop its file watchers
   fileWatchManager.disposeForConv(convId)
   disposeSoloAsync(convId) // 批C2b: tree-kill any still-running launch_async op parked under this conv (its registry outlives runs)
+  resetPipelineTodos(convId) // drop this conv's pipeline-shared todo list (else the in-memory Map leaks the entry forever)
   removeConversationMedia(convId) // DB rows cascade via FK; the media files don't — drop them too
   // Agent runs persist transcript.jsonl + tool-results/ (and e2e screenshots) under
   // ~/.nsai/sessions/<convId>/ — outside both the DB and the media dir, so neither cleanup above touches

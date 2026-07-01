@@ -37,6 +37,13 @@ export interface LensDeps {
 
 // --- card-id conventions (faithful to the engine + examine/panel.ts so render + reload are byte-identical) --
 
+// Sentinel parent for the studio_lens panel card: intentionally NEVER matches a real top-level tool id, so the
+// renderer orphan-appends the panel as a TOP-LEVEL card (the Tasks panel only collects top-level StudioLens cards).
+// The byte VALUE is load-bearing — reload + the 87593cd→ee70aed regression: keep it, do NOT change to a real
+// tool id (a real id would make the renderer upsert-demote the panel to a sub-tool). Both solo + collab lens
+// callers root their panel under this one sentinel.
+export const LENS_PANEL_ROOT = 'coordinator-gate-b'
+
 export const panelCardId = (stepId: string): string => `panel-${stepId}`
 export const subjectCardId = (key: string, stepId: string): string => `gate-b-subject-${key}-${stepId}`
 export const synthCardId = (stepId: string): string => `panel-synth-${stepId}`

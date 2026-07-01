@@ -8,6 +8,7 @@ import * as rolesService from '../roles.service'
 import * as agentService from '../agent-dispatch'
 import { COORDINATOR_VERIFIER_PROMPT, subjectExaminePrompt, reverifyPrompt } from '../../agent/roles/prompts'
 import { runRoleStep, type RunStepOptions } from '../coordinator-step'
+import { LENS_PANEL_ROOT, subjectCardId } from './contracts'
 
 // Delta-stall watchdog threshold for panel SUBJECTS (finders/skeptics): 3 min of zero stream activity = a frozen
 // LLM stream (P4 — the dogfood hang: 11 finders streamed 696 deltas then froze, and examine/ has NO timeout
@@ -71,8 +72,8 @@ export async function runVerifierStep(implementerRoleId: string | string[], opts
   //   SUBJECT (subject present, not quiet) → a card-only PanelCard row, attributed to verifierRoleId so it folds
   //     into the Verifier segment (NOT the implementer segment); runRoleStep runs quiet (no segment of its own).
   //   QUIET SUBJECT (integrator re-verify) → no card (it re-emits onto the existing row via emitSubjectFinal).
-  const toolId = subject ? `gate-b-subject-${subject.key}-${subject.stepId}` : `gate-b-verifier-${Date.now()}`
-  const parentToolId = subject?.panelId ?? 'coordinator-gate-b'
+  const toolId = subject ? subjectCardId(subject.key, subject.stepId) : `gate-b-verifier-${Date.now()}`
+  const parentToolId = subject?.panelId ?? LENS_PANEL_ROOT
   const emitCard = Boolean(subject) && !subject?.quiet
   if (emitCard) opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_start', toolUseId: toolId, parentToolId, name: 'Subject', input: { verifierRoleId, subject: subject!.key, lens: subject!.key, focus: subject!.focus, phase: 'find', mode: 'review', why: subject!.why ?? '' } })
   // Persona + how-to-verify live in the system-prompt override; this user message carries only the case to

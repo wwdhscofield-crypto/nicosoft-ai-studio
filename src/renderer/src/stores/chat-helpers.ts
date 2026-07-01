@@ -1,15 +1,12 @@
 // Pure module-level helpers + constants for the chat store — standalone functions that capture no store
 // state. chat.ts re-exports the role predicates so consumers keep importing them from '@/stores/chat'.
 import type { ChatMessage, ToolCall } from './chat-types'
+import { AGENT_ROLE_IDS as AGENT_ROLES } from '@shared/roles'
 
-// Roles whose replies come from the agent (tool use). This version: Engineer only when the user talks to
-// it directly from the sidebar. When Coordinator pipelines into Engineer, the dispatch uses chat mode (no tools)
-// because the coordinator.service runs each step through llmChat. Coordinator itself routes through window.api.coordinator.
-// Roles whose replies run through the agent loop (tools). Engineer (Anthropic) + the OpenAI roles
-// (generalist/analyst/scheduler) via the OpenAI Responses adapter (doc 16). Gemini roles join later.
-// designer (Georgia) now runs the full Gemini agent loop too — ns_generate_image is one of her tools, so
-// generated images flow through the same tool→attachment path as any agent image (no separate loop).
-const AGENT_ROLES = new Set(['engineer', 'frontend', 'generalist', 'analyst', 'scheduler', 'translator', 'editor', 'designer'])
+// Roles whose replies run through the agent loop (tools) — in EVERY mode: a solo direct chat and a
+// coordinator-dispatched step both run the same full tool-using loop and stream over the same
+// coordinator:* wire (the drain unification); only pure custom/chat personas take the text-only chat path.
+// AGENT_ROLES = @shared/roles.AGENT_ROLE_IDS (imported above) — was a literal hand-synced with main's copy.
 // Roles that generate images (the ns_generate_image tool is in their kit). A UI predicate only: it drives
 // the composer's image-model picker + passing imageModel to the run. Execution always goes through the
 // agent loop (these roles are in AGENT_ROLES); the tool itself is gated server-side by the Tools setting.
@@ -195,3 +192,50 @@ export const applySubToolProgress = (message: ChatMessage, parentToolId: string,
 // Server blocks shown as user-facing status rows (web_search). reasoning / thinking blocks are
 // round-tripped for context only, not shown. Extend when adding server tools (code_interpreter, image gen).
 export const SHOWN_SERVER_BLOCKS = new Set(['web_search_call'])
+
+// — Segment-identity model (run grouping) ————————————————————————————————————————————————————————————
+// Pure data logic for how consecutive assistant messages merge into ONE rendered segment — kept here
+// (JSX-free) so the display-unification regression tests can import it directly; chat-segment re-exports.
+
+// True when this assistant message represents Coordinator's synthesis step — the final pipeline message
+// where Coordinator merges the experts' outputs. Detected by being expertId='coordinator' inside a dispatch chain.
+export function isSynthesis(msg: ChatMessage): boolean {
+  return msg.role === 'assistant' && (msg.expertId ?? null) === 'coordinator' && Array.isArray(msg.dispatch) && msg.dispatch.length > 0
+}
+
+// Two dispatch chains match when they're the same array contents in the same order. Used to decide
+// whether a message starts a fresh dispatch group (badge above) or continues an existing one.
+export function sameChain(a: string[] | null | undefined, b: string[] | null | undefined): boolean {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
+
+// Consecutive assistant messages merge into one segment when they share the expert, the segment kind, the
+// dispatch chain, and the synthesis-ness — the "one turn, one speaker" model. User messages never merge.
+// segmentKind is a merge condition so a Verifier step — and Danny's 'investigate' groundwork — each render
+// as their OWN segment, never smeared into an adjacent intro/direct/normal step of the same role (GAP-2).
+export function canMerge(a: ChatMessage, b: ChatMessage): boolean {
+  const chainsEqual = Array.isArray(a.dispatch) || Array.isArray(b.dispatch) ? sameChain(a.dispatch, b.dispatch) : true
+  return (
+    a.role === 'assistant' &&
+    b.role === 'assistant' &&
+    (a.expertId ?? null) === (b.expertId ?? null) &&
+    (a.segmentKind ?? null) === (b.segmentKind ?? null) &&
+    chainsEqual &&
+    isSynthesis(a) === isSynthesis(b)
+  )
+}
+
+// Claude runs ONE tool per turn, so an agent's work arrives as a RUN of separate assistant messages. The
+// whole consecutive merge-compatible run renders as ONE segment (speaker once).
+export function groupRuns(messages: ChatMessage[]): ChatMessage[][] {
+  const runs: ChatMessage[][] = []
+  for (const m of messages) {
+    const cur = runs[runs.length - 1]
+    if (cur && canMerge(cur[cur.length - 1], m)) cur.push(m)
+    else runs.push([m])
+  }
+  return runs
+}

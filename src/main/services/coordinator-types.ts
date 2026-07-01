@@ -19,10 +19,6 @@ interface RouteBase {
   // Project memory (§4): the concise project-shape summary Danny synthesized during the routing investigation.
   // Present only on a routeAsAgent decision; route() persists it (project-map.service.remember) keyed by cwd.
   projectMap?: string
-  // Gate C (Block 2): set true ONLY when the user explicitly asked for e2e verification. Independent of
-  // gateEnabled (Gate B) and of decision.roles — driven solely by detectE2EIntent(). Gates whether run()
-  // submits a background e2e verification task on the way out.
-  needsE2E?: boolean
 }
 
 // Discriminated on `mode`, so the dispatch branches narrow to the fields their constructor guaranteed
@@ -54,14 +50,18 @@ export interface CoordinatorCallbacks {
   onStepDone: (roleId: string, text: string, inputTokens: number, outputTokens?: number, sentTokens?: number) => void
   onUsage?: (roleId: string, inputTokens: number, outputTokens?: number, cachedTokens?: number) => void // live ↑in + ↓out per chunk (cachedTokens = cache-read share); roleId tags the dispatched step so the renderer isolates per-segment (coordinator path)
   onTurnFinalUsage?: (usage: { inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number }) => void
-  // Agent-dispatched experts (engineer/frontend/generalist/analyst/scheduler/translator/editor/designer) run a
-  // full tool-using loop — these surface its tool activity + approval prompts to the coordinator UI. Only the
-  // coordinator-self synthesis/direct turn is tool-less and never fires them, so they're optional.
+  // Every dispatched AGENT_ROLE_IDS expert — and Danny's own DIRECT/investigation turns — runs the full
+  // tool-using loop; these surface its tool activity + approval prompts to the coordinator UI. Only the
+  // coordinator-self synthesis merge beats are tool-less and never fire them, so they're optional.
   onToolStart?: (roleId: string, id: string, name: string) => void
   onToolEvent?: (roleId: string, ev: AgentEvent | AgentLlmEvent) => void
   // A dispatched expert's TodoWrite executed (mid-turn) — live push of the pipeline-shared list so the
   // workspace Tasks panel tracks progress without waiting for the step's turn to settle.
   onTodos?: (roleId: string, todos: { content: string; status: string }[]) => void
+  // A step's upstream request failed transiently and the loop is backing off before retrying — drives the
+  // renderer's "retrying (n/max)" banner. Tagged with roleId like every stream event. Before the drain
+  // unification only the solo path surfaced retries; a dispatched/collab expert retried in silence.
+  onRetry?: (roleId: string, info: { attempt: number; max: number; code: string; waitMs: number }) => void
   // A collab expert entered (active=true) / left (active=false) a turn batch — toggles its bubble's live
   // readout so a PARKED expert (waiting between turns) stops showing "Thinking…".
   onExpertActive?: (roleId: string, active: boolean) => void

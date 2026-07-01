@@ -9,12 +9,12 @@ import { readFile } from 'node:fs/promises'
 import { dataDir } from '../db/connection'
 import { join, resolve, sep } from 'node:path'
 import { ulid } from '../db/id'
-import type { PermissionDecision } from '../agent/context'
-import { isContentBlock, reasoningText } from '../agent/types'
 import * as coordinatorService from '../services/coordinator.service'
 import { LlmError } from '../llm/types'
 import { broadcastConvImage, broadcastConvTodos, broadcastUsage } from './usage-broadcast'
 import { StreamRegistry } from './stream-lifecycle'
+import { PermissionBridge } from './permission-bridge'
+import { serializeAssistantBlocks, serializeToolResults } from './agent-serialize'
 import * as workspaceTasks from '../services/workspace-tasks.service'
 import type {
   CoordinatorRunInputDto,
@@ -35,8 +35,6 @@ import type {
   VerifyProgressEvent,
   VerifyToolEvent,
   VerifyDoneEvent,
-  AgentBlockDto,
-  AgentResultDto,
   AgentPermissionResponse
 } from './contracts'
 
@@ -45,18 +43,13 @@ const streams = new StreamRegistry()
 export function abortAllCoordinatorRuns(): void {
   streams.abortAll()
 }
-// Dispatched-tool approvals (phase 2 still pop to the user — doc 19 §14), mirroring agent.handler: one
-// settle() per permissionId + the set of ids per run, so a terminal event can deny any prompt the
-// renderer never answered.
-const pendingPermissions = new Map<string, (d: PermissionDecision) => void>()
-const pendingByStream = new Map<string, Set<string>>()
+// Dispatched-tool approvals (phase 2 still pop to the user — doc 19 §14): the shared bridge owns the pending
+// Map + delete-guarded settle + terminal sweep (same machinery as agent.handler); this handler supplies the
+// coordinator:* emit callbacks (its request event carries roleId).
+const permissions = new PermissionBridge()
 
 function sweepStream(streamId: string): void {
-  const ids = pendingByStream.get(streamId)
-  if (ids) {
-    for (const id of ids) pendingPermissions.get(id)?.({ allow: false })
-    pendingByStream.delete(streamId)
-  }
+  permissions.sweep(streamId)
 }
 
 export function registerCoordinatorHandlers(): void {
@@ -64,7 +57,7 @@ export function registerCoordinatorHandlers(): void {
     const streamId = ulid()
     const sender = e.sender
     const { controller, send, finish } = streams.open(streamId, sender)
-    pendingByStream.set(streamId, new Set())
+    permissions.open(streamId)
 
     void coordinatorService
       .run(
@@ -128,65 +121,25 @@ export function registerCoordinatorHandlers(): void {
             } else if (evt.type === 'sub_tool_progress') {
               send('coordinator:sub-tool:progress', { streamId, roleId, ...evt })
             } else if (evt.type === 'assistant') {
-              const blocks: AgentBlockDto[] = []
-              for (const b of evt.message.content) {
-                if (!isContentBlock(b)) {
-                  // Reasoning/thinking server block → surface its VISIBLE summary as a distinct ordered block
-                  // (interleaved before this turn's tools, so it breaks the tool fold and shows what the model thought).
-                  const reasoning = reasoningText(b)
-                  if (reasoning) { blocks.push({ type: 'reasoning', text: reasoning }); continue }
-                  // web_search_call action: search → query, open_page → url (visited site). Surface both.
-                  const action = (b as { action?: { query?: string; url?: string } }).action
-                  const dto: AgentBlockDto = { type: 'server', serverType: b.type }
-                  if (action?.query) dto.query = action.query
-                  if (action?.url) dto.url = action.url
-                  blocks.push(dto)
-                } else if (b.type === 'text') {
-                  const tb = b as { text: string; citations?: { url: string; title?: string }[] }
-                  blocks.push(tb.citations?.length ? { type: 'text', text: tb.text, citations: tb.citations } : { type: 'text', text: tb.text })
-                } else if (b.type === 'tool_use') {
-                  blocks.push({ type: 'tool_use', id: b.id, name: b.name, input: b.input })
-                }
-              }
-              const ev: CoordinatorAssistant = { streamId, roleId, blocks }
+              const ev: CoordinatorAssistant = { streamId, roleId, blocks: serializeAssistantBlocks(evt.message.content) }
               send('coordinator:assistant', ev)
             } else if (evt.type === 'tool_results') {
-              const results: AgentResultDto[] = []
-              for (const b of evt.message.content) {
-                if (isContentBlock(b) && b.type === 'tool_result') {
-                  results.push({
-                    toolUseId: b.tool_use_id,
-                    content: typeof b.content === 'string' ? b.content : JSON.stringify(b.content),
-                    isError: b.is_error === true
-                  })
-                }
-              }
-              const ev: CoordinatorToolResults = { streamId, roleId, results }
+              const ev: CoordinatorToolResults = { streamId, roleId, results: serializeToolResults(evt.message.content) }
               send('coordinator:results', ev)
             } else if (evt.type === 'compaction') {
               send('coordinator:compaction', { streamId, roleId, kind: evt.kind, freedTokens: evt.freedTokens })
             }
           },
           requestPermission: (roleId, req, signal) =>
-            new Promise<PermissionDecision>((resolve) => {
-              const permissionId = ulid()
-              // delete-guarded so a response and an abort can race without double-resolving; clears its
-              // own bucket entry so the terminal sweep doesn't re-deny an already-answered prompt.
-              const settle = (d: PermissionDecision, fromAbort = false): void => {
-                pendingByStream.get(streamId)?.delete(permissionId)
-                if (pendingPermissions.delete(permissionId)) {
-                  if (fromAbort) send('coordinator:permission:cancel', { streamId, permissionId })
-                  resolve(d)
-                }
-              }
-              pendingPermissions.set(permissionId, settle)
-              pendingByStream.get(streamId)?.add(permissionId)
-              const onAbort = (): void => settle({ allow: false }, true)
-              controller.signal.addEventListener('abort', onAbort, { once: true })
-              signal?.addEventListener('abort', onAbort, { once: true })
-              const ev: CoordinatorPermissionRequest = { streamId, permissionId, roleId, toolName: req.toolName, input: req.input, reason: req.reason }
-              send('coordinator:permission', ev)
-            }),
+            permissions.request(
+              streamId,
+              [controller.signal, signal],
+              (permissionId) => {
+                const ev: CoordinatorPermissionRequest = { streamId, permissionId, roleId, toolName: req.toolName, input: req.input, reason: req.reason }
+                send('coordinator:permission', ev)
+              },
+              (permissionId) => send('coordinator:permission:cancel', { streamId, permissionId }),
+            ),
           // Unattended-approval audit (doc 19 §8): only RED (needs-approval) reaches the chat — green/yellow
           // auto-approvals stay silent (they flooded the thread; user ask). The red card still surfaces.
           onApproval: (e) => {
@@ -242,7 +195,7 @@ export function registerCoordinatorHandlers(): void {
   // A dispatched-tool approval answer from the renderer (phase 2 — doc 19 §14). settle() is delete-guarded,
   // so a late answer after the turn ended (sweep already denied it) is a harmless no-op.
   ipcMain.handle('coordinator:permission:respond', (_e, resp: AgentPermissionResponse) => {
-    pendingPermissions.get(resp.permissionId)?.({ allow: resp.allow, updatedInput: resp.updatedInput })
+    permissions.respond(resp.permissionId, { allow: resp.allow, updatedInput: resp.updatedInput })
   })
 
   // Block 3 — serve a Gate C e2e screenshot as a data URL so the renderer can show timeline / toast

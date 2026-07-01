@@ -1,8 +1,10 @@
-// Dispatch — one per-role step of a coordinator turn. An agent-capable expert runs the FULL tool-using
-// loop (runDispatchedAgent); coordinator-self synthesis/direct turns and tool-less roles (designer/
-// translator/editor) take a single llmChat turn. Both paths persist the step (tagged with the dispatch
-// chain), record usage, and bridge their streams to the per-role coordinator callbacks.
+// Dispatch — one per-role step of a coordinator turn. Every AGENT_ROLE_IDS expert runs the FULL tool-using
+// loop (runDispatchedAgent); ONLY the coordinator-self merge beats (synthesis / parallel- / council-synthesis)
+// take the tool-less single-llmChat path below — plus a defensive fallback for a roleId outside the agent set.
+// Both paths persist the step (tagged with the dispatch chain), record usage, and bridge their streams to the
+// per-role coordinator callbacks.
 
+import { ulid } from '../db/id'
 import * as endpointRepo from '../repos/endpoint.repo'
 import * as convRepo from '../repos/conversation.repo'
 import * as summaryRepo from '../repos/summary.repo'
@@ -20,6 +22,7 @@ import { pickSmallModel } from './model-select'
 import { LlmError, type ChatAttachment, type ChatMessage } from '../llm/types'
 import { resolveImageForLlm, MAX_REPLAY_IMAGES } from '../media/storage'
 import type { AgentContext, PermissionMode, WrittenFile } from '../agent/context'
+import type { Tool } from '../agent/tool'
 import type { AgentResult } from '../agent/loop'
 import type { MemoryRow } from '../repos/memory.repo'
 import {
@@ -31,6 +34,7 @@ import {
 } from '../agent/roles/prompts'
 import { coordinatorApproval } from './coordinator-approvals'
 import type { CoordinatorCallbacks } from './coordinator-types'
+import { getPipelineTodos, setPipelineTodos } from './pipeline-todos'
 
 // #6 Workflow parity (cc 2.1.186 `GKa=5`): the P4 stall-watchdog abort is RETRYABLE — Workflow re-runs a stalled
 // agent up to 5× before giving up. runRoleStep surfaces a stall (the watchdog fired, NOT a real user/run abort) as
@@ -52,14 +56,9 @@ function toolInputHint(input: unknown): string | undefined {
   return undefined
 }
 
-// Pipeline-shared todos, keyed by convId: a coordinator turn's dispatched experts (Flynn → Shuri → …) all
-// read + write this ONE list, so the team's TodoWrite progress is continuous instead of each expert keeping a
-// private list that strands the others' tasks (Shuri's run inherits Flynn's items + updates the SAME ones).
-// Reset at the start of each coordinator run (a new turn = a new pipeline).
-const pipelineTodos = new Map<string, AgentContext['todos']>()
-export function resetPipelineTodos(convId: string): void {
-  pipelineTodos.delete(convId)
-}
+// Pipeline-shared todos moved to ./pipeline-todos (a leaf module) so conversation.service can reset them on
+// conv-delete without a coordinator-step ↔ conversation.service import cycle. Seeded/written back via
+// getPipelineTodos/setPipelineTodos below; reset at each coordinator run start (coordinator.service) + conv delete.
 
 // Coordinator's coordinating voice. The router already produced `intro` alongside the route decision (no
 // extra LLM call); we surface it as Coordinator's own step — onStepStart/onDelta/onStepDone mirror a real
@@ -83,7 +82,7 @@ export interface RunStepOptions {
   dispatch: string[] | null
   cb: CoordinatorCallbacks
   signal: AbortSignal
-  // Working dir for an agent-dispatched expert (cwdByRole[roleId]). Ignored by tool-less llmChat roles.
+  // Working dir for an agent-dispatched expert (cwdByRole[roleId]). Ignored by the tool-less synthesis path.
   cwd?: string
   // The user's permission mode for this role (modeByRole[roleId]); threaded to runDispatchedAgent so a
   // dispatched expert honors bypass. Unset → 'default'.
@@ -139,6 +138,15 @@ export interface RunStepOptions {
   // a coordinator-dispatched expert is bounded by autocompact + microcompact (loop.ts), like CC/codex — never a
   // fixed turn cap that would kill a big multi-step task mid-build.
   maxTurns?: number
+  // routeAsAgent (Danny's routing investigation): a VERBATIM tool kit (Read/Glob + Task + studio_lens·understand
+  // + await_async) that bypasses the role-kit whitelist — same semantics as runDispatchedAgent's `toolset`.
+  // Overrides toolNames when set. coordinator isn't an AGENT_ROLE_ID, so its investigation runs via isDirect.
+  toolset?: readonly Tool[]
+  // Ephemeral run: STREAM to the UI (onStepStart / onDelta / onToolEvent / onStepDone all fire → visible) but do
+  // NOT persist a message. Danny's routing investigation is internal groundwork — visible AS IT HAPPENS (§3 "Danny
+  // is a visible agent") yet not part of the dispatch transcript (§3 "visible ≠ persisted"). Usage is still
+  // recorded (billing). Only the agent path honors it; routeAsAgent never takes the tool-less branch.
+  ephemeral?: boolean
 }
 
 // Coordinator's system = a base prompt section (direct / synthesis) + his recalled memories + the running
@@ -151,7 +159,7 @@ export function withCoordinatorContext(base: string, memories: MemoryRow[], summ
 }
 
 export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; reason: AgentResult['reason']; inputTokens: number; outputTokens: number; endpointId: string; model: string; writtenFiles: WrittenFile[] }> {
-  const { convId, roleId, prompt, dispatch, cb, signal, cwd, includeHistory = false, isSynthesis = false, isDirect = false, isParallelSynthesis = false, isCouncilSynthesis = false, quiet = false, segmentKind, progressCard } = opts
+  const { convId, roleId, prompt, dispatch, cb, signal, cwd, includeHistory = false, isSynthesis = false, isDirect = false, isParallelSynthesis = false, isCouncilSynthesis = false, quiet = false, ephemeral = false, segmentKind, progressCard } = opts
   const binding = rolesService.getBinding(roleId)
   if (!binding?.endpointId || !binding.model) {
     throw new LlmError('bad_request', `role "${roleId}" has no endpoint binding`)
@@ -193,7 +201,6 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
   // Agent path: a dispatched expert (full kit), OR Danny's DIRECT turn (isDirect → his read-only kit +
   // the DIRECT persona via systemPromptOverride). Synthesis turns stay on the tool-less llmChat path below.
   if (agentProtocol && ((agentService.AGENT_ROLE_IDS.has(roleId) && !isCoordinatorSelf) || isDirect)) {
-    let text = ''
     // Delta-stall watchdog (P4): a finder/skeptic whose LLM stream FREEZES mid-flight (streams a while, then the
     // upstream stops sending without closing the stream) hangs the examine Promise.all barrier FOREVER — examine/
     // has no timeout anywhere. Abort a run that emits NO stream event for stallTimeoutMs so its task degrades to
@@ -215,34 +222,18 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
     }
     armStall()
     const runSignal = stallCtrl ? AbortSignal.any([signal, stallCtrl.signal]) : signal
+    // This call site adds POLICY only — the stall watchdog and quiet gating below; the event mapping itself is
+    // the ONE shared forwardLlmEvent (agent-dispatch), identical for solo / dispatched / collab. Two policies:
+    //   quiet (lens sub-agent / panel finder·skeptic·reader): forward NOTHING to the renderer — its output is
+    //   RETURNED to the engine (runDispatchedAgent res.text), never streamed. This is the Workflow contract
+    //   (verified against the real Workflow tool in cc 2.1.186): /workflows shows only COARSE per-agent status;
+    //   the lens card renders start→done + verdict from the engine's own sub_tool events.
+    //   stall: every stream event resets the watchdog (or holds it paused while a tool executes).
     const agentCb: agentService.AgentCallbacks = {
       onStream: (ev) => {
         if (ev.type === 'tool_use_start') toolsInFlight++ // #5: a tool call began → armStall() below keeps the watchdog PAUSED
         armStall() // stream activity = the run is alive → reset the watchdog (or, while tools execute, hold it paused)
-        // quiet (lens sub-agent / panel finder·skeptic·reader): accumulate text into the RETURN value only — it
-        // becomes the engine's parsed finder/skeptic verdict — and forward NOTHING to the renderer. This is the
-        // Workflow contract (verified against the real Workflow tool in cc 2.1.186): a workflow subagent's output
-        // is RETURNED to the orchestration script, NEVER streamed token-by-token to the UI; /workflows shows only
-        // COARSE per-agent status. The lens card renders start→done + verdict from the engine's own sub_tool
-        // events. (Removed: the per-token sub_tool_delta firehose — 190 sub-agents × every token through IPC was
-        // a studio-only divergence from Workflow, and the most likely cause of the renderer freeze on big reviews.)
-        if (ev.type === 'text') {
-          text += ev.delta
-          if (!quiet) cb.onDelta(roleId, ev.delta)
-        } else if (ev.type === 'reasoning') {
-          // VISIBLE thinking → its own Thinking block; never folded into `text` (the answer) and never leaked onto a quiet verifier segment.
-          if (!quiet) cb.onReasoning?.(roleId, ev.delta)
-        } else if (quiet) {
-          return
-        } else if (ev.type === 'tool_use_start') {
-          cb.onToolStart?.(roleId, ev.id, ev.name)
-        } else if (ev.type === 'sub_tool_start' || ev.type === 'sub_tool_done') {
-          cb.onToolEvent?.(roleId, ev)
-        } else if (ev.type === 'usage') {
-          cb.onUsage?.(roleId, ev.inputTokens, ev.outputTokens, ev.cachedTokens) // forward the agent loop's live ↑in+↓out to this segment's readout
-        } else if (ev.type === 'turn-final') {
-          cb.onTurnFinalUsage?.(ev.usage)
-        }
+        if (!quiet) agentService.forwardLlmEvent(cb, roleId, ev)
       },
       onEvent: (ev) => {
         if (ev.type === 'tool_results') { toolsInFlight = 0; armStall() } // #5: this turn's tools all returned → resume the stall watchdog
@@ -256,16 +247,24 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
         if (!quiet) cb.onToolEvent?.(roleId, ev)
       },
       onUsage: (inputTokens) => { if (!quiet) cb.onUsage?.(roleId, inputTokens) }, // bridge the agent loop's live ↑ to this segment's readout
+      onRetry: (info) => { if (!quiet) cb.onRetry?.(roleId, info) }, // transient upstream failure → the renderer's retrying banner (parity with solo)
       onToolImage: (att) => cb.onToolImage?.(att), // a dispatched Georgia generated an image → surface it live
       // phase 4: coordinator self-approves via the safety classifier instead of popping the user (doc §8) —
       // green/yellow auto-run, red hard-denied + recorded for deferred approval.
       requestPermission: (req) => Promise.resolve(coordinatorApproval(convId, roleId, cwd ?? '', req, cb, prompt))
     }
+    // The step's run id, minted HERE so the persisted message row below carries the same id the transcript
+    // logs under — the row↔transcript pairing openConversation's tool-card rebuild keys on. An ephemeral run
+    // (Danny's routing investigation) persists no row; its ephemeralDisplay marker on the transcript 'run'
+    // line lets the reload rebuild resurrect it as a visible segment instead.
+    const runId = ulid()
     const res = await agentService.runDispatchedAgent(
       {
         convId,
         roleId,
         prompt,
+        runId,
+        ephemeralDisplay: ephemeral ? { segmentKind } : undefined,
         cwd: cwd ?? '',
         protocol: agentProtocol,
         baseUrl: ep.baseUrl,
@@ -282,6 +281,7 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
         summary: summaryContent,
         permissionMode: opts.permissionMode,
         toolNames: opts.toolNames,
+        toolset: opts.toolset, // routeAsAgent passes Danny's verbatim read-only investigation kit (bypasses whitelist)
         expectsFileChanges: opts.expectsFileChanges,
         maxTurns: opts.maxTurns,
         stallTimeoutMs: opts.stallTimeoutMs,
@@ -294,9 +294,9 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
         // Pipeline-shared todos: this expert reads + writes the conv's ONE todo list (see pipelineTodos), so
         // Flynn's list carries into Shuri's run and Shuri updates the SAME items — continuous team progress.
         // Also pushed live to the workspace Tasks panel (cb.onTodos) the moment TodoWrite executes.
-        initialTodos: pipelineTodos.get(convId),
+        initialTodos: getPipelineTodos(convId),
         onTodosChange: (roleId, todos) => {
-          pipelineTodos.set(convId, todos) // sequential cross-expert continuity: seed is by convId, display/push is by roleId
+          setPipelineTodos(convId, todos) // sequential cross-expert continuity: seed is by convId, display/push is by roleId
           cb.onTodos?.(roleId, todos)
         }
       },
@@ -309,7 +309,7 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
     if (stallCtrl?.signal.aborted && !signal.aborted) {
       throw new LensStallError(`examine stall: no stream activity for ${stallMs}ms`)
     }
-    text = res.text
+    let text = res.text
     // The loop guard wound this step down after repeated identical failures (loop.ts thrash guard).
     // Label the text so every downstream reader — the persisted message, synthesis, Gate B's verifier
     // reading the implementer summary — sees an incomplete result, not a clean completion.
@@ -332,13 +332,14 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
     // Persist the step + any images its tools generated (Georgia) — text OR an attachment lands the message,
     // so a reopened conversation re-reads the image from the DB. Empty + image-only turns still persist.
     // quiet (closure-loop): a card-only step persists NO segment of its own (it rides the caller's sub_tool card).
-    if (!quiet && (text || res.attachments.length)) {
+    if (!quiet && !ephemeral && (text || res.attachments.length)) {
       convService.append(convId, {
         author: 'expert',
         expertId: roleId,
         model: binding.model,
         content: text,
         attachments: res.attachments,
+        runId, // keys the reload rebuild: openConversation reattaches this step's tool cards from the transcript
         dispatch: dispatch ?? undefined,
         segmentKind,
         inputTokens: res.contextTokens, // DISPLAY: current context size (last turn, not accumulated). Billing below uses total.
@@ -357,7 +358,9 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
     return { text, reason: res.reason, inputTokens: res.contextTokens, outputTokens: res.outTokens, endpointId: binding.endpointId, model: binding.model, writtenFiles: res.writtenFiles }
   }
 
-  // --- Tool-less path: coordinator-self synthesis/direct + designer/translator/editor → one llmChat turn ---
+  // --- Tool-less path: coordinator-self merge beats (synthesis / parallel / council) → one llmChat turn.
+  // Every AGENT_ROLE_IDS expert (and Danny's DIRECT/investigation) takes the agent branch above; a non-agent
+  // roleId reaching here is the defensive fallback, not a designed role class. ---
   const systemPrompt = isDirect
     ? COORDINATOR_DIRECT_PROMPT
     : isParallelSynthesis

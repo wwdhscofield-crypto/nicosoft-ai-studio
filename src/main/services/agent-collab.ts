@@ -3,6 +3,7 @@
 // via send_message/assign_task/wait. Returns each expert's final text for the coordinator to synthesize;
 // persistence stays with the caller (coordinator-collab).
 
+import { createWriteStream } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { dataDir } from '../db/connection'
 import { ulid } from '../db/id'
@@ -10,9 +11,9 @@ import { join } from 'node:path'
 import type { AgentContext, PermissionRequest, PermissionDecision } from '../agent/context'
 import type { AgentLlmEvent } from '../agent/llm'
 import { MAIN_DISPATCH_STALL_TIMEOUT_MS, runAgent, type AgentEvent, type AgentResult, type CompactCarry } from '../agent/loop'
-import { promptTokensFromUsage } from '../agent/compact'
-import { isContentBlock } from '../agent/types'
-import type { AgentMessage, ServerToolSchema } from '../agent/types'
+import { drainAgentRun } from './agent-dispatch'
+import type { ServerToolSchema } from '../agent/types'
+import type { MessageAttachmentDto } from '../ipc/contracts'
 import { displayName, ROLE_BLURB } from '../agent/roles/prompts'
 import { sendMessageTool, assignTaskTool, waitTool, electLensDriverTool } from '../agent/tools/consult'
 import { CollabSession, type ExpertSpec, type CollabEvent } from '../agent/collab'
@@ -30,13 +31,13 @@ import { lspTool } from '../agent/tools/lsp'
 import { disposePlaywrightSessionsOwnedBy } from '../agent/tools/playwright-browser'
 import type { Tool } from '../agent/tool'
 import type { AgentRunInput } from '../ipc/contracts'
-import { agentEvents } from './event-bus'
 import { manager as skillManager } from './skill.service'
 import { DEV_ROLES, PLAYWRIGHT_TOOLS, PREVIEW_AGENT_TOOLS, toolsForAgentRole } from './agent-tools'
 import { monitorService } from './monitor.service'
 import { selfRhythmService } from './self-rhythm.service'
 import { buildAgentSystem } from './agent-system'
 import { createLensHandle } from './lens/agent-lens'
+import { recallText } from './project-map.service'
 import { setActiveServices, clearActiveServices, broadcastConvServices } from './active-services'
 import { createPreviewHandle } from './active-preview'
 import * as workspaceTasks from './workspace-tasks.service'
@@ -63,18 +64,6 @@ export interface CollabExpertInput {
 // Bridges a CollabSession's per-expert activity out to the coordinator (→ UI + audit). onEvent is the
 // consult interaction stream (send/assign/wait/…); onExpertStream/onExpertEvent mirror a normal agent
 // run's stream, tagged with roleId; requestPermission pops a teammate's mutating-tool approval to the user.
-function assistantVisibleText(message: AgentMessage): string {
-  return message.content
-    .filter((b): b is { type: 'text'; text: string } => isContentBlock(b) && b.type === 'text')
-    .map((b) => b.text)
-    .join('')
-}
-
-function replaceAssistantDisplay(message: AgentMessage, text: string): AgentMessage {
-  const nonText = message.content.filter((b) => !(isContentBlock(b) && b.type === 'text'))
-  return { ...message, content: [{ type: 'text', text }, ...nonText] }
-}
-
 export interface CollabHooks {
   onEvent: (e: CollabEvent) => void
   onExpertStream: (roleId: string, ev: AgentLlmEvent) => void
@@ -85,6 +74,10 @@ export interface CollabHooks {
   // A collab expert entered/left a turn batch (active true/false) — drives the parked-readout toggle so a
   // parked expert (done its turn, waiting) stops showing "Thinking…".
   onExpertActive?: (roleId: string, active: boolean) => void
+  // An expert's tool produced an image — drainAgentRun persisted it to the media store and REDACTED the raw
+  // base64 out of the emitted event; this carries the nsai-media:// ref for live display (and the caller
+  // attaches it to the expert's persisted step). Before the shared drain, collab shipped raw base64 over IPC.
+  onToolImage?: (roleId: string, attachment: MessageAttachmentDto) => void
   requestPermission: (roleId: string, req: PermissionRequest, signal?: AbortSignal) => Promise<PermissionDecision>
   // phase 5c-C3: snapshot of the live dev services the collaboration started (empty when none / on teardown).
   onServices?: (services: ServiceInfo[]) => void
@@ -93,12 +86,12 @@ export interface CollabHooks {
 // The role's coding/section prompt + a "working as a team" addendum naming the reachable teammates, so the
 // expert knows who to consult and to stay in its own area. Memories/summary are skipped — a collaboration
 // is a fresh shared task, not a continuation of the role's chat history.
-function buildCollabSystem(roleId: string, teammates: { id: string; name: string }[], cwd?: string): string {
+function buildCollabSystem(roleId: string, teammates: { id: string; name: string }[], cwd?: string, projectMap?: string): string {
   // A single-expert "collab" (no teammates) behaves like SOLO: keep the solo studio_lens-before-done discipline
   // and let it drive its own review ANYTIME — there is no one to elect among or wait for. The elected-driver /
   // wait-for-everyone flow below only applies with ≥1 teammate (2+ experts).
-  if (teammates.length === 0) return buildAgentSystem(roleId, [], null, skillManager.listingForRole(roleId), cwd, false)
-  const base = buildAgentSystem(roleId, [], null, skillManager.listingForRole(roleId), cwd, true) // collab=true (2+ experts): skip the SOLO "every agent self-runs studio_lens before done" discipline — only the ELECTED driver runs the ONE consolidated panel AFTER everyone is done, not each expert and not early (the per-expert flood AND the premature drive were the bugs)
+  if (teammates.length === 0) return buildAgentSystem(roleId, [], null, skillManager.listingForRole(roleId), cwd, false, projectMap)
+  const base = buildAgentSystem(roleId, [], null, skillManager.listingForRole(roleId), cwd, true, projectMap) // collab=true (2+ experts): skip the SOLO "every agent self-runs studio_lens before done" discipline — only the ELECTED driver runs the ONE consolidated panel AFTER everyone is done, not each expert and not early (the per-expert flood AND the premature drive were the bugs)
   // Roster lists each teammate by NAME + a domain blurb (what they do) — NEVER the role_id. The model addresses
   // teammates by name everywhere (prose, todos, and the consult tools, which take a name). Exposing the role_id
   // here made a weak model parrot it ("the frontend teammate" instead of "Shuri").
@@ -193,7 +186,7 @@ export async function runCollabSession(
   hooks: CollabHooks,
   signal: AbortSignal,
   nowMs: () => number,
-): Promise<{ results: Map<string, { text: string; reason: AgentResult['reason']; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number }> }> {
+): Promise<{ results: Map<string, { text: string; reason: AgentResult['reason']; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number; runId?: string; attachments: MessageAttachmentDto[] }> }> {
   // One service registry per collaboration, shared by all its experts (Flynn starts a backend, Shuri
   // lists + connects). Tree-killed in the finally below when the session ends — no zombie ports survive.
   const registry = new ServiceRegistry()
@@ -212,6 +205,17 @@ export async function runCollabSession(
   const outTokensByRole = new Map<string, number>() // accumulated output tokens per expert → its per-message ↓ readout
   const cacheReadByRole = new Map<string, number>() // per expert: LAST turn's cache-read share → per-message "(+N cached)" note (overwrite, NOT accumulated)
   const reasonByRole = new Map<string, AgentResult['reason']>() // per expert: its loop's terminal reason → bubbles incomplete/thrash_stop up to coordinator:done (not just text)
+  const attachmentsByRole = new Map<string, MessageAttachmentDto[]>() // per expert: tool-generated images (redacted refs) → attached to its persisted step
+  // ONE session-level transcript for the whole collaboration, shared by every expert and keyed by each
+  // expert's runId per line — the SAME sessions/<convId>/transcript.jsonl solo + dispatched runs append to,
+  // so openConversation's run-keyed tool-card rebuild covers collab experts too (before this, collab wrote
+  // NO transcript and its tool cards vanished on reload). One writer, per-line writes — concurrent experts
+  // interleave whole lines, never fragments.
+  const sessionDir = join(dataDir(), 'sessions', convId)
+  await mkdir(sessionDir, { recursive: true })
+  const transcript = createWriteStream(join(sessionDir, 'transcript.jsonl'), { flags: 'a' })
+  transcript.on('error', () => {}) // a failed write (disk full / perms) must not crash the main process
+  const log = (obj: Record<string, unknown>): void => void transcript.write(JSON.stringify({ ...obj, ts: Date.now() }) + '\n')
   const roster = experts.map((x) => ({ id: x.roleId, name: displayName(x.roleId) ?? x.roleId }))
   const emitCollabHook = (event: 'TeammateIdle' | 'TaskCreated' | 'TaskCompleted', payload: Record<string, unknown>): void => {
     if (!hookRegistry.hasAny(event)) return
@@ -258,7 +262,11 @@ export async function runCollabSession(
     }))
   }
   const lspByExpert: LSPManager[] = [] // one per dev expert; tree-killed in the finally
-  const runIdsByExpert: string[] = []
+  const runIdByRole = new Map<string, string>() // expert roleId → its (single, session-long) runId
+  // §4: the remembered project map for this collaboration's shared project — experts collaborate on ONE project
+  // (one normalized cwd), so recall it ONCE here (async) and inject the same read-only orientation into every
+  // expert's system below. Danny's routeAsAgent stays the sole writer; this is the shared read side.
+  const projectMapText = await recallText(experts[0]?.cwd)
   const specs: ExpertSpec[] = experts.map((x) => {
     // Per-expert state shared across its turns: the read-file cache + todo list persist as it loops, so it
     // doesn't forget what it read between being woken.
@@ -275,9 +283,11 @@ export async function runCollabSession(
     let cwdRoot: string | undefined = x.cwd // confinement root for Bash cd; EnterWorktree switches it to the worktree
     let activeWorktree: AgentContext['activeWorktree']
     let isWorktreeIsolated = false
-    const toolNames = new Map<string, string>() // tool_use id → name, to pair tool:post with its tool (audit)
     const runId = ulid()
-    runIdsByExpert.push(runId)
+    runIdByRole.set(x.roleId, runId)
+    // One 'run' line per expert (not per wake): the expert's whole collaboration is ONE run under this id —
+    // every wake's events append under it, so the reload rebuild shows its full tool history as one step.
+    log({ t: 'run', runId, convId, roleId: x.roleId, cwd: x.cwd, model: x.model })
     // Per-expert language server (dev roles) — Shuri's TS frontend benefits most; persists across this
     // expert's turns, lazily spawns on the first lsp query, disposed when the collaboration ends.
     const lsp = DEV_ROLES.has(x.roleId) ? new LSPManager(x.cwd) : undefined
@@ -305,6 +315,7 @@ export async function runCollabSession(
       x.roleId,
       roster.filter((r) => r.id !== x.roleId),
       x.cwd,
+      projectMapText, // §4: collab experts read this project's shared map (read-only)
     )
     const sessionDir = join(dataDir(), 'sessions', convId, x.roleId)
     return {
@@ -393,49 +404,30 @@ export async function runCollabSession(
           onStream: (ev) => hooks.onExpertStream(x.roleId, ev),
         })
         let result!: AgentResult
-        let turnIn = 0 // total incl. cache → billing
-        let turnContext = 0 // last turn's context size → display (overwrite)
-        let turnCacheRead = 0 // last turn's cache-read share → display (overwrite)
-        let turnOut = 0
         try {
-          for (;;) {
-            const { value, done } = await gen.next()
-            if (done) {
-              result = value
-              break
-            }
-            // Emit the same tool:pre/post audit trail as runAgentLoop, so a collaboration's tool usage is
-            // observable too (previously a gap — collab experts don't go through runAgentLoop).
-            if (value.type === 'assistant') {
-              turnIn += promptTokensFromUsage(value.usage) // total incl. cache → billing
-              turnContext = promptTokensFromUsage(value.usage) // current context size (last turn's prompt) — overwrite
-              turnCacheRead = value.usage.cacheReadTokens ?? 0 // cache-read share of last turn — overwrite
-              turnOut += value.usage.outTokens
-              for (const b of value.message.content) {
-                if (isContentBlock(b) && b.type === 'tool_use') {
-                  toolNames.set(b.id, b.name)
-                  agentEvents.emit({ type: 'tool:pre', convId, roleId: x.roleId, tool: b.name, ts: Date.now() })
-                }
-              }
-            } else if (value.type === 'tool_results') {
-              for (const b of value.message.content) {
-                if (isContentBlock(b) && b.type === 'tool_result') {
-                  agentEvents.emit({ type: 'tool:post', convId, roleId: x.roleId, tool: toolNames.get(b.tool_use_id) ?? 'unknown', isError: b.is_error ?? false, ts: Date.now() })
-                }
-              }
-            }
-            let emitted = value
-            if (emitted.type === 'assistant' && hookRegistry.hasAny('MessageDisplay')) {
-              const md = await runHooks(
-                'MessageDisplay',
-                { ...baseHookPayload('MessageDisplay', ctx), turn_id: ctx.runId ?? `${convId}:${x.roleId}`, message_id: `${ctx.runId ?? x.roleId}:${turnOut}`, index: turnOut, final: true, delta: assistantVisibleText(emitted.message) },
-                hookContextFromAgent(ctx),
-              )
-              if (md.permissionBehavior === 'deny') continue
-              if (md.displayContent !== undefined) emitted = { ...emitted, message: replaceAssistantDisplay(emitted.message, md.displayContent) }
-            }
-            hooks.onExpertEvent(x.roleId, emitted)
-          }
+          // The shared drain: token accounting + tool:pre/post audit + tool-image persist/redact +
+          // MessageDisplay hooks + the transcript 'event' lines — the SAME loop solo/dispatched runs use
+          // (runAgentLoop), so a collab expert's reload/audit/IPC behavior can't drift from theirs again.
+          const drained = await drainAgentRun({
+            gen,
+            ctx,
+            convId,
+            roleId: x.roleId,
+            runId,
+            log,
+            onEvent: (ev) => hooks.onExpertEvent(x.roleId, ev),
+            onToolImage: (att) => {
+              const list = attachmentsByRole.get(x.roleId) ?? []
+              list.push(att)
+              attachmentsByRole.set(x.roleId, list)
+              hooks.onToolImage?.(x.roleId, att)
+            },
+          })
+          result = drained.result
+          inTokensByRole.set(x.roleId, (inTokensByRole.get(x.roleId) ?? 0) + drained.inTokens)
+          contextByRole.set(x.roleId, drained.contextTokens) // overwrite with this run's last context size (not accumulated)
+          cacheReadByRole.set(x.roleId, drained.cacheReadTokens) // overwrite with this run's last cache-read share
+          outTokensByRole.set(x.roleId, (outTokensByRole.get(x.roleId) ?? 0) + drained.outTokens)
         } finally {
           // Clear the live readout when the turn ends — on a normal park AND on a thrown/aborted turn (gen.next()
           // rejecting). Without the finally, an errored expert's bubble hangs on "Thinking…" until session end.
@@ -448,10 +440,6 @@ export async function runCollabSession(
           activeWorktree = ctx.activeWorktree
           isWorktreeIsolated = ctx.isWorktreeIsolated ?? false
         }
-        inTokensByRole.set(x.roleId, (inTokensByRole.get(x.roleId) ?? 0) + turnIn)
-        contextByRole.set(x.roleId, turnContext) // overwrite with this run's last context size (not accumulated)
-        cacheReadByRole.set(x.roleId, turnCacheRead) // overwrite with this run's last cache-read share
-        outTokensByRole.set(x.roleId, (outTokensByRole.get(x.roleId) ?? 0) + turnOut)
         reasonByRole.set(x.roleId, result.reason)
         compactCarry = result.compact // §4a — hand the anchor to the next wake
         return result.messages
@@ -486,7 +474,12 @@ export async function runCollabSession(
     // is NOT threaded to the coordinator anymore — the post-collab pass is the ONE independent Turing final audit
     // (runCollabReview), not a re-run seeded by this panel. So nothing to extract here.
     const results = new Map(
-      [...texts].map(([roleId, text]): [string, { text: string; reason: AgentResult['reason']; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number }] => [roleId, { text, reason: reasonByRole.get(roleId) ?? 'completed', inTokens: inTokensByRole.get(roleId) ?? 0, contextTokens: contextByRole.get(roleId) ?? 0, cacheReadTokens: cacheReadByRole.get(roleId) ?? 0, outTokens: outTokensByRole.get(roleId) ?? 0 }])
+      [...texts].map(([roleId, text]): [string, { text: string; reason: AgentResult['reason']; inTokens: number; contextTokens: number; cacheReadTokens: number; outTokens: number; runId?: string; attachments: MessageAttachmentDto[] }] => {
+        const reason = reasonByRole.get(roleId) ?? 'completed'
+        const runId = runIdByRole.get(roleId)
+        if (runId) log({ t: 'done', runId, reason }) // the expert's run-terminal transcript line (once per expert, at session end)
+        return [roleId, { text, reason, inTokens: inTokensByRole.get(roleId) ?? 0, contextTokens: contextByRole.get(roleId) ?? 0, cacheReadTokens: cacheReadByRole.get(roleId) ?? 0, outTokens: outTokensByRole.get(roleId) ?? 0, runId, attachments: attachmentsByRole.get(roleId) ?? [] }]
+      })
     )
     return { results }
   } finally {
@@ -507,7 +500,8 @@ export async function runCollabSession(
     broadcastConvServices(convId, []) // clear the Tasks panel's Services section on teardown
     registry.dispose() // tree-kill every service the collaboration started — no lingering ports
     asyncRegistry.dispose() // tree-kill any still-running launch_async op, INCLUDING unawaited ones — a normal quiescent end never aborts the signal, so this is the only cleanup hook
-    await Promise.allSettled(runIdsByExpert.map((runId) => disposePlaywrightSessionsOwnedBy(runId)))
+    transcript.end() // close the shared session transcript writer (best-effort; 'error' is swallowed above)
+    await Promise.allSettled([...runIdByRole.values()].map((runId) => disposePlaywrightSessionsOwnedBy(runId)))
     for (const lsp of lspByExpert) lsp.dispose() // tree-kill each expert's language server
   }
 }

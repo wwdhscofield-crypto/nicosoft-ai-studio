@@ -143,6 +143,19 @@ function verbLive(t: ToolCall): string {
   }
 }
 
+// ---- inline-fold surface routing (role-agnostic; consumed by chat-segment RunBody) --------------------
+// Two DECLARATIVE sets replace the old per-tool control-flow forks in RunBody, so the aggregator stays
+// tool-name-agnostic and every agent role folds identically.
+// TASKS_PANEL_ONLY — the rich card renders EXCLUSIVELY in the Workspace Tasks panel, NEVER inline (running OR
+// done): the StudioLens panel card (subjects / verdicts / refute) is orphan-appended as a TOP-LEVEL card the
+// Tasks panel collects (LENS_PANEL_ROOT sentinel), so inlining it — even while running — would double-render.
+export const TASKS_PANEL_ONLY = new Set(['StudioLens'])
+// OMIT_WHEN_DONE — the SETTLED inline row is redundant (its result surfaced elsewhere) so drop it once done, but
+// KEEP folding it in WHILE RUNNING so a parallel turn (Glob + studio_lens + Task fired together) collapses into
+// ONE live line, exactly like a long Bash/Task does — no flush-first special-case. studio_lens: its completed
+// review moved to the Tasks panel → History. Universal: every agent role emits studio_lens via PANEL_TOOLS.
+export const OMIT_WHEN_DONE = new Set(['studio_lens'])
+
 // ---- the run summary ("Read 13 files, ran 18 commands, edited a file, created 3 files") ---------------
 
 const plural = (n: number, one: string, many: string): string => (n === 1 ? one : many.replace('{n}', String(n)))

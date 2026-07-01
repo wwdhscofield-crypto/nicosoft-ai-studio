@@ -8,10 +8,14 @@ import type { ViewerImage } from '@/components/image-viewer'
 import { Avatar, NameChip } from '@/components/primitives'
 import type { ChatMessage, MsgBlock, ToolCall } from '@/stores/chat'
 import { ServerBubble, Sources } from '@/components/tool-bubble'
-import { ToolRun } from '@/components/tool-run'
+import { ToolRun, TASKS_PANEL_ONLY, OMIT_WHEN_DONE } from '@/components/tool-run'
 import { Markdown } from '@/components/markdown'
 import { useT } from '@/stores/locale'
+import { isSynthesis, groupRuns, sameChain } from '@/stores/chat-helpers'
 import type { Expert } from '@/types'
+
+// The segment-identity model (pure, JSX-free — see chat-helpers) re-exported for view-level consumers.
+export { groupRuns, sameChain } from '@/stores/chat-helpers'
 
 // Coding-agent-style readout formatters for the streaming indicator: compact lower-case token count
 // ("1.2k") and a coarse elapsed string ("3s" / "1m 5s").
@@ -137,12 +141,6 @@ export function RetryReadout({ attempt, max, since }: { attempt: number; max: nu
 // settlement-math bugs (summing per-loop cumulatives ballooned to "↑ 48.1m"); cumulative billing lives in
 // usage_events, not in any per-segment readout.
 
-// True when this assistant message represents Coordinator's synthesis step — the final pipeline message
-// where Coordinator merges the experts' outputs. Detected by being expertId='coordinator' inside a dispatch chain.
-function isSynthesis(msg: ChatMessage): boolean {
-  return msg.role === 'assistant' && (msg.expertId ?? null) === 'coordinator' && Array.isArray(msg.dispatch) && msg.dispatch.length > 0
-}
-
 /* — The body of an assistant RUN, walked at BLOCK level across all its turns in emission order. Model text
  *   NEVER folds (assistant text breaks collapse groups): narration and answers render in
  *   place, permanently visible, and they BREAK the tool run — so runs are small count-summary lines sitting
@@ -212,21 +210,16 @@ function RunBody({ msgs, onOpenImage, live }: { msgs: ChatMessage[]; onOpenImage
       }
       const tool = tools.find((tl) => tl.id === b.id)
       if (!tool) return
-      // The StudioLens card (subjects / verdicts / refute) now lives in the Workspace Tasks panel, grouped by
-      // its owner — NOT inline. Skip it here.
-      if (tool.name === 'StudioLens') return
-      // studio_lens, like its review card, behaves like a todo: WHILE RUNNING show a live "Running a panel
-      // review" line (flush the done history FIRST so a minutes-long run can't keep the fold "live" and hide it —
-      // a live ToolRun renders only the running gerund, not the done tools before it). Once DONE, OMIT it: the
-      // completed review has moved to the Tasks panel → History, so a lingering "Used studio_lens" line in chat
-      // is redundant. The surrounding history folds normally around the gap.
-      if (tool.name === 'studio_lens') {
-        if (tool.status === 'running') {
-          flushFold(false)
-          out.push(<ToolRun key={`pe${tool.id}`} tools={[tool]} live={live} />)
-        }
-        return
-      }
+      // Inline-fold surface routing — role-agnostic, no per-tool control-flow fork (the two sets live next to
+      // tool-run's verb tables). TASKS_PANEL_ONLY (StudioLens panel card): renders EXCLUSIVELY in the Workspace
+      // Tasks panel (live "Panel reviews" while running, History once done) → never inline, in ANY mode. OMIT_
+      // WHEN_DONE (studio_lens): its settled row is redundant once the review moved to the Tasks panel, so drop it
+      // when done — but WHILE RUNNING it folds in with the turn's other tools, so a PARALLEL investigation
+      // (Glob + studio_lens + Task fired together, by ANY agent role incl. the coordinator) collapses into ONE
+      // live line. ToolRun's live branch already renders a single gerund for N running tools, exactly like a long
+      // Bash/Task — no flush-first split (that split WAS the fragmentation: it special-cased studio_lens alone).
+      if (TASKS_PANEL_ONLY.has(tool.name)) return
+      if (OMIT_WHEN_DONE.has(tool.name) && tool.status !== 'running') return
       fold.push(tool)
     })
     if (m.images && m.images.length > 0) {
@@ -300,12 +293,15 @@ export function ChatSegment({
   // closure-loop §3.2/§3.3: an independent Gate B reviewer step renders with its own "· Verifier" identity.
   const verifier = !isUser && first.segmentKind === 'verifier'
   const segColor = isUser ? 'var(--border-2)' : synthesis ? 'var(--accent)' : renderExpert.color
-  // Foldable: a dispatched expert step inside a panel/debate (has a chain, isn't Coordinator's intro/synthesis).
-  // Parallel/council stack many of these, so once a step finishes streaming we collapse it to a one-line
-  // summary — the user watches it stream live, then it folds away, leaving Coordinator's synthesis prominent.
-  // Verifier folds like any other non-host expert step: in a coordinator/collab conversation only the host
-  // (Coordinator) stays expanded; every other speaker — implementers AND the verifier — collapses to a window.
-  const foldable = !isUser && !synthesis && !!first.dispatch?.length && first.expertId != null && first.expertId !== 'coordinator'
+  // Foldable: a first-class dispatched STEP renders in a fixed-height scroll window (not full height). Parallel/
+  // council stack many, so once a step finishes streaming it collapses to a one-line summary — watched live, then
+  // folded away, leaving Coordinator's synthesis prominent. Verifier folds like any other non-host expert step.
+  // TWO identities qualify: a dispatched EXPERT (has a chain) and Coordinator's own pre-routing INVESTIGATION
+  // (segmentKind 'investigate'). The old `expertId !== 'coordinator'` carve-out is gone — it was redundant (any
+  // coordinator WITH a chain is a synthesis, already excluded by !synthesis) AND it was the special-case that
+  // denied Danny's investigation a foldable identity. Intro/direct (coordinator, no chain, not 'investigate')
+  // stay full-height as before.
+  const foldable = !isUser && !synthesis && first.expertId != null && (!!first.dispatch?.length || first.segmentKind === 'investigate')
   const [expanded, setExpanded] = useState(false)
   const bodyRef = useRef<HTMLDivElement>(null)
   // Folded expert steps render in a fixed-height scroll WINDOW from the start (not collapsed to a line):
@@ -372,33 +368,9 @@ export function ChatSegment({
   )
 }
 
-// — Run grouping ———————————————————————————————————————————————————————————————————————————————————
-// Claude runs ONE tool per turn, so an agent's work arrives as a RUN of separate assistant messages. The
-// whole consecutive same-expert run renders as ONE segment (speaker once);
-// RunBody walks its blocks in emission order and folds only the silent explore streaks.
-
-// Consecutive assistant messages merge into one segment when they share the expert, the dispatch chain, and
-// the synthesis-ness — the "one turn, one speaker" model. User messages never merge.
-function canMerge(a: ChatMessage, b: ChatMessage): boolean {
-  const chainsEqual = Array.isArray(a.dispatch) || Array.isArray(b.dispatch) ? sameChain(a.dispatch, b.dispatch) : true
-  return (
-    a.role === 'assistant' &&
-    b.role === 'assistant' &&
-    (a.expertId ?? null) === (b.expertId ?? null) &&
-    (a.segmentKind ?? null) === (b.segmentKind ?? null) && // a Verifier step is its own segment, never merged into a normal step of the same role
-    chainsEqual &&
-    isSynthesis(a) === isSynthesis(b)
-  )
-}
-export function groupRuns(messages: ChatMessage[]): ChatMessage[][] {
-  const runs: ChatMessage[][] = []
-  for (const m of messages) {
-    const cur = runs[runs.length - 1]
-    if (cur && canMerge(cur[cur.length - 1], m)) cur.push(m)
-    else runs.push([m])
-  }
-  return runs
-}
+// Run grouping (groupRuns/canMerge/sameChain/isSynthesis) lives in stores/chat-helpers — the segment-identity
+// model is pure data logic, kept out of this JSX module so the display-unification tests can import it directly.
+// Re-exported below so view-level consumers keep importing from '@/views/chat-segment'.
 
 // Conversation-level "working" readout for the gap BETWEEN turns: the agent has finished a step (tool done /
 // prior turn complete) and is thinking about the next one, with nothing streaming yet — so the per-message
@@ -421,11 +393,3 @@ export function PendingReadout({ expert, inputTokens, outputTokens }: { expert: 
   )
 }
 
-// Two dispatch chains match when they're the same array contents in the same order. Used to decide
-// whether a message starts a fresh dispatch group (badge above) or continues an existing one.
-export function sameChain(a: string[] | null | undefined, b: string[] | null | undefined): boolean {
-  if (!Array.isArray(a) || !Array.isArray(b)) return false
-  if (a.length !== b.length) return false
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
-  return true
-}

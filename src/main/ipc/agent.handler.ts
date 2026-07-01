@@ -1,44 +1,44 @@
 import { ipcMain, type WebContents } from 'electron'
 import { ulid } from '../db/id'
-import type { PermissionDecision } from '../agent/context'
-import { isContentBlock, reasoningText } from '../agent/types'
 import { LlmError } from '../llm/types'
 import { broadcastConvImage, broadcastConvTodos, broadcastUsage } from './usage-broadcast'
 import { StreamRegistry } from './stream-lifecycle'
+import { PermissionBridge } from './permission-bridge'
+import { serializeAssistantBlocks, serializeToolResults } from './agent-serialize'
 import * as agentService from '../services/agent.service'
+import { forwardLlmEvent, type RunStreamSink } from '../services/agent-dispatch'
 import * as compressionService from '../services/compression.service'
 import * as workspaceTasks from '../services/workspace-tasks.service'
 import { sessionBus } from '../agent/session-bus'
 import { drainSoloResume } from '../services/solo-async'
 import { ENGINEER_ROLE_ID } from '../services/agent-tools'
 import { isSoloPreviewWriteTool } from '../agent/tools/preview'
-import type { AgentBlockDto, AgentPermissionResponse, AgentQuestionResponse, AgentResultDto, AgentRunInput } from './contracts'
+import type { AgentPermissionResponse, AgentQuestionResponse, AgentRunInput } from './contracts'
 
-// Streaming agent over IPC: `agent:run` starts a run, returns its streamId, and pushes events on
-// `agent:delta` (text) / `agent:assistant` (a finished turn's blocks) / `agent:results` (tool
-// results) / `agent:done` / `agent:error`. A tool needing approval pauses on `agent:permission`
-// until the renderer answers via `agent:permission:respond`. `agent:stop` aborts.
+// Streaming agent over IPC. CONTROL stays on agent:* (`agent:run` starts a run and returns its streamId;
+// `agent:stop` aborts; `agent:question`/`agent:permission:respond` bridge solo-only dialogs) — but the
+// STREAM rides the same coordinator:* channels every other mode uses, tagged with this run's roleId:
+// step:start → delta/reasoning/tool:start/sub-tool:*/assistant/results/compaction → step:done, then a
+// terminal coordinator:done / coordinator:error. ONE wire shape, ONE renderer reducer; solo is just the
+// single-role case of it (the drain unification — before this, solo spoke a parallel agent:* dialect and
+// the renderer kept a second ~230-line handler suite for it).
 const streams = new StreamRegistry()
 // Abort every in-flight solo-agent run on app quit — see index.ts before-quit (clean teardown of live LLM streams).
 export function abortAllAgentRuns(): void {
   streams.abortAll()
 }
-// pending approvals keyed by permissionId; settle() resolves the loop's requestPermission promise.
-const pendingPermissions = new Map<string, (d: PermissionDecision) => void>()
-// permissionIds belonging to each run, so a terminal event can deny + clear any still-open prompts.
-const pendingByStream = new Map<string, Set<string>>()
-// AskUserQuestion: pending questions keyed by questionId; settle() resolves the loop's askUser promise.
+// Pending approvals: the shared bridge owns the Map + delete-guarded settle + terminal sweep; this handler
+// supplies the agent:* emit callbacks (see requestPermission below).
+const permissions = new PermissionBridge()
+// AskUserQuestion: pending questions keyed by questionId; settle() resolves the loop's askUser promise. Solo-only
+// (collab has no askUser), so its machinery stays local rather than in the shared bridge.
 const pendingQuestions = new Map<string, (answer: string) => void>()
 const pendingQByStream = new Map<string, Set<string>>()
 
 // Resolve (deny) every still-pending permission for a run and drop its bucket — called on any terminal
 // event so a prompt the renderer never answered can't linger in the maps forever.
 function sweepStream(streamId: string): void {
-  const ids = pendingByStream.get(streamId)
-  if (ids) {
-    for (const id of ids) pendingPermissions.get(id)?.({ allow: false })
-    pendingByStream.delete(streamId)
-  }
+  permissions.sweep(streamId) // deny + clear any approval the renderer never answered
   const qids = pendingQByStream.get(streamId)
   if (qids) {
     for (const id of qids) pendingQuestions.get(id)?.('(no answer — the run ended)')
@@ -53,18 +53,19 @@ function sweepStream(streamId: string): void {
 // it seeds the completion note instead of persisting a user turn.
 function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: { resumeNote?: string }): { streamId: string } {
   const streamId = ulid()
+  const roleId = input.roleId ?? ENGINEER_ROLE_ID
   const { controller, send, finish } = streams.open(streamId, sender)
-  pendingByStream.set(streamId, new Set())
+  permissions.open(streamId)
   pendingQByStream.set(streamId, new Set())
 
   // A RESUME pushes a brand-new stream the renderer isn't subscribed to yet (the parked run's streamId already
-  // closed on agent:done). Bind this streamId to the conv BEFORE any delta arrives so the resumed turn streams
-  // into the same conversation. A user-initiated run is bound renderer-side from agent.run's returned streamId.
+  // closed on coordinator:done). Bind this streamId to the conv BEFORE any delta arrives so the resumed turn
+  // streams into the same conversation. A user-initiated run is bound renderer-side from agent.run's returned streamId.
   if (opts?.resumeNote != null) {
     send('agent:resume-stream', {
       streamId,
       convId: input.convId,
-      roleId: input.roleId ?? ENGINEER_ROLE_ID,
+      roleId,
       endpointId: input.endpointId,
       model: input.model,
     })
@@ -77,72 +78,51 @@ function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: { resum
   sessionBus.armDelivery(input.convId, (note) => startAgentRun(input, sender, { resumeNote: note }))
   sessionBus.markActive(input.convId)
 
+  // Open this run's segment — same lifecycle every dispatched step announces (dispatch:null + no segmentKind
+  // = a plain, non-dispatched run of this role). LAZY, fired just before the FIRST stream event: startAgentRun
+  // runs synchronously inside the agent:run invoke, so a synchronous step:start would reach the renderer
+  // BEFORE the invoke resolves and binds streamId → runMeta — a meta-miss that drops the segment open and
+  // strands the optimistic placeholder. Every stream event is asynchronous (post-LLM-roundtrip), so opening
+  // alongside the first one is always after the bind (send order per WebContents is preserved).
+  let opened = false
+  const ensureOpen = (): void => {
+    if (opened) return
+    opened = true
+    send('coordinator:step:start', { streamId, roleId, dispatch: null, model: input.model })
+  }
+  // The per-verb sink this run's stream events flow through — the SAME wire shape (coordinator:*) and the
+  // SAME forwardLlmEvent mapping a dispatched step / collab expert uses; solo is the single-role case.
+  const sink: RunStreamSink = {
+    onDelta: (roleId, text) => { ensureOpen(); send('coordinator:delta', { streamId, roleId, text }) },
+    onReasoning: (roleId, text) => { ensureOpen(); send('coordinator:reasoning', { streamId, roleId, text }) },
+    onToolStart: (roleId, id, name) => { ensureOpen(); send('coordinator:tool:start', { streamId, roleId, id, name }) },
+    onToolEvent: (roleId, ev) => {
+      // Only the AgentLlmEvent sub-tool lifecycle arrives here (forwardLlmEvent); assistant/results/compaction
+      // ride onEvent below, so this stays a plain sub-tool forwarder.
+      ensureOpen()
+      if (ev.type === 'sub_tool_start') send('coordinator:sub-tool:start', { streamId, roleId, ...ev })
+      else if (ev.type === 'sub_tool_done') send('coordinator:sub-tool:done', { streamId, roleId, ...ev })
+      else if (ev.type === 'sub_tool_delta') send('coordinator:sub-tool:delta', { streamId, roleId, ...ev })
+      else if (ev.type === 'sub_tool_progress') send('coordinator:sub-tool:progress', { streamId, roleId, ...ev })
+    },
+    // Streaming usage: solo has no sub-steps, so usage stays a CONV-level broadcast (no roleId) — the live
+    // overlay + the composer "/ window" meter read it; a roleId here would misroute it to segment-live state.
+    onUsage: (_roleId, inputTokens, outputTokens, cachedTokens) => broadcastUsage(sender, input.convId, 'live', inputTokens, outputTokens, cachedTokens),
+    onTurnFinalUsage: (usage) =>
+      broadcastUsage(sender, input.convId, 'turn-final', usage.inputTokens, usage.outputTokens, usage.cacheReadInputTokens, usage.cacheCreationInputTokens),
+  }
+
   void agentService
     .run(
       input,
       {
-          onStream: (ev) => {
-            if (ev.type === 'text') send('agent:delta', { streamId, text: ev.delta })
-            else if (ev.type === 'reasoning') send('agent:reasoning', { streamId, text: ev.delta })
-            else if (ev.type === 'tool_use_start') send('agent:tool:start', { streamId, id: ev.id, name: ev.name })
-            else if (ev.type === 'sub_tool_start') send('agent:sub-tool:start', { streamId, ...ev })
-            else if (ev.type === 'sub_tool_done') send('agent:sub-tool:done', { streamId, ...ev })
-            else if (ev.type === 'sub_tool_delta') send('agent:sub-tool:delta', { streamId, ...ev })
-            else if (ev.type === 'sub_tool_progress') send('agent:sub-tool:progress', { streamId, ...ev })
-            // Streaming usage: the in-flight request's own prompt size + running output (overwrite
-            // semantics, see ConvUsage) → the live ↑ tracks current context in real time.
-            else if (ev.type === 'usage') broadcastUsage(sender, input.convId, 'live', ev.inputTokens, ev.outputTokens, ev.cachedTokens)
-            else if (ev.type === 'turn-final') {
-              broadcastUsage(
-                sender,
-                input.convId,
-                'turn-final',
-                ev.usage.inputTokens,
-                ev.usage.outputTokens,
-                ev.usage.cacheReadInputTokens,
-                ev.usage.cacheCreationInputTokens,
-              )
-            }
-          },
-          onRetry: (info) => send('agent:retry', { streamId, ...info }),
+          onStream: (ev) => forwardLlmEvent(sink, roleId, ev),
+          onRetry: (info) => { ensureOpen(); send('coordinator:retry', { streamId, roleId, ...info }) },
           onEvent: (ev) => {
-            if (ev.type === 'assistant') {
-              const blocks: AgentBlockDto[] = []
-              for (const b of ev.message.content) {
-                if (!isContentBlock(b)) {
-                  // Reasoning/thinking server block → surface its VISIBLE summary as a distinct ordered block.
-                  const reasoning = reasoningText(b)
-                  if (reasoning) { blocks.push({ type: 'reasoning', text: reasoning }); continue }
-                  // web_search_call action: search → query, open_page → url (the visited site). Surface both.
-                  const action = (b as { action?: { query?: string; url?: string } }).action
-                  const dto: AgentBlockDto = { type: 'server', serverType: b.type }
-                  if (action?.query) dto.query = action.query
-                  if (action?.url) dto.url = action.url
-                  blocks.push(dto)
-                }
-                else if (b.type === 'text') {
-                  const tb = b as { text: string; citations?: { url: string; title?: string }[] }
-                  blocks.push(tb.citations?.length ? { type: 'text', text: tb.text, citations: tb.citations } : { type: 'text', text: tb.text })
-                }
-                else if (b.type === 'tool_use') blocks.push({ type: 'tool_use', id: b.id, name: b.name, input: b.input })
-                // tool_result / image don't appear in an assistant turn — skip
-              }
-              send('agent:assistant', { streamId, blocks })
-            } else if (ev.type === 'compaction') {
-              send('agent:compaction', { streamId, kind: ev.kind, freedTokens: ev.freedTokens })
-            } else {
-              const results: AgentResultDto[] = []
-              for (const b of ev.message.content) {
-                if (isContentBlock(b) && b.type === 'tool_result') {
-                  results.push({
-                    toolUseId: b.tool_use_id,
-                    content: typeof b.content === 'string' ? b.content : JSON.stringify(b.content),
-                    isError: b.is_error === true,
-                  })
-                }
-              }
-              send('agent:results', { streamId, results })
-            }
+            ensureOpen()
+            if (ev.type === 'assistant') send('coordinator:assistant', { streamId, roleId, blocks: serializeAssistantBlocks(ev.message.content) })
+            else if (ev.type === 'compaction') send('coordinator:compaction', { streamId, roleId, kind: ev.kind, freedTokens: ev.freedTokens })
+            else send('coordinator:results', { streamId, roleId, results: serializeToolResults(ev.message.content) })
           },
           // The up-front per-turn count is the CURRENT context (count_tokens of what's being sent) → drives
           // the composer's "/ window" indicator.
@@ -154,27 +134,16 @@ function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: { resum
           onToolImage: (attachment) => broadcastConvImage(sender, input.convId, attachment),
           requestPermission: (req, signal) => {
             if (isSoloPreviewWriteTool(req.toolName)) return Promise.resolve({ allow: true })
-            return new Promise<PermissionDecision>((resolve) => {
-              const permissionId = ulid()
-              // delete-guarded so a response and an abort can race without double-resolving; clears its
-              // own bucket entry so the terminal sweep doesn't re-deny an already-answered prompt. On an
-              // abort (not a user response) it also tells the renderer to drop the now-moot dialog.
-              const settle = (d: PermissionDecision, fromAbort = false): void => {
-                pendingByStream.get(streamId)?.delete(permissionId)
-                if (pendingPermissions.delete(permissionId)) {
-                  if (fromAbort) send('agent:permission:cancel', { streamId, permissionId })
-                  resolve(d)
-                }
-              }
-              pendingPermissions.set(permissionId, settle)
-              pendingByStream.get(streamId)?.add(permissionId)
-              const onAbort = (): void => settle({ allow: false }, true)
-              // run-level abort (agent:stop / renderer-gone) AND turn-level abort (reactive compaction)
-              // both deny so the loop can unwind and the dialog clears.
-              controller.signal.addEventListener('abort', onAbort, { once: true })
-              signal?.addEventListener('abort', onAbort, { once: true })
-              send('agent:permission', { streamId, permissionId, toolName: req.toolName, input: req.input, reason: req.reason })
-            })
+            // run-level abort (agent:stop / renderer-gone) AND turn-level abort (reactive compaction) both deny,
+            // so the loop can unwind and the dialog clears. The bridge owns the delete-guarded settle + sweep.
+            // The event rides coordinator:permission like every mode's approvals; the ANSWER still comes back on
+            // agent:permission:respond (this handler's own bridge instance) — the renderer routes by stream kind.
+            return permissions.request(
+              streamId,
+              [controller.signal, signal],
+              (permissionId) => send('coordinator:permission', { streamId, permissionId, roleId, toolName: req.toolName, input: req.input, reason: req.reason }),
+              (permissionId) => send('coordinator:permission:cancel', { streamId, permissionId }),
+            )
           },
           askUser: (q, signal) =>
             new Promise<string>((resolve) => {
@@ -191,17 +160,24 @@ function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: { resum
               const onAbort = (): void => settle('(question cancelled)', true)
               controller.signal.addEventListener('abort', onAbort, { once: true })
               signal?.addEventListener('abort', onAbort, { once: true })
-              send('agent:question', { streamId, questionId, question: q.question, header: q.header, options: q.options })
+              send('agent:question', { streamId, questionId, roleId, question: q.question, header: q.header, options: q.options })
             }),
         },
         controller.signal,
         { resumeNote: opts?.resumeNote },
       )
-      .then((r) => send('agent:done', { streamId, reason: r.reason, turns: r.turns, inputTokens: r.promptTokens, outputTokens: r.outputTokens, sentTokens: r.sentTokens }))
+      .then((r) => {
+        // step:done settles the segment (authoritative text — mirrors the persisted row), then the terminal
+        // done closes the stream: the exact two-beat every dispatched step ends with. ensureOpen covers a
+        // degenerate zero-event run so the settle still has a segment to land on.
+        ensureOpen()
+        send('coordinator:step:done', { streamId, roleId, text: r.text, inputTokens: r.contextTokens, outputTokens: r.outputTokens, sentTokens: r.sentTokens })
+        send('coordinator:done', { streamId, inputTokens: r.contextTokens, outputTokens: r.outputTokens, reason: r.reason })
+      })
       .catch((err: unknown) => {
         const code = err instanceof LlmError ? err.code : 'unknown'
         const message = err instanceof Error ? err.message : String(err)
-        send('agent:error', { streamId, code, message })
+        send('coordinator:error', { streamId, code, message })
       })
       .finally(() => {
         workspaceTasks.finalizeConv(input.convId) // run silent → finalize an all-complete phase (design §5 P19)
@@ -227,7 +203,7 @@ export function registerAgentHandlers(): void {
   })
 
   ipcMain.handle('agent:permission:respond', (_e, resp: AgentPermissionResponse) => {
-    pendingPermissions.get(resp.permissionId)?.({ allow: resp.allow, updatedInput: resp.updatedInput })
+    permissions.respond(resp.permissionId, { allow: resp.allow, updatedInput: resp.updatedInput })
   })
 
   ipcMain.handle('agent:question:respond', (_e, resp: AgentQuestionResponse) => {

@@ -1,8 +1,12 @@
-// The shared agent-loop core + coordinator-dispatched runs. runAgentLoop writes the per-session
-// transcript, drives runAgent, streams events via the callbacks, and tree-kills run-scoped resources
-// (services / sub-agents / lsp / e2e sessions); runDispatchedAgent wraps it for a coordinator-dispatched
-// expert (the coordinator owns persistence + side effects). Also home to the AgentCallbacks contract and
-// the persisted-conversation → agent-seed mapping both entry points share.
+// The shared agent-loop core + coordinator-dispatched runs — and the drain-unification seams every mode
+// shares: drainAgentRun (the ONE gen-loop — token accounting / audit events / image redaction /
+// MessageDisplay / transcript lines — used by runAgentLoop here AND agent-collab's runTurn) and
+// forwardLlmEvent (the ONE AgentLlmEvent → per-verb role-tagged fan-out used by the solo IPC handler,
+// the dispatched-step bridge, and the collab bridge). runAgentLoop writes the per-session transcript,
+// drives runAgent, streams events via the callbacks, and tree-kills run-scoped resources (services /
+// sub-agents / lsp / e2e sessions); runDispatchedAgent wraps it for a coordinator-dispatched expert
+// (the coordinator owns persistence + side effects). Also home to the AgentCallbacks contract and the
+// persisted-conversation → agent-seed mapping both entry points share.
 
 import { createWriteStream } from 'node:fs'
 import { appendFile, mkdir, realpath } from 'node:fs/promises'
@@ -40,6 +44,7 @@ import { AsyncRegistry } from '../agent/async-registry'
 import { awaitAsyncTool } from '../agent/tools/await-async'
 import { launchAsyncTool } from '../agent/tools/launch-async'
 import { buildAgentSystem } from './agent-system'
+import { recallText } from './project-map.service'
 import { setActiveServices, clearActiveServices, broadcastConvServices } from './active-services'
 import { createPreviewHandle } from './active-preview'
 import { broadcastConvLens } from '../ipc/lens-broadcast'
@@ -54,6 +59,59 @@ export interface AgentCallbacks {
   onToolImage?: (attachment: MessageAttachmentDto) => void // a tool produced an image (persisted nsai-media:// ref) → surface it live
   requestPermission: RequestPermission // bridged to the renderer (req, optional cancel signal)
   askUser?: AskUser // AskUserQuestion: bridged to the renderer; undefined headless (the tool then errors)
+}
+
+// The per-verb, role-tagged stream contract every mode's renderer-bound events speak — structurally the
+// streaming subset of CoordinatorCallbacks, so a CoordinatorCallbacks passes as a sink unchanged. ONE wire
+// shape: solo (agent.handler) emits it as coordinator:* IPC directly, a dispatched step forwards it into the
+// coordinator callbacks, collab bridges its per-expert stream through it. Before this each of those three
+// hand-copied the same AgentLlmEvent switch and drifted (sub_tool_* once fell through the collab copy).
+export interface RunStreamSink {
+  onDelta: (roleId: string, text: string) => void
+  onReasoning?: (roleId: string, text: string) => void
+  onToolStart?: (roleId: string, id: string, name: string) => void
+  onToolEvent?: (roleId: string, ev: AgentEvent | AgentLlmEvent) => void
+  onUsage?: (roleId: string, inputTokens: number, outputTokens?: number, cachedTokens?: number) => void
+  onTurnFinalUsage?: (usage: { inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number }) => void
+}
+
+// The ONE AgentLlmEvent → per-verb fan-out. EXHAUSTIVE over AgentLlmEvent on purpose: the `never` default
+// turns a newly-added stream event type into a compile error here rather than a silent mode-specific UI gap
+// (that omission WAS a real bug — sub_tool_* fell through the old collab copy of this switch).
+export function forwardLlmEvent(sink: RunStreamSink, roleId: string, ev: AgentLlmEvent): void {
+  switch (ev.type) {
+    case 'text':
+      sink.onDelta(roleId, ev.delta)
+      break
+    case 'reasoning':
+      // VISIBLE thinking → its own Thinking block; never folded into the answer text.
+      sink.onReasoning?.(roleId, ev.delta)
+      break
+    case 'tool_use_start':
+      sink.onToolStart?.(roleId, ev.id, ev.name)
+      break
+    case 'sub_tool_start':
+    case 'sub_tool_done':
+    case 'sub_tool_delta':
+    case 'sub_tool_progress':
+      // Canonical sub-tool sink → coordinator:sub-tool:* → renderer PanelCard (anchored by roleId).
+      sink.onToolEvent?.(roleId, ev)
+      break
+    case 'usage':
+      sink.onUsage?.(roleId, ev.inputTokens, ev.outputTokens, ev.cachedTokens)
+      break
+    case 'turn-final':
+      sink.onTurnFinalUsage?.(ev.usage)
+      break
+    case 'tool_use_input':
+      // Streaming tool-call JSON — not surfaced live anywhere. Explicit case so it stays a decision, not a
+      // silent omission.
+      break
+    default: {
+      const _exhaustive: never = ev
+      void _exhaustive
+    }
+  }
 }
 
 // One agent loop: writes the transcript, drives runAgent, streams events via cb, returns the final
@@ -85,11 +143,6 @@ export interface AgentLoopInput {
   expectsFileChanges?: boolean // implementation-gated run: quiescing with zero file edits triggers one nudge turn (loop.ts)
   maxTurns?: number // hard cap on agent-loop turns (lens sub-agents pass 50 = Workflow FORKED_AGENT_DEFAULT_MAX_TURNS); undefined → unbounded
   stallTimeoutMs?: number // content-level stream stall watchdog; defaults to the main-dispatch budget
-  // roleId stamped on this run's studio_lens conv-broadcast (ipc/lens-broadcast) so the Tasks panel can group
-  // the lens card by its driver. Defaults to '' — the existing solo behavior (the renderer anchors to the
-  // in-flight assistant turn). Danny's routing investigation (routeAsAgent) passes 'coordinator' so its lens
-  // Understand progress surfaces as the coordinator's, not a stray solo card.
-  lensStreamRoleId?: string
   // 批C2b: a CONV-LEVEL async registry (solo-async) for the direct-chat path, so launch_async handles outlive the
   // run and a parked turn can resume across turns. When set, runAgentLoop uses it and does NOT dispose it in the
   // finally (conv-delete / app-exit owns that). Absent (dispatched / collab-sub) → a per-run registry, disposed here.
@@ -100,6 +153,11 @@ export interface AgentLoopInput {
   // Anti-recursion id for an AGENT hook's sub-query (prefixed 'hook-agent-'). Set into ctx.hookAgentId so the
   // hook engine drops prompt/agent hooks inside it — a hook can't recursively trigger more prompt/agent hooks.
   hookAgentId?: string
+  // Marks a run that persists NO message row (ephemeral — Danny's routing investigation) but must still be
+  // REBUILT as a visible segment on reload: stamped onto the transcript 'run' line, where openConversation's
+  // orphan-run pass picks it up (expertId from the line's roleId; these fields carry its display identity).
+  // Absent for every other run — a quiet lens sub-agent is ephemeral too but intentionally invisible on reload.
+  ephemeralDisplay?: { segmentKind?: string }
 }
 
 // Generic tool→image surfacing. A tool that produces an image (ns_generate_image, code_execution charts,
@@ -150,6 +208,105 @@ async function persistToolResultImages(
   return { attachments, redacted: { ...block, content: redacted } }
 }
 
+// The ONE gen-loop every mode drains a runAgent generator through — token accounting, tool:pre/post audit
+// events, tool-image persist/redact, MessageDisplay hooks, and the transcript 'event' log line all live HERE,
+// once. runAgentLoop (solo + dispatched) and agent-collab's runTurn both call it; before this each hand-copied
+// the loop and drifted (collab wrote NO transcript → its tool cards vanished on reload, and it shipped raw
+// base64 tool images over IPC). The caller owns the transcript stream and passes its line writer as `log` —
+// collab shares ONE session-level writer across its concurrent experts (per-line writes interleave safely),
+// solo/dispatched pass their per-run writer.
+export interface DrainedRun {
+  result: AgentResult
+  inTokens: number // TOTAL prompt tokens incl. cache, accumulated across turns → billing
+  contextTokens: number // LAST turn's prompt = current context size → display ↑ (overwrite semantics)
+  cacheReadTokens: number // cache-read share of the LAST turn's prompt → "(+N cached)"
+  outTokens: number
+  toolCalls: { total: number; errors: number; byName: Record<string, number> }
+  toolImages: MessageAttachmentDto[]
+}
+
+export async function drainAgentRun(opts: {
+  gen: AsyncGenerator<AgentEvent, AgentResult, void>
+  ctx: AgentContext
+  convId: string
+  roleId: string
+  runId: string
+  log: (obj: Record<string, unknown>) => void // transcript line writer (the caller owns the stream/file)
+  onEvent: (ev: AgentEvent) => void // post-processed events (tool images already persisted + redacted)
+  onUsage?: (promptTokens: number) => void // per-assistant-turn context ping (live ↑ readout)
+  onToolImage?: (attachment: MessageAttachmentDto) => void // an image a tool produced, surfaced live
+}): Promise<DrainedRun> {
+  const { gen, ctx, convId, roleId, runId, log } = opts
+  let inTokens = 0 // TOTAL prompt tokens incl. cache, accumulated across turns → billing (usage_events)
+  let lastContext = 0 // current context size = LAST turn's prompt (display ↑). OVERWRITE, never accumulate — accumulating ANY per-turn input (fresh/non-cached/total) re-counts history N× and balloons on long runs (engineer hit 5.3M).
+  let lastCacheRead = 0 // cache-read share of the LAST turn's prompt (display "(+N cached)"). OVERWRITE alongside lastContext so fresh = lastContext − lastCacheRead pairs with the same turn.
+  let outTokens = 0
+  const toolImages: MessageAttachmentDto[] = [] // images any tool produced this run → assistant-message attachments
+  const toolNames = new Map<string, string>() // tool_use id → name, to pair tool:post with its tool
+  const toolCalls = { total: 0, errors: 0, byName: {} as Record<string, number> }
+  let displayIndex = 0
+  let result!: AgentResult
+  for (;;) {
+    const { value, done } = await gen.next()
+    if (done) {
+      // Run-TERMINAL bookkeeping (the transcript 'done' line + the session:end hook event) stays with the
+      // CALLER: runAgentLoop drains once per run, but a collab expert drains once per mailbox WAKE under one
+      // runId — emitting a terminal here would fire it N times per expert.
+      result = value
+      break
+    }
+    let emitted: AgentEvent = value
+    if (value.type === 'assistant') {
+      inTokens += promptTokensFromUsage(value.usage) // total incl. cache → billing
+      lastContext = promptTokensFromUsage(value.usage) // current context size = this (latest) turn's full prompt incl. cache. OVERWRITE: the last turn's prompt IS the conversation context — cache- AND length-invariant.
+      lastCacheRead = value.usage.cacheReadTokens ?? 0 // cache-read share of THIS turn's prompt, paired with lastContext
+      outTokens += value.usage.outTokens
+      opts.onUsage?.(promptTokensFromUsage(value.usage)) // live ↑ readout: this turn's prompt size (current context, last)
+      for (const b of value.message.content) {
+        if (isContentBlock(b) && b.type === 'tool_use') {
+          toolNames.set(b.id, b.name)
+          toolCalls.total++
+          toolCalls.byName[b.name] = (toolCalls.byName[b.name] ?? 0) + 1
+          agentEvents.emit({ type: 'tool:pre', convId, roleId, tool: b.name, ts: Date.now() })
+        }
+      }
+    } else if (value.type === 'tool_results') {
+      // Persist any image a tool returned (→ nsai-media:// attachment) and surface it live, then emit a
+      // REDACTED copy (base64 swapped for a marker) so the transcript jsonl + the renderer IPC stay lean.
+      // The model's own message array inside runAgent keeps the untouched base64 block for its vision.
+      const content: AnyBlock[] = []
+      for (const b of value.message.content) {
+        if (isContentBlock(b) && b.type === 'tool_result') {
+          if (b.is_error) toolCalls.errors++
+          agentEvents.emit({ type: 'tool:post', convId, roleId, tool: toolNames.get(b.tool_use_id) ?? 'unknown', isError: b.is_error ?? false, ts: Date.now() })
+          const { attachments, redacted } = await persistToolResultImages(convId, b)
+          for (const att of attachments) {
+            toolImages.push(att)
+            opts.onToolImage?.(att)
+          }
+          content.push(redacted)
+        } else {
+          content.push(b)
+        }
+      }
+      emitted = { type: 'tool_results', message: { role: 'user', content } }
+    }
+    if (emitted.type === 'assistant' && hookRegistry.hasAny('MessageDisplay')) {
+      const md = await runHooks(
+        'MessageDisplay',
+        { ...baseHookPayload('MessageDisplay', ctx), turn_id: runId, message_id: `${runId}:${displayIndex}`, index: displayIndex, final: true, delta: assistantVisibleText(emitted.message) },
+        hookContextFromAgent(ctx),
+      )
+      if (md.permissionBehavior === 'deny') continue
+      if (md.displayContent !== undefined) emitted = { ...emitted, message: replaceAssistantDisplay(emitted.message, md.displayContent) }
+      displayIndex++
+    }
+    log({ t: 'event', runId, event: emitted })
+    opts.onEvent(emitted)
+  }
+  return { result, inTokens, contextTokens: lastContext, cacheReadTokens: lastCacheRead, outTokens, toolCalls, toolImages }
+}
+
 export async function runAgentLoop(
   loop: AgentLoopInput,
   cb: AgentCallbacks,
@@ -172,7 +329,11 @@ export async function runAgentLoop(
   transcript.on('error', () => {})
   // Stamp every line with a wall-clock ts so analytics can attribute tool calls to a day ("tool calls today").
   const log = (obj: Record<string, unknown>): void => void transcript.write(JSON.stringify({ ...obj, ts: Date.now() }) + '\n')
-  log({ t: 'run', runId: loop.runId, convId: loop.convId, cwd: loop.cwd, model: loop.model })
+  // roleId + ephemeralDisplay ride the 'run' line for the reload rebuild (openConversation): roleId attributes
+  // the run's tool cards to its expert; ephemeralDisplay marks a run that persisted NO message row (Danny's
+  // routing investigation) yet must still rebuild as a visible segment. Runs without the marker and without a
+  // message row referencing their runId (lens finders/skeptics, sub-agents) stay invisible on reload — by design.
+  log({ t: 'run', runId: loop.runId, convId: loop.convId, roleId: loop.roleId, cwd: loop.cwd, model: loop.model, ...(loop.ephemeralDisplay ? { ephemeralDisplay: loop.ephemeralDisplay } : {}) })
 
   // Per-run service registry: dev roles start dev servers through it (start_service); everything it
   // launched is tree-killed when the run ends (finally) — no leftover dev servers piling up across runs.
@@ -233,9 +394,11 @@ export async function runAgentLoop(
           // SOLO lens runs async — await_async PARKS the turn, so its turn stream finishes and events through
           // cb.onStream become guarded no-ops (the panel freezes at "creating"). Route lens progress on the
           // conv-level broadcast (ipc/lens-broadcast) so reviewers + verdict reach the Tasks panel live across the
-          // park. Collab builds ITS handle in agent-collab with onStream = onExpertStream (the persistent
-          // coordinator stream a park never finishes) — a different call site, deliberately untouched.
-          onStream: (ev) => broadcastConvLens(loop.convId, loop.lensStreamRoleId ?? '', ev),
+          // park. Tagged with THIS run's roleId — the renderer anchors the card to that role's segment (the same
+          // roleId anchoring every other stream event uses; the old lensStreamRoleId side-channel is gone). Collab
+          // builds ITS handle in agent-collab with onStream = onExpertStream (the persistent coordinator stream a
+          // park never finishes) — a different call site, deliberately untouched.
+          onStream: (ev) => broadcastConvLens(loop.convId, loop.roleId, ev),
           onToolImage: cb.onToolImage,
           requestPermission: cb.requestPermission
         })
@@ -290,81 +453,27 @@ export async function runAgentLoop(
     onRetry: cb.onRetry,
   })
 
-  let result!: AgentResult
-  let sessionEndReason: string | undefined
-  let inTokens = 0 // TOTAL prompt tokens incl. cache, accumulated across turns → billing (usage_events)
-  let lastContext = 0 // current context size = LAST turn's prompt (display ↑). OVERWRITE, never accumulate — accumulating ANY per-turn input (fresh/non-cached/total) re-counts history N× and balloons on long runs (engineer hit 5.3M).
-  let lastCacheRead = 0 // cache-read share of the LAST turn's prompt (display "(+N cached)"). OVERWRITE alongside lastContext so fresh = lastContext − lastCacheRead pairs with the same turn.
-  let outTokens = 0
-  const toolImages: MessageAttachmentDto[] = [] // images any tool produced this run → assistant-message attachments
-  const toolNames = new Map<string, string>() // tool_use id → name, to pair tool:post with its tool
   // Run report (doc 48): per-run counters → sessions/<convId>/run-stats.jsonl. One line per finished
   // run (incl. aborted/max_turns); a run that dies on a hard LLM error throws past this and writes none.
   const startedAt = Date.now()
-  const toolCalls = { total: 0, errors: 0, byName: {} as Record<string, number> }
-  let displayIndex = 0
+  let drained: DrainedRun | undefined
   try {
-    for (;;) {
-      const { value, done } = await gen.next()
-      if (done) {
-        log({ t: 'done', runId: loop.runId, reason: value.reason, turns: value.turns })
-        agentEvents.emit({ type: 'session:end', convId: loop.convId, roleId: loop.roleId, turns: value.turns, reason: value.reason, ts: Date.now() })
-        sessionEndReason = value.reason
-        result = value
-        break
-      }
-      let emitted: AgentEvent = value
-      if (value.type === 'assistant') {
-        inTokens += promptTokensFromUsage(value.usage) // total incl. cache → billing
-        lastContext = promptTokensFromUsage(value.usage) // current context size = this (latest) turn's full prompt incl. cache. OVERWRITE: the last turn's prompt IS the conversation context — cache- AND length-invariant.
-        lastCacheRead = value.usage.cacheReadTokens ?? 0 // cache-read share of THIS turn's prompt, paired with lastContext
-        outTokens += value.usage.outTokens
-        cb.onUsage?.(promptTokensFromUsage(value.usage)) // live ↑ readout: this turn's prompt size (current context, last)
-        for (const b of value.message.content) {
-          if (isContentBlock(b) && b.type === 'tool_use') {
-            toolNames.set(b.id, b.name)
-            toolCalls.total++
-            toolCalls.byName[b.name] = (toolCalls.byName[b.name] ?? 0) + 1
-            agentEvents.emit({ type: 'tool:pre', convId: loop.convId, roleId: loop.roleId, tool: b.name, ts: Date.now() })
-          }
-        }
-      } else if (value.type === 'tool_results') {
-        // Persist any image a tool returned (→ nsai-media:// attachment) and surface it live, then emit a
-        // REDACTED copy (base64 swapped for a marker) so the transcript jsonl + the renderer IPC stay lean.
-        // The model's own message array inside runAgent keeps the untouched base64 block for its vision.
-        const content: AnyBlock[] = []
-        for (const b of value.message.content) {
-          if (isContentBlock(b) && b.type === 'tool_result') {
-            if (b.is_error) toolCalls.errors++
-            agentEvents.emit({ type: 'tool:post', convId: loop.convId, roleId: loop.roleId, tool: toolNames.get(b.tool_use_id) ?? 'unknown', isError: b.is_error ?? false, ts: Date.now() })
-            const { attachments, redacted } = await persistToolResultImages(loop.convId, b)
-            for (const att of attachments) {
-              toolImages.push(att)
-              cb.onToolImage?.(att)
-            }
-            content.push(redacted)
-          } else {
-            content.push(b)
-          }
-        }
-        emitted = { type: 'tool_results', message: { role: 'user', content } }
-      }
-      if (emitted.type === 'assistant' && hookRegistry.hasAny('MessageDisplay')) {
-        const md = await runHooks(
-          'MessageDisplay',
-          { ...baseHookPayload('MessageDisplay', ctx), turn_id: loop.runId, message_id: `${loop.runId}:${displayIndex}`, index: displayIndex, final: true, delta: assistantVisibleText(emitted.message) },
-          hookContextFromAgent(ctx),
-        )
-        if (md.permissionBehavior === 'deny') continue
-        if (md.displayContent !== undefined) emitted = { ...emitted, message: replaceAssistantDisplay(emitted.message, md.displayContent) }
-        displayIndex++
-      }
-      log({ t: 'event', runId: loop.runId, event: emitted })
-      cb.onEvent(emitted)
-    }
+    drained = await drainAgentRun({
+      gen,
+      ctx,
+      convId: loop.convId,
+      roleId: loop.roleId,
+      runId: loop.runId,
+      log,
+      onEvent: cb.onEvent,
+      onUsage: cb.onUsage,
+      onToolImage: cb.onToolImage,
+    })
+    log({ t: 'done', runId: loop.runId, reason: drained.result.reason, turns: drained.result.turns })
+    agentEvents.emit({ type: 'session:end', convId: loop.convId, roleId: loop.roleId, turns: drained.result.turns, reason: drained.result.reason, ts: Date.now() })
   } finally {
     if (hookRegistry.hasAny('SessionEnd')) {
-      await runHooks('SessionEnd', { ...baseHookPayload('SessionEnd', ctx), reason: sessionEndReason ?? (signal.aborted ? 'aborted' : 'error') }, hookContextFromAgent(ctx)).catch(() => undefined)
+      await runHooks('SessionEnd', { ...baseHookPayload('SessionEnd', ctx), reason: drained?.result.reason ?? (signal.aborted ? 'aborted' : 'error') }, hookContextFromAgent(ctx)).catch(() => undefined)
     }
     transcript.end()
     clearActiveServices(loop.convId, registry)
@@ -381,6 +490,7 @@ export async function runAgentLoop(
   }
 
   const endedAt = Date.now()
+  const { result } = drained
   void appendFile(
     join(sessionDir, 'run-stats.jsonl'),
     JSON.stringify({
@@ -393,11 +503,11 @@ export async function runAgentLoop(
       durationMs: endedAt - startedAt,
       reason: result.reason,
       turns: result.turns,
-      inTokens,
-      contextTokens: lastContext,
-      cacheReadTokens: lastCacheRead,
-      outTokens,
-      toolCalls,
+      inTokens: drained.inTokens,
+      contextTokens: drained.contextTokens,
+      cacheReadTokens: drained.cacheReadTokens,
+      outTokens: drained.outTokens,
+      toolCalls: drained.toolCalls,
       compactions: result.compactions,
     }) + '\n',
   ).catch(() => {}) // stats are best-effort — never fail the run over them
@@ -416,13 +526,13 @@ export async function runAgentLoop(
 
   return {
     text: finalAssistantText(result.messages),
-    inTokens,
-    contextTokens: lastContext,
-    cacheReadTokens: lastCacheRead,
-    outTokens,
+    inTokens: drained.inTokens,
+    contextTokens: drained.contextTokens,
+    cacheReadTokens: drained.cacheReadTokens,
+    outTokens: drained.outTokens,
     reason: result.reason,
     turns: result.turns,
-    attachments: toolImages,
+    attachments: drained.toolImages,
     writtenFiles,
   }
 }
@@ -474,8 +584,14 @@ export interface DispatchedAgentInput {
   // and one that includes studio_lens so ctx.panel gets wired (handle-presence ⟺ tool-presence). Takes
   // precedence over toolNames.
   toolset?: readonly Tool[]
-  // Threaded to AgentLoopInput.lensStreamRoleId — see there. routeAsAgent passes 'coordinator'.
-  lensStreamRoleId?: string
+  // The run id for this dispatched loop. The CALLER supplies it so it can stamp the SAME id onto the step's
+  // persisted message row — that row↔transcript pairing is what lets openConversation rebuild the step's tool
+  // cards on reload (before this, runDispatchedAgent minted its own id internally and the row carried none, so
+  // every dispatched expert's tool cards silently vanished on reopen). Unset → minted here (headless callers).
+  runId?: string
+  // Threaded to AgentLoopInput.ephemeralDisplay — marks Danny's persisted-nowhere routing investigation for
+  // the reload rebuild. See there.
+  ephemeralDisplay?: { segmentKind?: string }
   initialTodos?: AgentContext['todos'] // shared conv-level todos seeded into the dispatched run (pipeline continuity)
   onTodosChange?: (roleId: string, todos: AgentContext['todos']) => void // TodoWrite writes back → shared conv-level list + per-role live push (roleId injected at ctx.setTodos)
   hookAgentId?: string // agent-hook sub-query id (anti-recursion); threaded into ctx.hookAgentId
@@ -511,7 +627,10 @@ export async function runDispatchedAgent(
     tools = tools.filter((t) => !t.name.startsWith('monitor_') && t.name !== 'schedule_wakeup')
   }
   const serverTools: ServerToolSchema[] = d.protocol === 'openai' ? [{ type: 'web_search', name: 'web_search' }] : []
-  const system = d.systemPromptOverride ?? buildAgentSystem(d.roleId, d.memories, d.summary, skillManager.listingForRole(d.roleId), d.cwd)
+  // §4: dispatched experts read the SAME system-wide project map (read-only orientation). Skipped under a full
+  // systemPromptOverride (routeAsAgent's investigation persona — its brief already carries the recalled map).
+  const projectMapText = d.systemPromptOverride ? undefined : await recallText(d.cwd)
+  const system = d.systemPromptOverride ?? buildAgentSystem(d.roleId, d.memories, d.summary, skillManager.listingForRole(d.roleId), d.cwd, false, projectMapText)
 
   let seed: AgentMessage[]
   if (d.includeHistory) {
@@ -555,14 +674,14 @@ export async function runDispatchedAgent(
       cwd: d.cwd,
       convId: d.convId,
       roleId: d.roleId,
-      runId: ulid(),
+      runId: d.runId ?? ulid(),
       thinking: d.thinking,
       contextWindow: d.contextWindow,
       permissionMode: d.permissionMode ?? 'default',
       expectsFileChanges: d.expectsFileChanges,
       maxTurns: d.maxTurns,
       stallTimeoutMs: d.stallTimeoutMs,
-      lensStreamRoleId: d.lensStreamRoleId,
+      ephemeralDisplay: d.ephemeralDisplay,
       imageModel: d.imageModel,
       initialTodos: d.initialTodos,
       onTodosChange: d.onTodosChange,

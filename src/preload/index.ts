@@ -10,7 +10,6 @@ import type {
   ChatDone,
   ChatErrorDto,
   AgentRunInput,
-  AgentTextDelta,
   AgentResumeStream,
   ConvUsage,
   ConvImage,
@@ -29,23 +28,10 @@ import type {
   TerminalData,
   TerminalExit,
   TerminalTitle,
-  AgentToolStart,
-  AgentAssistant,
-  AgentCompaction,
-  AgentReasoning,
-  AgentToolResults,
-  AgentSubToolStart,
-  AgentSubToolDone,
-  AgentSubToolDelta,
-  AgentSubToolProgress,
-  AgentPermissionRequest,
   AgentPermissionResponse,
-  AgentPermissionCancel,
   AgentQuestionRequest,
   AgentQuestionResponse,
   AgentQuestionCancel,
-  AgentDone,
-  AgentErrorDto,
   RunTranscript,
   CoordinatorRunInputDto,
   CoordinatorDispatchEvent,
@@ -67,6 +53,7 @@ import type {
   CoordinatorPermissionRequest,
   CoordinatorPermissionCancel,
   CoordinatorApprovalEvent,
+  CoordinatorRetry,
   PendingApprovalDto,
   RoleBindingDto,
   RoleBindingInput,
@@ -276,6 +263,9 @@ const api = {
     }
   },
 
+  // Solo agent CONTROL plane only — the run's STREAM rides the coordinator:* channels below (one wire for
+  // every mode, tagged with roleId). agent:* keeps run/stop, the solo-only AskUserQuestion dialog, the
+  // permission ANSWER channel (the ask itself arrives on coordinator:permission), and the transcript rebuild.
   agent: {
     run: (input: AgentRunInput): Promise<{ streamId: string }> => ipcRenderer.invoke('agent:run', input),
     stop: (streamId: string): Promise<void> => ipcRenderer.invoke('agent:stop', streamId),
@@ -284,27 +274,10 @@ const api = {
       ipcRenderer.invoke('agent:permission:respond', resp),
     respondQuestion: (resp: AgentQuestionResponse): Promise<void> =>
       ipcRenderer.invoke('agent:question:respond', resp),
-    onDelta: (cb: (d: AgentTextDelta) => void): (() => void) => agentListen('agent:delta', cb),
-    onReasoning: (cb: (d: AgentReasoning) => void): (() => void) => agentListen('agent:reasoning', cb),
     // 批C2b: a parked solo run resumed itself on a new stream — bind it to the conv so the resumed turn streams in.
     onResumeStream: (cb: (d: AgentResumeStream) => void): (() => void) => agentListen('agent:resume-stream', cb),
-    onToolStart: (cb: (d: AgentToolStart) => void): (() => void) => agentListen('agent:tool:start', cb),
-    onSubToolStart: (cb: (d: AgentSubToolStart) => void): (() => void) => agentListen('agent:sub-tool:start', cb),
-    onSubToolDone: (cb: (d: AgentSubToolDone) => void): (() => void) => agentListen('agent:sub-tool:done', cb),
-    onSubToolDelta: (cb: (d: AgentSubToolDelta) => void): (() => void) => agentListen('agent:sub-tool:delta', cb),
-    onSubToolProgress: (cb: (d: AgentSubToolProgress) => void): (() => void) => agentListen('agent:sub-tool:progress', cb),
-    onAssistant: (cb: (d: AgentAssistant) => void): (() => void) => agentListen('agent:assistant', cb),
-    onResults: (cb: (d: AgentToolResults) => void): (() => void) => agentListen('agent:results', cb),
-    onCompaction: (cb: (d: AgentCompaction) => void): (() => void) => agentListen('agent:compaction', cb),
-    onPermission: (cb: (d: AgentPermissionRequest) => void): (() => void) => agentListen('agent:permission', cb),
-    onPermissionCancel: (cb: (d: AgentPermissionCancel) => void): (() => void) => agentListen('agent:permission:cancel', cb),
     onQuestion: (cb: (d: AgentQuestionRequest) => void): (() => void) => agentListen('agent:question', cb),
     onQuestionCancel: (cb: (d: AgentQuestionCancel) => void): (() => void) => agentListen('agent:question:cancel', cb),
-    onDone: (cb: (d: AgentDone) => void): (() => void) => agentListen('agent:done', cb),
-    onError: (cb: (d: AgentErrorDto) => void): (() => void) => agentListen('agent:error', cb),
-    onRetry: (
-      cb: (d: { streamId: string; attempt: number; max: number; code: string; waitMs: number }) => void
-    ): (() => void) => agentListen('agent:retry', cb),
     transcript: (convId: string): Promise<Record<string, RunTranscript>> =>
       ipcRenderer.invoke('agent:transcript', convId)
   },
@@ -333,7 +306,9 @@ const api = {
     onPermission: (cb: (d: CoordinatorPermissionRequest) => void): (() => void) => agentListen('coordinator:permission', cb),
     onPermissionCancel: (cb: (d: CoordinatorPermissionCancel) => void): (() => void) => agentListen('coordinator:permission:cancel', cb),
     respondPermission: (resp: AgentPermissionResponse): Promise<void> => ipcRenderer.invoke('coordinator:permission:respond', resp),
-    onApproval: (cb: (d: CoordinatorApprovalEvent) => void): (() => void) => agentListen('coordinator:approval', cb)
+    onApproval: (cb: (d: CoordinatorApprovalEvent) => void): (() => void) => agentListen('coordinator:approval', cb),
+    // Transient upstream failure mid-run (any mode — solo runs ride this wire too) → the retrying banner.
+    onRetry: (cb: (d: CoordinatorRetry) => void): (() => void) => agentListen('coordinator:retry', cb)
   },
 
   // Gate C e2e verification (keyed by convId): the verifier runs in a background queue AFTER coordinator:done,

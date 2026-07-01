@@ -11,8 +11,8 @@
 //
 // SOLO ONLY. Collab lens builds its handle in agent-collab.ts with onStream = onExpertStream (the persistent,
 // roleId-tagged coordinator stream that a park never finishes) and never routes here — its display path is
-// untouched. roleId is '' for a solo run (the renderer anchors to the in-flight assistant turn); it is carried
-// on the payload so a future coordinator-driven lens can group by its driver's roleId.
+// untouched. roleId = the calling run's roleId (agent-dispatch passes loop.roleId): the renderer anchors the
+// lens card to that role's segment with the SAME roleId anchoring every other stream event uses.
 import { BrowserWindow } from 'electron'
 import type { AgentLlmEvent } from '../agent/llm'
 import type { ConvLens } from './contracts'
