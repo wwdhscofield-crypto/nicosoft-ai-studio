@@ -7,6 +7,7 @@
 // gateways that overwrite the system prompt (OAuth-gateway identity injection on nicosoft/* slugs —
 // Batch 2 lesson). No assistant prefill: Sonnet 4.6 / Opus 4.6+ dropped prefill support.
 
+import { z } from 'zod'
 import * as convRepo from '../repos/conversation.repo'
 import * as roleRepo from '../repos/role.repo'
 import * as endpointRepo from '../repos/endpoint.repo'
@@ -18,6 +19,7 @@ import { resolveDepth } from '../llm/thinking'
 import type { ChatMessage } from '../llm/types'
 import { COORDINATOR_ROUTER_PROMPT, COORDINATOR_INVESTIGATION_PROMPT, DISPATCHABLE_ROLE_IDS, displayName, roleIdFromName } from '../agent/roles/prompts'
 import { COORDINATOR_INVESTIGATION_TOOLS } from './agent-tools'
+import { buildTool, type Tool } from '../agent/tool'
 import { runRoleStep } from './coordinator-step'
 import * as projectMap from './project-map.service'
 import { protocolFamily } from '@shared/thinking'
@@ -90,13 +92,45 @@ export async function route(userInput: string, history: convRepo.MessageRow[], c
   return tier1
 }
 
+// The investigation's DECISION CHANNEL: Danny submits the routing decision as a TOOL CALL instead of printing
+// raw JSON into his visible narration — the machine protocol must never reach the chat (dogfood 2026-07-02:
+// the terminal JSON rendered verbatim inside Danny's segment). A CLOSURE tool: routeAsAgent injects a fresh
+// instance per investigation and captures the submitted object; validation goes through the same
+// decisionFromObject core as the text parse. Read-only + concurrency-safe (it only records), so it never
+// trips the coordinator approval classifier.
+function makeRouteDecisionTool(onDecision: (raw: Record<string, unknown>) => void): Tool {
+  return buildTool({
+    name: 'route_decision',
+    prompt: () =>
+      'Submit your FINAL routing decision (exactly once, after the investigation). The decision is machine-read from this call — NEVER print it as text/JSON in your reply.',
+    inputSchema: z.object({
+      mode: z.enum(['direct', 'single', 'pipeline', 'parallel', 'council', 'collaborate']),
+      role: z.string().optional().describe('single mode: the ONE expert, by NAME'),
+      roles: z.array(z.string()).optional().describe('multi modes: 2-3 experts, by NAME'),
+      intro: z.string().optional().describe("your one-sentence hand-off to the user, in the user's language"),
+      reason: z.string().optional().describe('why this team, ≤8 words'),
+      needsPlan: z.boolean().optional().describe('true only for code-change work worth verifying'),
+      projectMap: z.string().optional().describe("≤1200 chars: the project's SHAPE you learned (layout, surfaces, key modules) — remembered for the next task"),
+    }),
+    isReadOnly: () => true,
+    isConcurrencySafe: () => true,
+    call: async (input) => {
+      onDecision(input as Record<string, unknown>)
+      return { data: 'Decision recorded. Wrap up now in ONE short sentence to the user — no JSON anywhere in your prose.' }
+    },
+    mapResult: (out, toolUseId) => ({ type: 'tool_result', tool_use_id: toolUseId, content: String(out) }),
+  }) as unknown as Tool
+}
+
 // L1 — Danny as a coordination AGENT (coordinator dispatch §3). Runs Danny with a READ-ONLY delegation kit
 // (COORDINATOR_INVESTIGATION_TOOLS: Read/Glob + Task + studio_lens·understand + await_async) so he can look at
 // the real project before committing to a team — DELEGATING the reading (a Task sub-agent or a lens Understand
 // map), so his own context stays lean and the run can't run away (no turn cap needed; delegation isolates it).
-// His final message is the SAME JSON decision the router emits, parsed here; a `projectMap` summary rides along
-// for project memory. Best-effort by construction: any failure (config, protocol, a thrown loop) degrades to
-// the tier-1 decision so routing NEVER dead-ends — only a real user abort propagates.
+// The decision arrives via the injected route_decision TOOL (visible prose stays human-readable narration);
+// a text-JSON final message is kept as the parse FALLBACK for a model that answers in prose anyway. A
+// `projectMap` summary rides along for project memory. Best-effort by construction: any failure (config,
+// protocol, a thrown loop) degrades to the tier-1 decision so routing NEVER dead-ends — only a real user
+// abort propagates.
 async function routeAsAgent(
   userInput: string,
   history: convRepo.MessageRow[],
@@ -121,39 +155,44 @@ async function routeAsAgent(
     const brief = buildInvestigationBrief(userInput, history, enabled, recalled, tier1)
     const system = `${COORDINATOR_INVESTIGATION_PROMPT}\n\nCurrently available experts: ${enabled.map(displayName).join(', ')}. Route ONLY to these — others are disabled.`
 
+    // The decision channel: a per-investigation closure tool captures Danny's submitted decision object —
+    // the machine protocol rides a TOOL CALL (rendered as a tool card), never his visible prose.
+    let submitted: Record<string, unknown> | null = null
+    const decisionTool = makeRouteDecisionTool((d) => { submitted = d })
+
     // §3 Danny visibility: the investigation runs through the SAME visible step machinery as every dispatched
     // expert (runRoleStep → onStepStart / onDelta / onToolEvent / onStepDone), so his Glob/Read/Task work streams
     // to the chat LIVE under roleId 'coordinator' — no longer the old silent no-op callbacks that made "Danny
     // investigates" invisible. isDirect routes coordinator (not an AGENT_ROLE_ID) through the agent loop;
-    // systemPromptOverride swaps in the investigation persona; toolset is his verbatim read-only delegation kit;
-    // ephemeral keeps the turn OFF the dispatch transcript (visible ≠ persisted). His final message carries the
-    // JSON decision, parsed here — the visible prose is his human-readable investigation, the terminal JSON is
-    // machine-read (never surfaced as a decision). runRoleStep resolves thinking / contextWindow internally.
+    // systemPromptOverride swaps in the investigation persona; toolset is his verbatim read-only delegation kit
+    // plus this run's route_decision tool; ephemeral keeps the turn OFF the dispatch transcript (visible ≠
+    // persisted). runRoleStep resolves thinking / contextWindow internally.
     const res = await runRoleStep({
       convId,
       roleId: 'coordinator',
       prompt: brief,
       dispatch: null,
-      // segmentKind 'investigate' gives Danny's pre-routing investigation a first-class dispatched IDENTITY in the
-      // renderer WITHOUT faking a dispatch chain: it makes the segment foldable (a windowed step like every
-      // dispatched expert) and gives canMerge a clean boundary so the investigation's tools don't smear into the
-      // adjacent intro/direct segment. dispatch STAYS null — there's no routing to show yet (Danny is still
-      // deciding), so no DispatchBadge, and isSynthesis (coordinator + non-empty chain) stays false by construction.
+      // segmentKind 'investigate' gives Danny's pre-routing investigation its own segment identity WITHOUT
+      // faking a dispatch chain: canMerge gets a clean boundary so the investigation's tools don't smear into
+      // the adjacent intro/direct segment. It renders FULL-HEIGHT like every host segment (the product rule —
+      // segmentFolds in chat-helpers: only dispatched, chained steps fold). dispatch STAYS null — there's no
+      // routing to show yet (Danny is still deciding), so no DispatchBadge, and isSynthesis (coordinator +
+      // non-empty chain) stays false by construction.
       segmentKind: 'investigate',
       includeHistory: false, // the brief is self-contained (it embeds the recent user turns + the request)
       isDirect: true,
       cwd,
       systemPromptOverride: system,
-      toolset: COORDINATOR_INVESTIGATION_TOOLS,
+      toolset: [...COORDINATOR_INVESTIGATION_TOOLS, decisionTool],
       ephemeral: true,
       cb,
       signal: signal ?? new AbortController().signal,
     })
-    // tryParseRouteDecision never fails hard — a degenerate final turn (prose, empty, an invalid/disabled role, or
-    // a non-agent role for collaborate) would silently collapse to a lenient single-generalist and DROP both the
-    // richer tier-1 decision AND its plan gate. Danny DID investigate, so on a degenerate parse keep tier-1 (already
-    // a better guess than a blind fallback); only a clean, validated decision overrides it.
-    const decision = tryParseRouteDecision(res.text, enabled)
+    // Prefer the tool-submitted decision (the designed channel); fall back to parsing the final text for a
+    // model that printed JSON anyway. Neither fails hard — a degenerate outcome (no tool call AND no usable
+    // text JSON / an invalid or disabled role / a non-agent role for collaborate) keeps the tier-1 decision:
+    // Danny DID investigate, so tier-1 is already a better guess than a blind lenient fallback.
+    const decision = (submitted ? decisionFromObject(submitted, enabled) : null) ?? tryParseRouteDecision(res.text, enabled)
     if (!decision) {
       console.warn('[coordinator] routeAsAgent produced no clean decision — keeping the tier-1 decision')
       return tier1
@@ -195,7 +234,7 @@ function buildInvestigationBrief(
   else if (tier1.mode === 'direct') guess = 'direct (you would handle it yourself)'
   else guess = `${tier1.mode} → ${tier1.roles.map(displayName).join(', ')}`
   parts.push(`Your first-pass guess to confirm or refine after looking: ${guess}.`)
-  parts.push('Investigate the project shape (delegating the reading), pick the smallest team that covers the real surfaces, then reply with ONLY the JSON decision (include "projectMap").')
+  parts.push('Investigate the project shape (delegating the reading), pick the smallest team that covers the real surfaces, then SUBMIT the decision with the route_decision tool (include "projectMap"). Never print the decision as text or JSON — after the tool confirms, wrap up in one short sentence to the user.')
   return parts.join('\n\n')
 }
 
@@ -234,6 +273,51 @@ function buildRouterMessages(
   return messages
 }
 
+// Validate one already-parsed decision OBJECT (role-name resolution, enabled/agent-role checks, field
+// normalization). The ONE validation core shared by the route_decision TOOL submission (routeAsAgent) and
+// the text-JSON parse below — never two copies of the role rules.
+function decisionFromObject(obj: { mode?: string; role?: unknown; roles?: unknown; reason?: unknown; intro?: unknown; needsPlan?: unknown; investigate?: unknown; projectMap?: unknown }, enabled: readonly string[]): RouteDecision | null {
+  const reason = typeof obj.reason === 'string' ? obj.reason : 'routed'
+  const intro = typeof obj.intro === 'string' && obj.intro.trim() ? obj.intro.trim() : undefined
+  const needsPlan = Boolean(obj.needsPlan)
+  // L1 (§3): investigate gates the tier-1 → investigation escalation; projectMap is the shape summary
+  // routeAsAgent emits for project memory. Both optional — present only on the decisions that carry them.
+  const investigate = obj.investigate === true ? true : undefined
+  const projectMap = typeof obj.projectMap === 'string' && obj.projectMap.trim() ? obj.projectMap.trim().slice(0, PROJECT_MAP_MAX_CHARS) : undefined
+  const extra = { ...(investigate ? { investigate } : {}), ...(projectMap ? { projectMap } : {}) }
+  if (obj.mode === 'direct') {
+    // direct is chitchat/self-answer — never a build to investigate — but routeAsAgent may return it WITH a
+    // learned projectMap, so carry the map (not investigate).
+    return { mode: 'direct', reason, needsPlan: false, ...(projectMap ? { projectMap } : {}) }
+  }
+  if (obj.mode === 'single' && typeof obj.role === 'string') {
+    const rid = roleIdFromName(obj.role)
+    if (enabled.includes(rid)) return { mode: 'single', role: rid, reason, intro, needsPlan, ...extra }
+  }
+  if ((obj.mode === 'pipeline' || obj.mode === 'parallel') && Array.isArray(obj.roles)) {
+    const rids = obj.roles.filter((r): r is string => typeof r === 'string').map(roleIdFromName)
+    if (rids.length >= 2 && rids.length <= 3 && rids.every((r) => enabled.includes(r))) {
+      return { mode: obj.mode, roles: rids, reason, intro, needsPlan, ...extra }
+    }
+  }
+  if (obj.mode === 'council' && Array.isArray(obj.roles)) {
+    const rids = obj.roles.filter((r): r is string => typeof r === 'string').map(roleIdFromName)
+    if (rids.length >= 2 && rids.length <= 3 && rids.every((r) => enabled.includes(r))) {
+      return { mode: 'council', roles: rids, reason, intro, needsPlan, ...extra }
+    }
+  }
+  if (obj.mode === 'collaborate' && Array.isArray(obj.roles)) {
+    const rids = obj.roles.filter((r): r is string => typeof r === 'string').map(roleIdFromName)
+    // Collaboration experts must be AGENT roles (they need tools + the consult tools); 2-3 like the
+    // other multi-expert modes. A non-agent role (designer/translator/…) can't run the collab loop, so
+    // a decision naming one falls through to the caller's fallback.
+    if (rids.length >= 2 && rids.length <= 3 && rids.every((r) => enabled.includes(r) && agentService.AGENT_ROLE_IDS.has(r))) {
+      return { mode: 'collaborate', roles: rids, reason, intro, needsPlan, ...extra }
+    }
+  }
+  return null
+}
+
 // Strict parse: a fully-validated decision, or null when the text carries no usable JSON decision (non-JSON /
 // prose / empty / an out-of-range or disabled role / a non-agent role for collaborate). A caller with a better
 // fallback than a blind guess — routeAsAgent keeps its tier-1 decision — branches on null; parseRouteDecision
@@ -249,45 +333,8 @@ function tryParseRouteDecision(raw: string, enabled: readonly string[]): RouteDe
 
   for (const c of candidates) {
     try {
-      const obj = JSON.parse(c) as { mode?: string; role?: unknown; roles?: unknown; reason?: unknown; intro?: unknown; needsPlan?: unknown; investigate?: unknown; projectMap?: unknown }
-      const reason = typeof obj.reason === 'string' ? obj.reason : 'routed'
-      const intro = typeof obj.intro === 'string' && obj.intro.trim() ? obj.intro.trim() : undefined
-      const needsPlan = Boolean(obj.needsPlan)
-      // L1 (§3): investigate gates the tier-1 → investigation escalation; projectMap is the shape summary
-      // routeAsAgent emits for project memory. Both optional — present only on the decisions that carry them.
-      const investigate = obj.investigate === true ? true : undefined
-      const projectMap = typeof obj.projectMap === 'string' && obj.projectMap.trim() ? obj.projectMap.trim().slice(0, PROJECT_MAP_MAX_CHARS) : undefined
-      const extra = { ...(investigate ? { investigate } : {}), ...(projectMap ? { projectMap } : {}) }
-      if (obj.mode === 'direct') {
-        // direct is chitchat/self-answer — never a build to investigate — but routeAsAgent may return it WITH a
-        // learned projectMap, so carry the map (not investigate).
-        return { mode: 'direct', reason, needsPlan: false, ...(projectMap ? { projectMap } : {}) }
-      }
-      if (obj.mode === 'single' && typeof obj.role === 'string') {
-        const rid = roleIdFromName(obj.role)
-        if (enabled.includes(rid)) return { mode: 'single', role: rid, reason, intro, needsPlan, ...extra }
-      }
-      if ((obj.mode === 'pipeline' || obj.mode === 'parallel') && Array.isArray(obj.roles)) {
-        const rids = obj.roles.filter((r): r is string => typeof r === 'string').map(roleIdFromName)
-        if (rids.length >= 2 && rids.length <= 3 && rids.every((r) => enabled.includes(r))) {
-          return { mode: obj.mode, roles: rids, reason, intro, needsPlan, ...extra }
-        }
-      }
-      if (obj.mode === 'council' && Array.isArray(obj.roles)) {
-        const rids = obj.roles.filter((r): r is string => typeof r === 'string').map(roleIdFromName)
-        if (rids.length >= 2 && rids.length <= 3 && rids.every((r) => enabled.includes(r))) {
-          return { mode: 'council', roles: rids, reason, intro, needsPlan, ...extra }
-        }
-      }
-      if (obj.mode === 'collaborate' && Array.isArray(obj.roles)) {
-        const rids = obj.roles.filter((r): r is string => typeof r === 'string').map(roleIdFromName)
-        // Collaboration experts must be AGENT roles (they need tools + the consult tools); 2-3 like the
-        // other multi-expert modes. A non-agent role (designer/translator/…) can't run the collab loop, so
-        // a decision naming one falls through to the lenient default below.
-        if (rids.length >= 2 && rids.length <= 3 && rids.every((r) => enabled.includes(r) && agentService.AGENT_ROLE_IDS.has(r))) {
-          return { mode: 'collaborate', roles: rids, reason, intro, needsPlan, ...extra }
-        }
-      }
+      const decision = decisionFromObject(JSON.parse(c), enabled)
+      if (decision) return decision
     } catch {
       /* try next candidate */
     }

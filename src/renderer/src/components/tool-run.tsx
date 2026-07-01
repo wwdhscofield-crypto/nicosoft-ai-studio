@@ -106,6 +106,7 @@ function verbDone(t: ToolCall): string {
     case 'IndependentVerifier': return 'Verified independently'
     case 'GateBFailHandler': return 'Reworked after failed verification'
     case 'PlanReview': return 'Reviewed the plan'
+    case 'route_decision': return 'Chose the team'
     // studio_lens internals normally render inside LensCard; these guard the rare top-level leak.
     case 'StudioLens': return 'Examined across perspectives'
     case 'Subject': return 'Reviewed a perspective'
@@ -134,6 +135,7 @@ function verbLive(t: ToolCall): string {
     case 'IndependentVerifier': return 'Verifying independently'
     case 'GateBFailHandler': return 'Reworking after failed verification'
     case 'PlanReview': return 'Reviewing the plan'
+    case 'route_decision': return 'Choosing the team'
     // studio_lens internals normally render inside LensCard; these guard the rare top-level leak.
     case 'StudioLens': return 'Examining across perspectives'
     case 'Subject': return 'Reviewing a perspective'

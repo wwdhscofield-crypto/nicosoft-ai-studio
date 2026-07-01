@@ -11,7 +11,7 @@ import { ServerBubble, Sources } from '@/components/tool-bubble'
 import { ToolRun, TASKS_PANEL_ONLY, OMIT_WHEN_DONE } from '@/components/tool-run'
 import { Markdown } from '@/components/markdown'
 import { useT } from '@/stores/locale'
-import { isSynthesis, groupRuns, sameChain } from '@/stores/chat-helpers'
+import { isSynthesis, groupRuns, sameChain, segmentFolds } from '@/stores/chat-helpers'
 import type { Expert } from '@/types'
 
 // The segment-identity model (pure, JSX-free — see chat-helpers) re-exported for view-level consumers.
@@ -47,6 +47,7 @@ const TOOL_ACTIVITY: Record<string, string> = {
   lsp: 'Analyzing',
   Task: 'Delegating', agent_spawn: 'Delegating', agent_send: 'Delegating', agent_wait: 'Delegating',
   agent_batch: 'Delegating', agent_close: 'Delegating', assign_task: 'Delegating', send_message: 'Delegating', wait: 'Delegating',
+  route_decision: 'Routing',
   schedule_create: 'Scheduling', schedule_delete: 'Scheduling', schedule_list: 'Scheduling',
   AskUserQuestion: 'Waiting'
 }
@@ -293,15 +294,12 @@ export function ChatSegment({
   // closure-loop §3.2/§3.3: an independent Gate B reviewer step renders with its own "· Verifier" identity.
   const verifier = !isUser && first.segmentKind === 'verifier'
   const segColor = isUser ? 'var(--border-2)' : synthesis ? 'var(--accent)' : renderExpert.color
-  // Foldable: a first-class dispatched STEP renders in a fixed-height scroll window (not full height). Parallel/
-  // council stack many, so once a step finishes streaming it collapses to a one-line summary — watched live, then
-  // folded away, leaving Coordinator's synthesis prominent. Verifier folds like any other non-host expert step.
-  // TWO identities qualify: a dispatched EXPERT (has a chain) and Coordinator's own pre-routing INVESTIGATION
-  // (segmentKind 'investigate'). The old `expertId !== 'coordinator'` carve-out is gone — it was redundant (any
-  // coordinator WITH a chain is a synthesis, already excluded by !synthesis) AND it was the special-case that
-  // denied Danny's investigation a foldable identity. Intro/direct (coordinator, no chain, not 'investigate')
-  // stay full-height as before.
-  const foldable = !isUser && !synthesis && first.expertId != null && (!!first.dispatch?.length || first.segmentKind === 'investigate')
+  // Foldable: ONLY a dispatched expert STEP (non-empty chain) renders in the fixed-height scroll window —
+  // parallel/council stack many, so a finished step collapses to a summary, leaving the host's voice prominent.
+  // The HOST's own segments (Danny's intro / direct / investigation / synthesis) always render FULL-HEIGHT —
+  // a long-standing product rule (see segmentFolds in chat-helpers, where the predicate + rationale live;
+  // it is pure so the display-unification tests pin it).
+  const foldable = !isUser && segmentFolds(first)
   const [expanded, setExpanded] = useState(false)
   const bodyRef = useRef<HTMLDivElement>(null)
   // Folded expert steps render in a fixed-height scroll WINDOW from the start (not collapsed to a line):

@@ -104,12 +104,7 @@ Then choose the team — the SMALLEST one that genuinely covers the task's real 
 - Prefer a SINGLE builder when one domain covers it; add a second only for a genuine concurrent second surface. The dispatched team confirms the split themselves and sheds anyone over-sent, so err toward the minimal team, never the maximal. If the closer look shows no specialist is actually needed, return "direct".
 - Refer to every expert by their NAME, exact spelling — never an internal id.
 
-Finish with ONE JSON object and NOTHING after it — your final message is parsed as the routing decision. Include a "projectMap": a concise (≤1200 chars) summary of the project's SHAPE you learned (top-level layout, which surfaces exist — frontend / backend / etc. — and the key modules) so the next task on this project starts from it. Shapes:
-{"mode":"single","role":"<name>","intro":"<one sentence to the user>","reason":"<≤8 words>","needsPlan":<boolean>,"projectMap":"<shape summary>"}
-or {"mode":"pipeline","roles":["<name>","<name>"],"intro":"<one sentence>","reason":"<≤8 words>","needsPlan":<boolean>,"projectMap":"<shape summary>"}
-or {"mode":"collaborate","roles":["<name>","<name>"],"intro":"<one sentence>","reason":"<≤8 words>","needsPlan":<boolean>,"projectMap":"<shape summary>"}
-or {"mode":"direct","reason":"<≤8 words>","projectMap":"<shape summary>"}
-The "intro" is YOUR voice to the user in THEIR language: acknowledge the task and say who you're bringing in, one warm sentence — never prescribe how they should work or stage it. Use ONLY the expert names listed above, exact spelling.`
+When you have decided, SUBMIT the decision with the route_decision tool — call it exactly ONCE, after the investigation. The decision is machine-read from that tool call: NEVER print it as text or JSON in your reply (your visible words are for the user, not the machine). In the tool call include a "projectMap": a concise (≤1200 chars) summary of the project's SHAPE you learned (top-level layout, which surfaces exist — frontend / backend / etc. — and the key modules) so the next task on this project starts from it. The "intro" is YOUR voice to the user in THEIR language: acknowledge the task and say who you're bringing in, one warm sentence — never prescribe how they should work or stage it. Use ONLY the expert names listed above, exact spelling. After the tool confirms, wrap up in ONE short sentence to the user and stop.`
 
 export const COORDINATOR_PLAN_REVIEW_PROMPT = `${COMMON_PREAMBLE}
 

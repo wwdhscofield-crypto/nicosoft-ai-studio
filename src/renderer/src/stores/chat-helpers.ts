@@ -239,3 +239,14 @@ export function groupRuns(messages: ChatMessage[]): ChatMessage[][] {
   }
   return runs
 }
+
+// PRODUCT RULE (long-standing; re-broken once by treating it as a special-case to delete — dogfood
+// 2026-07-02): in a coordinator conversation, the HOST's own segments (Danny's voice — intro, direct
+// answers, his pre-routing investigation, his synthesis) always render FULL-HEIGHT; ONLY dispatched
+// expert steps (a non-empty dispatch chain) fold into the fixed-height scroll window. Danny's
+// investigation is Danny speaking — segmentKind 'investigate' gives it its own merge boundary
+// (canMerge above) but must never make it foldable. Synthesis carries a chain but is excluded by the
+// caller's !isSynthesis gate (it renders full-height with the accent treatment instead).
+export function segmentFolds(first: ChatMessage): boolean {
+  return first.role === 'assistant' && !isSynthesis(first) && first.expertId != null && !!first.dispatch?.length
+}
