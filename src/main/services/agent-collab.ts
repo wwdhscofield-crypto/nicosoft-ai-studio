@@ -38,6 +38,7 @@ import { selfRhythmService } from './self-rhythm.service'
 import { buildAgentSystem } from './agent-system'
 import { createLensHandle } from './lens/agent-lens'
 import { recallText } from './project-map.service'
+import { indexText as agentMemoryIndexText } from './agent-memory.service'
 import { setActiveServices, clearActiveServices, broadcastConvServices } from './active-services'
 import { createPreviewHandle } from './active-preview'
 import * as workspaceTasks from './workspace-tasks.service'
@@ -86,12 +87,12 @@ export interface CollabHooks {
 // The role's coding/section prompt + a "working as a team" addendum naming the reachable teammates, so the
 // expert knows who to consult and to stay in its own area. Memories/summary are skipped — a collaboration
 // is a fresh shared task, not a continuation of the role's chat history.
-function buildCollabSystem(roleId: string, teammates: { id: string; name: string }[], cwd?: string, projectMap?: string): string {
+function buildCollabSystem(roleId: string, teammates: { id: string; name: string }[], cwd?: string, projectMap?: string, memoryIndex?: string): string {
   // A single-expert "collab" (no teammates) behaves like SOLO: keep the solo studio_lens-before-done discipline
   // and let it drive its own review ANYTIME — there is no one to elect among or wait for. The elected-driver /
   // wait-for-everyone flow below only applies with ≥1 teammate (2+ experts).
-  if (teammates.length === 0) return buildAgentSystem(roleId, [], null, skillManager.listingForRole(roleId), cwd, false, projectMap)
-  const base = buildAgentSystem(roleId, [], null, skillManager.listingForRole(roleId), cwd, true, projectMap) // collab=true (2+ experts): skip the SOLO "every agent self-runs studio_lens before done" discipline — only the ELECTED driver runs the ONE consolidated panel AFTER everyone is done, not each expert and not early (the per-expert flood AND the premature drive were the bugs)
+  if (teammates.length === 0) return buildAgentSystem(roleId, [], null, skillManager.listingForRole(roleId), cwd, false, projectMap, memoryIndex)
+  const base = buildAgentSystem(roleId, [], null, skillManager.listingForRole(roleId), cwd, true, projectMap, memoryIndex) // collab=true (2+ experts): skip the SOLO "every agent self-runs studio_lens before done" discipline — only the ELECTED driver runs the ONE consolidated panel AFTER everyone is done, not each expert and not early (the per-expert flood AND the premature drive were the bugs)
   // Roster lists each teammate by NAME + a domain blurb (what they do) — NEVER the role_id. The model addresses
   // teammates by name everywhere (prose, todos, and the consult tools, which take a name). Exposing the role_id
   // here made a weak model parrot it ("the frontend teammate" instead of "Shuri").
@@ -267,6 +268,9 @@ export async function runCollabSession(
   // (one normalized cwd), so recall it ONCE here (async) and inject the same read-only orientation into every
   // expert's system below. Danny's routeAsAgent stays the sole writer; this is the shared read side.
   const projectMapText = await recallText(experts[0]?.cwd)
+  // Auto-memory: the shared # Memory section (CC template + index snapshot) — one project, one index,
+  // snapshotted ONCE for the whole collaboration (per-run semantics; mid-collab writes appear next run).
+  const memoryIndexText = await agentMemoryIndexText(experts[0]?.cwd)
   const specs: ExpertSpec[] = experts.map((x) => {
     // Per-expert state shared across its turns: the read-file cache + todo list persist as it loops, so it
     // doesn't forget what it read between being woken.
@@ -316,6 +320,7 @@ export async function runCollabSession(
       roster.filter((r) => r.id !== x.roleId),
       x.cwd,
       projectMapText, // §4: collab experts read this project's shared map (read-only)
+      memoryIndexText, // auto-memory: same shared # Memory index for every expert
     )
     const sessionDir = join(dataDir(), 'sessions', convId, x.roleId)
     return {

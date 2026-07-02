@@ -130,6 +130,26 @@ CREATE TABLE IF NOT EXISTS project_maps (
   updated_at  TEXT NOT NULL
 );
 
+-- Agent memory (auto-memory, CC "# Memory" parity — docs/auto-memory-design.md): durable single-fact
+-- entries the agent AUTHORS itself via the remember/forget/recall_memory tools. Distinct from memories
+-- (the passive extraction layer): agent-written, keyed by the same normalized project cwd as project_maps,
+-- named by a CC kebab-slug unique per project (upsert-by-name = CC's "update, don't duplicate").
+CREATE TABLE IF NOT EXISTS agent_memories (
+  id             TEXT PRIMARY KEY,
+  cwd            TEXT NOT NULL,                    -- normalized project key (project-map §10.1 discipline)
+  name           TEXT NOT NULL,                    -- kebab-case slug (CC shape); the upsert/recall key
+  description    TEXT NOT NULL,                    -- one-liner used to decide relevance during recall
+  type           TEXT NOT NULL CHECK (type IN ('user','feedback','project','reference')),
+  content        TEXT NOT NULL,                    -- the fact (markdown body, clamped in the service)
+  origin_role    TEXT,                             -- audit: which role wrote it
+  origin_conv_id TEXT,                             -- audit: from which conversation
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL,
+  UNIQUE (cwd, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_memories_cwd ON agent_memories (cwd, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS project_tasks (
   id               TEXT PRIMARY KEY,
   project_id       TEXT NOT NULL,

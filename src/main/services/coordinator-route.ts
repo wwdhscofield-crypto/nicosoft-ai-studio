@@ -23,6 +23,7 @@ import { buildTool, type Tool } from '../agent/tool'
 import { runRoleStep } from './coordinator-step'
 import * as projectMap from './project-map.service'
 import { PROJECT_MAP_MAX_CHARS } from './project-map.service' // shared clamp — same bound as remember_project_map (§4.6)
+import { indexText as agentMemoryIndexText } from './agent-memory.service'
 import { protocolFamily } from '@shared/thinking'
 import { CODE_FILE_RE } from './lang-registry'
 import type { RouteDecision, CoordinatorCallbacks } from './coordinator-types'
@@ -153,7 +154,13 @@ async function routeAsAgent(
     // agent, only calibrates how deep it digs (fresh map → confirm cheaply; stale/absent → investigate).
     const recalled = await projectMap.recall(cwd)
     const brief = buildInvestigationBrief(userInput, history, enabled, recalled, tier1)
-    const system = `${COORDINATOR_INVESTIGATION_PROMPT}\n\nCurrently available experts: ${enabled.map(displayName).join(', ')}. Route ONLY to these — others are disabled.`
+    // Auto-memory: the investigation persona is a systemPromptOverride, so the # Memory section must ride
+    // along explicitly (the kit carries the three memory tools — feedback/project memories inform routing,
+    // and without the index Danny can't see or dedupe them).
+    const memoryIndex = await agentMemoryIndexText(cwd)
+    const system =
+      `${COORDINATOR_INVESTIGATION_PROMPT}\n\nCurrently available experts: ${enabled.map(displayName).join(', ')}. Route ONLY to these — others are disabled.` +
+      (memoryIndex ? `\n\n${memoryIndex}` : '')
 
     // The decision channel: a per-investigation closure tool captures Danny's submitted decision object —
     // the machine protocol rides a TOOL CALL (rendered as a tool card), never his visible prose.

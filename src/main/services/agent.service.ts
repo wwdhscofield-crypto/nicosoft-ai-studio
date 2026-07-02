@@ -34,6 +34,7 @@ import * as memoryService from './memory.service'
 import * as compressionService from './compression.service'
 import { pickSmallModel } from './model-select'
 import { recallText } from './project-map.service'
+import { indexText as agentMemoryIndexText } from './agent-memory.service'
 import { countContext } from './token-count.service'
 import { manager as skillManager } from './skill.service'
 import { DEV_ROLES, ENGINEER_ROLE_ID, PLAYWRIGHT_TOOLS, SERVICE_TOOLS, SUBAGENT_TOOLS, toolsForAgentRole } from './agent-tools'
@@ -135,8 +136,8 @@ export async function run(
   //    needs a user-first list, so drop any leading assistant turns left by a fold boundary).
   // §4: inject the SYSTEM-WIDE project map (if this cwd has a remembered one) so a solo agent orients like the
   // dispatched/collab paths — read-only; Danny's routeAsAgent stays the sole writer.
-  const projectMapText = await recallText(input.cwd)
-  const system = buildAgentSystem(roleId, memories, summary?.content ?? null, skillManager.listingForRole(roleId), input.cwd, false, projectMapText)
+  const [projectMapText, memoryIndexText] = await Promise.all([recallText(input.cwd), agentMemoryIndexText(input.cwd)])
+  const system = buildAgentSystem(roleId, memories, summary?.content ?? null, skillManager.listingForRole(roleId), input.cwd, false, projectMapText, memoryIndexText)
   const mapped = conversationToAgentMessages(recent)
   const firstUser = mapped.findIndex((m) => m.role === 'user')
   let seed = firstUser > 0 ? mapped.slice(firstUser) : mapped

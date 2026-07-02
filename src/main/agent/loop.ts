@@ -17,6 +17,8 @@ import {
   tokensFromUsage,
 } from './compact'
 import { maybeTodoReminder } from './todo-reminder'
+import { recallQueryText } from './memory-recall'
+import { recallFor } from '../services/agent-memory.service'
 import type { AgentContext, PermissionMode, SpawnSubAgent } from './context'
 import { AsyncSubAgentPool, type RunChild } from './sub-agent-pool'
 import { StreamingToolExecutor } from './execution'
@@ -349,6 +351,11 @@ export async function* runAgent(
   const hasBashTool = tools.some((t) => t.name === 'Bash')
   // Todo reminder is gated on the kit actually carrying TodoWrite (CC does the same check).
   const hasTodoTool = tools.some((t) => t.name === 'TodoWrite')
+  // Automatic memory recall follows the memory tools' kit presence (handle⟺tool discipline): sub-agents
+  // have them stripped, so a child's narrow context never receives recall noise. The set enforces
+  // "each memory at most once per run" (auto-memory §3.4).
+  const hasMemoryTools = tools.some((t) => t.name === 'recall_memory')
+  const recalledMemoryNames = new Set<string>()
   // Thrash guard (loop-guards.ts): same failure fingerprint 3× → steer note; 6× → wind-down note now,
   // forced end two turns later (the model gets a wrap-up window, then the run stops burning turns).
   const thrash = new ThrashTracker()
@@ -422,7 +429,7 @@ export async function* runAgent(
   // EnterPlanMode/ExitPlanMode would otherwise flip the PARENT's plan state / hit the parent's Gate A.
   // studio_lens is denied at EVERY depth (studio-lens §7 Phase 4 P0): a sub-agent / panel reviewer must NOT trigger
   // another panel fan-out (its own fan-out bound, independent of Task nesting). ctx.panel is also nulled below.
-  const subAgentTools = tools.filter((t) => t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens' && !t.name.startsWith('preview_') && !t.name.startsWith('monitor_') && t.name !== 'schedule_wakeup' && t.name !== 'remember_project_map')
+  const subAgentTools = tools.filter((t) => t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens' && !t.name.startsWith('preview_') && !t.name.startsWith('monitor_') && t.name !== 'schedule_wakeup' && t.name !== 'remember_project_map' && t.name !== 'remember' && t.name !== 'forget' && t.name !== 'recall_memory')
   const makeSpawnSubAgent =
     (signal: AbortSignal): SpawnSubAgent =>
     async ({ prompt, parentToolId, isolation }) => {
@@ -510,7 +517,7 @@ export async function* runAgent(
   // runChild that runs one of a child's turns with the sub-agent tool set — no Task, no nested agent_*
   // (depth 1) — threading the child's persisted readFileState/todos. Sub-agents get subAgents: undefined.
   if (ctx.subAgents instanceof AsyncSubAgentPool) {
-    const asyncChildTools = tools.filter((t) => t.name !== 'Task' && !t.name.startsWith('agent_') && t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens' && !t.name.startsWith('preview_') && !t.name.startsWith('monitor_') && t.name !== 'schedule_wakeup' && t.name !== 'remember_project_map')
+    const asyncChildTools = tools.filter((t) => t.name !== 'Task' && !t.name.startsWith('agent_') && t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens' && !t.name.startsWith('preview_') && !t.name.startsWith('monitor_') && t.name !== 'schedule_wakeup' && t.name !== 'remember_project_map' && t.name !== 'remember' && t.name !== 'forget' && t.name !== 'recall_memory')
     const asyncWorktrees = new Map<string, ManagedWorktree>()
     const asyncWorktreeNames = new Map<string, string>()
     const asyncCwds = new Map<string, string>()
@@ -988,12 +995,20 @@ export async function* runAgent(
     // The reminder stays its OWN text block — the backward scan identifies it by copy prefix, which a
     // merge with guard notes would defeat (the cooldown would never register).
     const todoReminder = hasTodoTool ? maybeTodoReminder(messages, ctx.todos) : null
+    // Automatic memory recall (auto-memory §3.4 — selection self-designed, trust wrapper CC-verbatim):
+    // score this project's agent memories against the turn's query (latest real user text + this turn's
+    // tool inputs), inject ≤2 bodies as a system-reminder text block, each memory once per run.
+    // Best-effort by contract — a store failure degrades to null, never blocks the turn.
+    const memoryRecall = hasMemoryTools
+      ? await recallFor(ctx.cwd, recallQueryText(messages, toolUses.map((tu) => tu.input)), recalledMemoryNames)
+      : null
     const userMsg: AgentMessage = {
       role: 'user',
       content: [
         ...results,
         ...(guardNotes.length ? [{ type: 'text' as const, text: guardNotes.join('\n\n') }] : []),
         ...(todoReminder ? [{ type: 'text' as const, text: todoReminder }] : []),
+        ...(memoryRecall ? [{ type: 'text' as const, text: memoryRecall }] : []),
       ],
     }
     messages.push(userMsg)

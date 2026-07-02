@@ -109,6 +109,7 @@ export function buildAgentSystem(
   cwd?: string,
   collab = false,
   projectMap?: string,
+  memoryIndex?: string,
 ): string {
   // toolless:false — this is the agent-loop path (the role really has a tool kit), so buildRolePrompt must
   // NOT prepend the "no tools to call" chat-mode note. TOOL_AWARENESS below tells non-dev roles they can act.
@@ -143,6 +144,10 @@ export function buildAgentSystem(
   // (solo + dispatched + collab), not just Danny's router. Danny's routeAsAgent is the single writer; here it's
   // read-only orientation so an implementer doesn't re-scan a known project. Absent → nothing injected.
   if (projectMap) parts.push(projectMap)
+  // # Memory (auto-memory): the agent-authored memory section — CC template adaptation + the index
+  // snapshot, built per run by agent-memory.service.indexText (undefined for folder-free runs). The
+  // MemoryRow block below is the separate passive-extraction layer; both coexist by design.
+  if (memoryIndex) parts.push(memoryIndex)
   if (memories.length) {
     parts.push(
       "What you've learned about this user (engineering preferences, project conventions):\n" +

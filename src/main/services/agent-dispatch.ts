@@ -45,6 +45,7 @@ import { awaitAsyncTool } from '../agent/tools/await-async'
 import { launchAsyncTool } from '../agent/tools/launch-async'
 import { buildAgentSystem } from './agent-system'
 import { recallText } from './project-map.service'
+import { indexText as agentMemoryIndexText } from './agent-memory.service'
 import { setActiveServices, clearActiveServices, broadcastConvServices } from './active-services'
 import { createPreviewHandle } from './active-preview'
 import { broadcastConvLens } from '../ipc/lens-broadcast'
@@ -651,8 +652,10 @@ export async function runDispatchedAgent(
   const serverTools: ServerToolSchema[] = d.protocol === 'openai' ? [{ type: 'web_search', name: 'web_search' }] : []
   // §4: dispatched experts read the SAME system-wide project map (read-only orientation). Skipped under a full
   // systemPromptOverride (routeAsAgent's investigation persona — its brief already carries the recalled map).
-  const projectMapText = d.systemPromptOverride ? undefined : await recallText(d.cwd)
-  const system = d.systemPromptOverride ?? buildAgentSystem(d.roleId, d.memories, d.summary, skillManager.listingForRole(d.roleId), d.cwd, false, projectMapText)
+  const [projectMapText, memoryIndexText] = d.systemPromptOverride
+    ? [undefined, undefined]
+    : await Promise.all([recallText(d.cwd), agentMemoryIndexText(d.cwd)])
+  const system = d.systemPromptOverride ?? buildAgentSystem(d.roleId, d.memories, d.summary, skillManager.listingForRole(d.roleId), d.cwd, false, projectMapText, memoryIndexText)
 
   let seed: AgentMessage[]
   if (d.includeHistory) {

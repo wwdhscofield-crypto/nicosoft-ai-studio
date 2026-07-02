@@ -23,6 +23,7 @@ import { PREVIEW_TOOLS } from '../agent/tools/preview'
 import { monitorStartTool, monitorStopTool } from '../agent/tools/monitor'
 import { scheduleWakeupTool } from '../agent/tools/schedule-wakeup'
 import { rememberProjectMapTool } from '../agent/tools/remember-project-map'
+import { rememberTool, forgetTool, recallMemoryTool } from '../agent/tools/memory'
 import type { Tool } from '../agent/tool'
 import { AGENT_ROLE_IDS } from '@shared/roles'
 import * as settingsService from './settings.service'
@@ -110,7 +111,14 @@ export const SUBAGENT_TOOLS = [agentSpawnTool, agentSendTool, agentWaitTool, age
 // lens. Deliberately NO write/exec (Edit/Write/Bash) — Danny investigates + decides + delegates; he NEVER
 // implements. The read-only-by-construction kit IS the anti-runaway guard (delegation keeps his own context
 // lean), so no turn cap is imposed on the routing agent. Used verbatim via runDispatchedAgent's `toolset`.
-export const COORDINATOR_INVESTIGATION_TOOLS = [globTool, readTool, grepTool, taskTool, studioLensTool, awaitAsyncTool] as unknown as Tool[]
+export const COORDINATOR_INVESTIGATION_TOOLS = [globTool, readTool, grepTool, taskTool, studioLensTool, awaitAsyncTool, rememberTool, forgetTool, recallMemoryTool] as unknown as Tool[]
+
+// Agent memory (auto-memory, CC "# Memory" parity) — the remember_project_map tier: EVERY agent role
+// plus coordinator-direct (Danny's routing consumes feedback/project memories, and his corrections are
+// where feedback memories are born) plus the investigation kit above. Sub-agents are stripped in
+// loop.ts (a Task/async child sees a narrow slice by construction — exactly the write the # Memory
+// rules forbid). App-DB only, read-only classified.
+export const MEMORY_TOOLS = [rememberTool, forgetTool, recallMemoryTool] as unknown as Tool[]
 
 export function toolsForAgentRole(roleId: string): Tool[] {
   let core =
@@ -132,5 +140,5 @@ export function toolsForAgentRole(roleId: string): Tool[] {
   // remember_project_map — project memory's write side for every role incl. coordinator-direct (§4.6: seed when
   // none recorded / refresh when verified stale; app-DB only, read-only classified). Sub-agents are stripped in
   // loop.ts (a Task/async child sees a narrow slice by construction — exactly the write the prompt forbids).
-  return [...core, ...PLAN_TOOLS, askUserQuestionTool as unknown as Tool, rememberProjectMapTool as unknown as Tool, ...panel, ...visualize, ...preview, ...monitor, ...mcpManager.toolsForRole(roleId), ...(skill ? [skill] : [])]
+  return [...core, ...PLAN_TOOLS, askUserQuestionTool as unknown as Tool, rememberProjectMapTool as unknown as Tool, ...MEMORY_TOOLS, ...panel, ...visualize, ...preview, ...monitor, ...mcpManager.toolsForRole(roleId), ...(skill ? [skill] : [])]
 }

@@ -35,6 +35,7 @@ import {
 import { coordinatorApproval } from './coordinator-approvals'
 import type { CoordinatorCallbacks } from './coordinator-types'
 import { getPipelineTodos, setPipelineTodos } from './pipeline-todos'
+import { indexText as agentMemoryIndexText } from './agent-memory.service'
 
 // #6 Workflow parity (cc 2.1.186 `GKa=5`): the P4 stall-watchdog abort is RETRYABLE — Workflow re-runs a stalled
 // agent up to 5× before giving up. runRoleStep surfaces a stall (the watchdog fired, NOT a real user/run abort) as
@@ -288,8 +289,14 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
         imageModel: binding.imageModel ?? undefined,
         // DIRECT: run the loop with Danny's front-door persona + his recalled context, not the
         // dispatched-expert coding system. Gate B's verifier passes its own persona via opts.systemPromptOverride.
-        // Undefined for real dispatches → buildAgentSystem as before.
-        systemPromptOverride: opts.systemPromptOverride ?? (isDirect ? withCoordinatorContext(COORDINATOR_DIRECT_PROMPT, memories, summaryContent) : undefined),
+        // Undefined for real dispatches → buildAgentSystem as before. Auto-memory: DIRECT carries the # Memory
+        // section too (Danny holds the memory tools — his corrections are where feedback memories are born, and
+        // without the index he can't dedupe by name or see what exists); other overrides (Gate B etc.) don't.
+        systemPromptOverride:
+          opts.systemPromptOverride ??
+          (isDirect
+            ? [withCoordinatorContext(COORDINATOR_DIRECT_PROMPT, memories, summaryContent), await agentMemoryIndexText(cwd)].filter(Boolean).join('\n\n')
+            : undefined),
         thinking,
         // Pipeline-shared todos: this expert reads + writes the conv's ONE todo list (see pipelineTodos), so
         // Flynn's list carries into Shuri's run and Shuri updates the SAME items — continuous team progress.
