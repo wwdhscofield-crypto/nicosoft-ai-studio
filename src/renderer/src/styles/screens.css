@@ -1829,3 +1829,8 @@
 .toast-verdict-body { border-top: 1px solid var(--border-1); padding: 10px 13px; display: flex; flex-direction: column; gap: 9px; }
 .toast-verdict-detail { font-size: 12.5px; color: var(--text-2); white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow: auto; }
 .toast-verdict-shots { display: flex; flex-wrap: wrap; gap: 7px; }
+
+/* Virtualized list items: scrolling re-mounts segments as they enter the window — the .segment/.dispatch
+   entrance animations would replay on every re-mount (a visible flash while browsing history). The
+   md-fadein spans already animate NEW streamed text, so entrance animation is redundant here. */
+.virt-item .segment, .virt-item .dispatch { animation: none; }

@@ -4,6 +4,7 @@
    ============================================================ */
 import { Fragment, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { Icons } from '@/components/icons'
 import { ImageViewer, type ViewerImage } from '@/components/image-viewer'
 import { EmptyState } from '@/components/empty-state'
@@ -19,6 +20,18 @@ import { useT } from '@/stores/locale'
 import type { Expert } from '@/types'
 import { Composer } from '@/views/composer'
 import { ChatSegment, RetryReadout, PendingReadout, groupRuns, sameChain } from '@/views/chat-segment'
+
+// Virtualized message list (streaming-render-alignment §3.6 — TanStack Virtual, the same library
+// claude.ai ships): only the visible window of runs mounts, so a 200-message conversation costs what a
+// screenful costs. Escape hatch while it beds in (spec §6): localStorage
+// 'nicosoft-studio-virtual-list' = 'off' falls back to the plain full map. Read once at module load.
+const VIRTUAL_LIST = ((): boolean => {
+  try {
+    return window.localStorage.getItem('nicosoft-studio-virtual-list') !== 'off'
+  } catch {
+    return true
+  }
+})()
 
 /* — The full conversation view for a non-Engineer role — */
 export function ChatView({ expert, onOpenSettings, onBackToProject }: { expert: Expert; onOpenSettings?: () => void; onBackToProject?: () => void }): ReactElement {
@@ -55,6 +68,18 @@ export function ChatView({ expert, onOpenSettings, onBackToProject }: { expert: 
   const [value, setValue] = useState('')
   const [viewer, setViewer] = useState<{ items: ViewerImage[]; index: number } | null>(null)
   const [focusNonce, setFocusNonce] = useState(0)
+
+  // Run-level virtualization: item granularity = groupRuns' runs (the exact units the plain map
+  // rendered), dynamic heights via measureElement (its ResizeObserver re-measures on streaming growth /
+  // fold toggles). The hook always runs (rules of hooks); the escape hatch just zeroes the count.
+  const runs = messages.length > 0 ? groupRuns(messages) : []
+  const virtualizer = useVirtualizer({
+    count: VIRTUAL_LIST ? runs.length : 0,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => 120,
+    overscan: 6,
+    getItemKey: (i) => runs[i][0].id
+  })
 
   // The user scrolling UP (onListWheel) is the ONLY thing that unsticks. onScroll then only RE-sticks when
   // they return to the bottom — it must NEVER unstick: during fast streaming our own scroll-to-bottom fires
@@ -147,33 +172,54 @@ export function ChatView({ expert, onOpenSettings, onBackToProject }: { expert: 
           {messages.length === 0 ? (
             <EmptyState expert={expert} onChip={setValue} />
           ) : (
-            groupRuns(messages).map((run, ri, runs) => {
-              const firstMsg = run[0]
-              // Dispatch badge above the FIRST run of each pipeline turn — detected by a non-empty dispatch
-              // chain differing from the previous run's last message. Single-mode turns have dispatch=null → none.
-              const prevRun = ri > 0 ? runs[ri - 1] : null
-              const prevMsg = prevRun ? prevRun[prevRun.length - 1] : null
-              const showBadge =
-                firstMsg.role === 'assistant' &&
-                Array.isArray(firstMsg.dispatch) &&
-                firstMsg.dispatch.length > 0 &&
-                !sameChain(prevMsg?.dispatch, firstMsg.dispatch)
+            (() => {
+              const renderRun = (run: (typeof runs)[number], ri: number): ReactElement => {
+                const firstMsg = run[0]
+                // Dispatch badge above the FIRST run of each pipeline turn — detected by a non-empty dispatch
+                // chain differing from the previous run's last message. Single-mode turns have dispatch=null → none.
+                const prevRun = ri > 0 ? runs[ri - 1] : null
+                const prevMsg = prevRun ? prevRun[prevRun.length - 1] : null
+                const showBadge =
+                  firstMsg.role === 'assistant' &&
+                  Array.isArray(firstMsg.dispatch) &&
+                  firstMsg.dispatch.length > 0 &&
+                  !sameChain(prevMsg?.dispatch, firstMsg.dispatch)
+                return (
+                  <>
+                    {showBadge ? <DispatchBadge chain={firstMsg.dispatch as string[]} /> : null}
+                    <ChatSegment
+                      msgs={run}
+                      expert={expert}
+                      expertById={expertById}
+                      onOpenImage={openImage}
+                      inputTokens={baseIn}
+                      outputTokens={baseOut}
+                      cachedTokens={baseCached}
+                      pendingLive={convStreaming && ri === runs.length - 1 && firstMsg.role === 'assistant'}
+                    />
+                  </>
+                )
+              }
+              if (!VIRTUAL_LIST) return runs.map((run, ri) => <Fragment key={run[0].id}>{renderRun(run, ri)}</Fragment>)
+              // Virtual window: a relative box at the full measured height, visible items absolutely
+              // positioned by translateY. `flow-root` makes each item box contain its children's margins
+              // (e.g. the dispatch badge's), so measureElement reads the true occupied height.
               return (
-                <Fragment key={firstMsg.id}>
-                  {showBadge ? <DispatchBadge chain={firstMsg.dispatch as string[]} /> : null}
-                  <ChatSegment
-                    msgs={run}
-                    expert={expert}
-                    expertById={expertById}
-                    onOpenImage={openImage}
-                    inputTokens={baseIn}
-                    outputTokens={baseOut}
-                    cachedTokens={baseCached}
-                    pendingLive={convStreaming && ri === runs.length - 1 && firstMsg.role === 'assistant'}
-                  />
-                </Fragment>
+                <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+                  {virtualizer.getVirtualItems().map((vi) => (
+                    <div
+                      key={vi.key}
+                      data-index={vi.index}
+                      ref={virtualizer.measureElement}
+                      className="virt-item"
+                      style={{ position: 'absolute', top: 0, left: 0, width: '100%', display: 'flow-root', transform: `translateY(${vi.start}px)` }}
+                    >
+                      {renderRun(runs[vi.index], vi.index)}
+                    </div>
+                  ))}
+                </div>
               )
-            })
+            })()
           )}
           {/* Between-turn liveness lives INSIDE the last assistant run (pendingLive) — a standalone pending
               segment only appears before the FIRST assistant message, when there's no run to host it yet. */}
