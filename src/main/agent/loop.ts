@@ -16,6 +16,7 @@ import {
   SYSTEM_PROMPT_RESERVE,
   tokensFromUsage,
 } from './compact'
+import { maybeTodoReminder } from './todo-reminder'
 import type { AgentContext, PermissionMode, SpawnSubAgent } from './context'
 import { AsyncSubAgentPool, type RunChild } from './sub-agent-pool'
 import { StreamingToolExecutor } from './execution'
@@ -346,6 +347,8 @@ export async function* runAgent(
   let verifiedSinceLastEdit = true
   let nudgedForVerify = false
   const hasBashTool = tools.some((t) => t.name === 'Bash')
+  // Todo reminder is gated on the kit actually carrying TodoWrite (CC does the same check).
+  const hasTodoTool = tools.some((t) => t.name === 'TodoWrite')
   // Thrash guard (loop-guards.ts): same failure fingerprint 3× → steer note; 6× → wind-down note now,
   // forced end two turns later (the model gets a wrap-up window, then the run stops burning turns).
   const thrash = new ThrashTracker()
@@ -402,26 +405,10 @@ export async function* runAgent(
     }
   }
 
-  // After compaction folds the transcript — including the model's own TodoWrite calls — into one summary
-  // message, the model loses sight of its todo list and stops maintaining statuses (dogfood round8: 11
-  // items, all the work finished, none ever marked completed after two autocompacts). Re-inject the
-  // CURRENT list into the post-compaction context. Appended as a text block on the trailing user message
-  // (the summary) — a separate user message would break strict role alternation on Anthropic upstreams.
   const assistantText = (msg: AgentMessage): string => msg.content
     .filter((b): b is { type: 'text'; text: string } => isContentBlock(b) && b.type === 'text')
     .map((b) => b.text)
     .join('')
-
-  const appendTodoSnapshot = (msgs: AgentMessage[]): void => {
-    const todos = ctx.todos
-    if (!todos || todos.length === 0) return
-    const text =
-      'Reminder — your current todo list (the context was just compacted). Keep maintaining it with TodoWrite: mark an item in_progress when you start it and completed the moment it is done.\n' +
-      todos.map((t) => `- [${t.status}] ${t.content}`).join('\n')
-    const last = msgs[msgs.length - 1]
-    if (last?.role === 'user' && Array.isArray(last.content)) last.content.push({ type: 'text', text })
-    else msgs.push({ role: 'user', content: [{ type: 'text', text }] })
-  }
 
   // Sub-agent spawner factory for the Task tool. Builds an isolated inner loop with the same LLM config + a fresh
   // readFileState/todos, sharing permission with the parent. The TURN's abort signal is threaded in (see the per-turn
@@ -676,7 +663,6 @@ export async function* runAgent(
             compactions.auto++
             prevAutoTurn = turns
             consecutiveAutoFails = 0 // a real compaction succeeded → reset the cross-wake breaker
-            appendTodoSnapshot(messages)
             if (hookRegistry.hasAny('PostCompact')) {
               const summaryText = messages.flatMap((m) => m.content).filter((b): b is { type: 'text'; text: string } => (b as { type?: string }).type === 'text').map((b) => b.text).join('\n')
               const post = await runHooks(
@@ -806,7 +792,6 @@ export async function* runAgent(
           reactiveCompacted = true
           compactions.auto++
           consecutiveAutoFails = 0 // the summarizer just worked → reset the cross-wake breaker
-          appendTodoSnapshot(messages)
           yield { type: 'compaction', kind: 'auto', freedTokens: Math.max(0, estimate - estimateTokens(messages)) }
           continue
         }
@@ -970,7 +955,7 @@ export async function* runAgent(
     // ── Run guards (loop-guards.ts): walk this turn's tool outcomes IN ORDER ──
     // Order matters for verify-before-done ([Edit, go test] is verified; [go test, Edit] is not).
     // Guard notes ride as text blocks INSIDE the tool_results user message — a separate user message
-    // would break strict role alternation on Anthropic upstreams (same constraint as appendTodoSnapshot).
+    // would break strict role alternation on Anthropic upstreams (same constraint as the todo reminder).
     const resultById = new Map(results.map((r) => [r.tool_use_id, r]))
     const guardNotes: string[] = []
     for (const t of toolUses) {
@@ -995,9 +980,21 @@ export async function* runAgent(
       if (FILE_CHANGE_TOOLS.has(t.name) && r.is_error !== true) verifiedSinceLastEdit = false
       else if (t.name === 'Bash' && r.is_error !== true && isVerifyCommand(command) && bashRanClean(r.content)) verifiedSinceLastEdit = true
     }
+    // CC periodic todo reminder (todo-reminder.ts): ≥10 turns since the last TodoWrite AND ≥10 since the
+    // last reminder → append the copy + current list onto this turn's user message (text blocks inside
+    // the tool_results message keep strict role alternation, same as guard notes). The backward scan also
+    // covers the post-compaction case — the summary swallowed the TodoWrite history, so the counts spike
+    // and the list returns within a cooldown (this replaced the one-shot post-compaction snapshot).
+    // The reminder stays its OWN text block — the backward scan identifies it by copy prefix, which a
+    // merge with guard notes would defeat (the cooldown would never register).
+    const todoReminder = hasTodoTool ? maybeTodoReminder(messages, ctx.todos) : null
     const userMsg: AgentMessage = {
       role: 'user',
-      content: guardNotes.length ? [...results, { type: 'text', text: guardNotes.join('\n\n') }] : results,
+      content: [
+        ...results,
+        ...(guardNotes.length ? [{ type: 'text' as const, text: guardNotes.join('\n\n') }] : []),
+        ...(todoReminder ? [{ type: 'text' as const, text: todoReminder }] : []),
+      ],
     }
     messages.push(userMsg)
     yield { type: 'tool_results', message: userMsg }

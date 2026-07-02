@@ -129,23 +129,89 @@ const MAX_TOOL_RESULT_IN_TRANSCRIPT = 800
 
 const COMPACT_SYSTEM = 'You are a helpful AI assistant tasked with summarizing conversations.'
 
-// The 9-section summary prompt.
-const COMPACT_PROMPT = `Summarize the conversation below in detail. Wrap your reasoning in <analysis> tags, then output the summary inside <summary> tags with exactly these numbered sections:
+// CC 2.1.186 autocompact prompt, byte-verbatim — the "continuing session" variant the binary uses for
+// in-context compaction (extracted 2026-07-02; the manual /compact and partial-compaction variants are
+// different texts serving CC features Studio implements elsewhere — conversation-level manual
+// compression is compression.service's chained-summary system). CC appends a "do not call tools" tail
+// because its summary call runs with the tool environment attached; Studio's summary call is a bare
+// text call, so that tail is not ported.
+export const COMPACT_PROMPT = `Your task is to create a detailed summary of this conversation. This summary will be placed at the start of a continuing session; newer messages that build on this context will follow after your summary (you do not see them here). Summarize thoroughly so that someone reading only your summary and then the newer messages can fully understand what happened and continue the work.
 
-1. Primary Request and Intent: the user's explicit requests and overall goal, in detail.
-2. Key Technical Concepts: technologies, patterns, and conventions in play.
-3. Files and Code Sections: each file read or changed, with the relevant code and WHY it matters. Include full snippets where they were central.
-4. Errors and Fixes: every error hit and how it was resolved, including any user feedback on the fix.
-5. Problem Solving: problems solved and ongoing troubleshooting.
-6. All User Messages: list every non-tool-result user message verbatim — these are critical for understanding intent and feedback. Do not omit any.
-7. Pending Tasks: what remains to be done.
-8. Current Work: precisely what was being done immediately before this summary.
-9. Optional Next Step: the next step, directly in line with the user's most recent explicit request; quote verbatim where work left off so there is no drift. Omit if the next step is unclear.
+Before providing your final summary, wrap your analysis in <analysis> tags to organize your thoughts and ensure you've covered all necessary points. In your analysis process:
 
-Be precise and technical. The summary replaces the full history, so anything omitted is lost.
+1. Chronologically analyze each message and section of the conversation. For each section thoroughly identify:
+   - The user's explicit requests and intents
+   - Your approach to addressing the user's requests
+   - Key decisions, technical concepts and code patterns
+   - Specific details like:
+     - file names
+     - full code snippets
+     - function signatures
+     - file edits
+   - Errors that you ran into and how you fixed them
+   - Pay special attention to specific user feedback that you received, especially if the user told you to do something differently.
+   - Note any security-relevant instructions or constraints the user stated (e.g., sensitive files or data to avoid, operations that must not be performed, credential or secret handling rules). These MUST be preserved verbatim in the summary so they continue to apply after compaction.
+2. Double-check for technical accuracy and completeness, addressing each required element thoroughly.
 
-Conversation transcript:
-`
+Your summary should include the following sections:
+
+1. Primary Request and Intent: Capture the user's explicit requests and intents in detail
+2. Key Technical Concepts: List important technical concepts, technologies, and frameworks discussed.
+3. Files and Code Sections: Enumerate specific files and code sections examined, modified, or created. Include full code snippets where applicable and include a summary of why this file read or edit is important.
+4. Errors and fixes: List errors encountered and how they were fixed.
+5. Problem Solving: Document problems solved and any ongoing troubleshooting efforts.
+6. All user messages: List ALL user messages that are not tool results. Preserve any security-relevant instructions or constraints verbatim so they remain in effect after compaction.
+7. Pending Tasks: Outline any pending tasks.
+8. Work Completed: Describe what was accomplished by the end of this portion.
+9. Context for Continuing Work: Summarize any context, decisions, or state that would be needed to understand and continue the work in subsequent messages.
+
+Here's an example of how your output should be structured:
+
+<example>
+<analysis>
+[Your thought process, ensuring all points are covered thoroughly and accurately]
+</analysis>
+
+<summary>
+1. Primary Request and Intent:
+   [Detailed description]
+
+2. Key Technical Concepts:
+   - [Concept 1]
+   - [Concept 2]
+
+3. Files and Code Sections:
+   - [File Name 1]
+      - [Summary of why this file is important]
+      - [Important Code Snippet]
+
+4. Errors and fixes:
+    - [Error description]:
+      - [How you fixed it]
+
+5. Problem Solving:
+   [Description]
+
+6. All user messages:
+    - [Detailed non tool use user message]
+
+7. Pending Tasks:
+   - [Task 1]
+
+8. Work Completed:
+   [Description of what was accomplished]
+
+9. Context for Continuing Work:
+   [Key context, decisions, or state needed to continue the work]
+
+</summary>
+</example>
+
+Please provide your summary following this structure, ensuring precision and thoroughness in your response.`
+
+// Studio glue (not CC text): CC replays the history as real messages; Studio serializes it into the
+// prompt, so a header separates the instructions from the serialized conversation.
+const TRANSCRIPT_HEADER = '\n\nConversation transcript:\n'
 
 // Serialize the full history into plain text — avoids sending raw tool_use/tool_result blocks (which
 // would need pairing) to the summary call. tool_use input is kept in FULL (it's the code the agent
@@ -221,9 +287,11 @@ export async function autocompact(messages: AgentMessage[], config: CompactConfi
   try {
     const transcript = messagesToTranscript(messages)
     const extraInstructions = config.customInstructions?.trim()
-    const prompt = extraInstructions
-      ? `${COMPACT_PROMPT}\nAdditional compaction instructions from hooks:\n${extraInstructions}\n\n${transcript}`
-      : COMPACT_PROMPT + transcript
+    // Custom-instruction joint is CC-verbatim ("Additional Instructions"); the transcript header is glue.
+    const prompt =
+      (extraInstructions ? `${COMPACT_PROMPT}\n\nAdditional Instructions:\n${extraInstructions}` : COMPACT_PROMPT) +
+      TRANSCRIPT_HEADER +
+      transcript
     const turn = await collectTurn({
       protocol: config.protocol,
       baseUrl: config.baseUrl,
