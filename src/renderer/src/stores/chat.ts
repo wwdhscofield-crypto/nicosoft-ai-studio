@@ -1078,6 +1078,12 @@ export const useChat = create<ChatState>((set, get) => {
     // on skip/failure. No composer readout, no extra line (user call 2026-07-02).
     compactNow: async (convId) => {
       if (get().compacting[convId]) return // main also holds a per-conv lock; this just de-dups the UI
+      if (get().streaming[convId]) {
+        // One button can't stop two things: while a turn streams, Stop means "stop the run" — and the
+        // turn's own post-step auto-compaction covers the over-threshold case anyway.
+        toast.info('Wait for the current turn to finish before compacting.')
+        return
+      }
       set((s) => ({ compacting: { ...s.compacting, [convId]: true } }))
       // Plant the pending line where the receipt will end up. Replace-or-remove it via settlePending —
       // keyed by the pending flag (only one can exist per conv: the compacting guard above).
@@ -1126,6 +1132,9 @@ export const useChat = create<ChatState>((set, get) => {
             'no-key': 'Can’t compact: the endpoint has no API key.'
           }
           toast.info(copy[out.reason] ?? 'Compaction skipped.')
+        } else if (out.status === 'cancelled') {
+          // User hit Stop: the pending line vanishing + the button reverting IS the feedback — no toast.
+          if (planted) set((s) => ({ byConversation: { ...s.byConversation, [convId]: settlePending(s.byConversation[convId] ?? []) } }))
         } else {
           if (planted) set((s) => ({ byConversation: { ...s.byConversation, [convId]: settlePending(s.byConversation[convId] ?? []) } }))
           toast.error('Compaction failed — the conversation was left unchanged.')
@@ -1136,6 +1145,12 @@ export const useChat = create<ChatState>((set, get) => {
       } finally {
         set((s) => ({ compacting: { ...s.compacting, [convId]: false } }))
       }
+    },
+
+    // Stop button while compacting — fire-and-forget; the outcome ('cancelled') flows back through the
+    // original compactNow await, which removes the pending line and re-enables the command.
+    cancelCompact: (convId) => {
+      void window.api.agent.compactCancel(convId)
     },
 
     rename: async (convId, title) => {

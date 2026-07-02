@@ -59,7 +59,17 @@ export type CompactOutcome =
   // new context ≈ old measured count − foldedTokens + summaryTokens (the next real count_tokens supersedes it).
   | { status: 'compacted'; foldedMessages: number; foldedTokens: number; summaryTokens: number }
   | { status: 'skipped'; reason: CompactSkipReason }
+  | { status: 'cancelled' } // user hit Stop mid-fold — NOTHING was written (the summary is discarded)
   | { status: 'failed' }
+
+// In-flight compactions by conversation, so the composer's Stop can abort the fold's LLM call.
+// Registered for every maybeCompress run (auto included — harmless, nothing cancels those).
+const cancelers = new Map<string, AbortController>()
+export function cancelCompact(convId: string): boolean {
+  const c = cancelers.get(convId)
+  if (c) c.abort()
+  return !!c
+}
 
 // Resolve a model's real context window: explicit override → exact catalog slug → largest known
 // text-model window on the same endpoint. The fallback exists because a nicosoft/* OAuth slug is often
@@ -81,6 +91,8 @@ export function resolveContextWindow(
 export async function maybeCompress(input: CompressInput): Promise<CompactOutcome> {
   if (compressing.has(input.convId)) return { status: 'skipped', reason: 'busy' } // already running here
   compressing.add(input.convId)
+  const canceler = new AbortController()
+  cancelers.set(input.convId, canceler)
   try {
     const ep = endpointRepo.getById(input.endpointId)
     if (!ep) return { status: 'skipped', reason: 'no-endpoint' }
@@ -120,18 +132,21 @@ export async function maybeCompress(input: CompressInput): Promise<CompactOutcom
 
     agentEvents.emit({ type: 'compact:pre', convId: input.convId, roleId: input.roleId, ts: Date.now() })
 
-    // STEP 0: capture long-term memory synchronously before folding messages away.
+    // STEP 0: capture long-term memory synchronously before folding messages away. Not abortable
+    // (fast, and an extracted memory is a harmless keeper even if the fold is then cancelled).
     await memoryService.extract(
       { convId: input.convId, roleId: input.roleId, endpointId: input.endpointId, model: input.model },
       'auto'
     )
+    if (canceler.signal.aborted) return { status: 'cancelled' }
 
     const fold = recent.slice(0, recent.length - keepTail) // older messages → summary
     const coveredUpTo = fold[fold.length - 1].id
 
     const key = keychain.getApiKey(input.endpointId)
     if (!key) return { status: 'skipped', reason: 'no-key' }
-    const summaryText = await foldSummary(fold, prevSummary, ep, key, input.model)
+    const summaryText = await foldSummary(fold, prevSummary, ep, key, input.model, canceler.signal)
+    if (canceler.signal.aborted) return { status: 'cancelled' } // Stop won the race — do NOT write the summary
     if (!summaryText) return { status: 'failed' } // summary calls exhausted their retries — nothing was folded
 
     summaryRepo.create({
@@ -143,11 +158,13 @@ export async function maybeCompress(input: CompressInput): Promise<CompactOutcom
     agentEvents.emit({ type: 'compact:post', convId: input.convId, roleId: input.roleId, ts: Date.now() })
     return { status: 'compacted', foldedMessages: fold.length, foldedTokens: estimateMessageTokens(fold), summaryTokens: estimateTextTokens(summaryText) }
   } catch (err) {
+    if (canceler.signal.aborted) return { status: 'cancelled' } // the aborted fetch throws — that's the Stop, not a failure
     // best-effort: a compression failure must never break the chat flow, but surface it (CLAUDE.md)
     console.warn('[compression] failed for conversation', input.convId, err)
     return { status: 'failed' }
   } finally {
     compressing.delete(input.convId)
+    if (cancelers.get(input.convId) === canceler) cancelers.delete(input.convId)
   }
 }
 
@@ -178,7 +195,8 @@ async function foldSummary(
   prev: SummaryRow | null,
   ep: endpointRepo.EndpointRow,
   key: string,
-  model: string
+  model: string,
+  signal?: AbortSignal
 ): Promise<string | null> {
   const lines = fold.map((m) => `${m.author === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
   const prior = prev ? `Existing summary so far:\n${prev.content}\n\n` : ''
@@ -186,27 +204,30 @@ async function foldSummary(
 
   // Common case: fits in one fold.
   if (transcript.length <= MAX_FOLD_CHARS) {
-    return summarizeChunk(`${prior}Conversation:\n${transcript}`, ep, key, model)
+    return summarizeChunk(`${prior}Conversation:\n${transcript}`, ep, key, model, signal)
   }
 
   // Too big for one call → summarize each chunk, then summarize the summaries. No message is dropped.
   const chunks = chunkByChars(lines, MAX_FOLD_CHARS)
   const partials: string[] = []
   for (let i = 0; i < chunks.length; i++) {
-    const s = await summarizeChunk(`Conversation (part ${i + 1}/${chunks.length}):\n${chunks[i]}`, ep, key, model)
+    if (signal?.aborted) return null
+    const s = await summarizeChunk(`Conversation (part ${i + 1}/${chunks.length}):\n${chunks[i]}`, ep, key, model, signal)
     if (s) partials.push(s)
   }
   if (!partials.length) return null
   if (partials.length === 1) return partials[0]
-  return summarizeChunk(`${prior}Section summaries to merge into ONE summary:\n${partials.join('\n\n')}`, ep, key, model)
+  return summarizeChunk(`${prior}Section summaries to merge into ONE summary:\n${partials.join('\n\n')}`, ep, key, model, signal)
 }
 
 // One summary call with a single retry (transient overflow / network). Returns null on empty / failure.
+// A user cancel (signal aborted) exits immediately — no retry, the caller maps it to 'cancelled'.
 async function summarizeChunk(
   body: string,
   ep: endpointRepo.EndpointRow,
   key: string,
-  model: string
+  model: string,
+  signal?: AbortSignal
 ): Promise<string | null> {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
@@ -219,13 +240,15 @@ async function summarizeChunk(
           messages: [
             { role: 'system', content: COMPRESS_SYSTEM },
             { role: 'user', content: `${COMPRESS_PROMPT}\n\n${body}` }
-          ]
+          ],
+          signal
         },
         () => {} // non-streaming use
       )
       const text = result.text.trim()
       if (text) return text
     } catch (err) {
+      if (signal?.aborted) return null // Stop, not a transient failure — don't burn the retry
       if (attempt === 1) {
         console.warn('[compression] summary call failed after retry', err)
         return null

@@ -271,6 +271,7 @@ const api = {
     run: (input: AgentRunInput): Promise<{ streamId: string }> => ipcRenderer.invoke('agent:run', input),
     stop: (streamId: string): Promise<void> => ipcRenderer.invoke('agent:stop', streamId),
     compact: (convId: string): Promise<CompactOutcome> => ipcRenderer.invoke('agent:compact', convId),
+    compactCancel: (convId: string): Promise<boolean> => ipcRenderer.invoke('agent:compact:cancel', convId),
     respondPermission: (resp: AgentPermissionResponse): Promise<void> =>
       ipcRenderer.invoke('agent:permission:respond', resp),
     respondQuestion: (resp: AgentQuestionResponse): Promise<void> =>

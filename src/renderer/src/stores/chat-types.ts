@@ -133,6 +133,7 @@ export interface ChatState {
   send: (opts: SendOpts) => Promise<void>
   stop: () => void
   compactNow: (convId: string) => Promise<void> // manual /compact — awaits the fold, shows the receipt/skip reason
+  cancelCompact: (convId: string) => void // Stop button while compacting — aborts the fold (nothing written)
   respondPermission: (convId: string, allow: boolean) => void
   respondQuestion: (convId: string, answer: string) => void
   approveApproval: (convId: string, pendingId: string) => Promise<void>

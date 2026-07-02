@@ -79,6 +79,7 @@ export function Composer({
 
   const activeConv = chat.activeConv
   const streaming = activeConv ? (chat.streaming[activeConv] ?? false) : false
+  const compacting = activeConv ? (chat.compacting[activeConv] ?? false) : false
   const messages = activeConv ? (chat.byConversation[activeConv] ?? []) : []
   // Exact prompt tokens of the last sent turn (count_tokens, measured server-side) plus the unsent input
   // — far more accurate than chars/4, especially for agent runs where tool schemas dominate. Falls back
@@ -157,7 +158,7 @@ export function Composer({
 
   const send = (): void => {
     const text = value.trim()
-    if ((!text && attach.length === 0) || !ready || streaming) return
+    if ((!text && attach.length === 0) || !ready || streaming || compacting) return // compacting: the send slot is a Stop button — Enter stays consistent with it
     setValue('')
     setTimeout(grow, 0)
     const images = attach.map((a) => ({ dataUrl: a.dataUrl, mime: a.mime, name: a.name }))
@@ -303,6 +304,11 @@ export function Composer({
             <div className="tb-spacer" />
             {streaming ? (
               <button className="cmp-stop" onClick={() => chat.stop()}>
+                <span className="stop-sq" /> {t('conv.stop')}
+              </button>
+            ) : compacting ? (
+              // Manual /compact in flight — the send slot becomes Stop (aborts the fold; nothing written).
+              <button className="cmp-stop" onClick={() => activeConv && chat.cancelCompact(activeConv)}>
                 <span className="stop-sq" /> {t('conv.stop')}
               </button>
             ) : (

@@ -215,4 +215,7 @@ export function registerAgentHandlers(): void {
 
   // Manual compaction (the /compact command) — fold older history now, ignoring the 90% threshold.
   ipcMain.handle('agent:compact', (_e, convId: string) => compressionService.compactNow(convId))
+  // Stop button while a manual compaction runs: abort the fold's LLM call — nothing is written, the
+  // original agent:compact invoke resolves with {status:'cancelled'}.
+  ipcMain.handle('agent:compact:cancel', (_e, convId: string) => compressionService.cancelCompact(convId))
 }
