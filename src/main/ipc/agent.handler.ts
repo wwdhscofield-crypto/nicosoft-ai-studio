@@ -3,6 +3,7 @@ import { ulid } from '../db/id'
 import { LlmError } from '../llm/types'
 import { broadcastConvImage, broadcastConvTodos, broadcastUsage } from './usage-broadcast'
 import { StreamRegistry } from './stream-lifecycle'
+import { CoalescerGroup } from './stream-coalesce'
 import { PermissionBridge } from './permission-bridge'
 import { serializeAssistantBlocks, serializeToolResults } from './agent-serialize'
 import * as agentService from '../services/agent.service'
@@ -90,21 +91,27 @@ function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: { resum
     opened = true
     send('coordinator:step:start', { streamId, roleId, dispatch: null, model: input.model })
   }
+  // 16ms delta coalescing (streaming-render-alignment §3.1), one lane per (kind × roleId). Structural
+  // events that land in the message stream (tool cards, assistant/results/compaction, step:done) call
+  // flushAll() BEFORE they send, so buffered text can never arrive after a card emitted later than it.
+  // High-rate sub_tool_delta stays direct (it only feeds an existing card's live tail — no ordering
+  // dependency on text) and is NOT a flush point, so it can't defeat the batching window.
+  const lanes = new CoalescerGroup()
   // The per-verb sink this run's stream events flow through — the SAME wire shape (coordinator:*) and the
   // SAME forwardLlmEvent mapping a dispatched step / collab expert uses; solo is the single-role case.
   const sink: RunStreamSink = {
-    onDelta: (roleId, text) => { ensureOpen(); send('coordinator:delta', { streamId, roleId, text }) },
-    onReasoning: (roleId, text) => { ensureOpen(); send('coordinator:reasoning', { streamId, roleId, text }) },
-    onToolStart: (roleId, id, name) => { ensureOpen(); send('coordinator:tool:start', { streamId, roleId, id, name }) },
+    onDelta: (roleId, text) => { ensureOpen(); lanes.lane(`t:${roleId}`, (t) => send('coordinator:delta', { streamId, roleId, text: t })).push(text) },
+    onReasoning: (roleId, text) => { ensureOpen(); lanes.lane(`r:${roleId}`, (t) => send('coordinator:reasoning', { streamId, roleId, text: t })).push(text) },
+    onToolStart: (roleId, id, name) => { ensureOpen(); lanes.flushAll(); send('coordinator:tool:start', { streamId, roleId, id, name }) },
     onToolInputDelta: (roleId, toolId, delta) => { ensureOpen(); send('coordinator:tool:input-delta', { streamId, roleId, toolId, delta }) },
     onToolEvent: (roleId, ev) => {
       // Only the AgentLlmEvent sub-tool lifecycle arrives here (forwardLlmEvent); assistant/results/compaction
       // ride onEvent below, so this stays a plain sub-tool forwarder.
       ensureOpen()
-      if (ev.type === 'sub_tool_start') send('coordinator:sub-tool:start', { streamId, roleId, ...ev })
-      else if (ev.type === 'sub_tool_done') send('coordinator:sub-tool:done', { streamId, roleId, ...ev })
+      if (ev.type === 'sub_tool_start') { lanes.flushAll(); send('coordinator:sub-tool:start', { streamId, roleId, ...ev }) }
+      else if (ev.type === 'sub_tool_done') { lanes.flushAll(); send('coordinator:sub-tool:done', { streamId, roleId, ...ev }) }
       else if (ev.type === 'sub_tool_delta') send('coordinator:sub-tool:delta', { streamId, roleId, ...ev })
-      else if (ev.type === 'sub_tool_progress') send('coordinator:sub-tool:progress', { streamId, roleId, ...ev })
+      else if (ev.type === 'sub_tool_progress') { lanes.flushAll(); send('coordinator:sub-tool:progress', { streamId, roleId, ...ev }) }
     },
     // Streaming usage: solo has no sub-steps, so usage stays a CONV-level broadcast (no roleId) — the live
     // overlay + the composer "/ window" meter read it; a roleId here would misroute it to segment-live state.
@@ -121,6 +128,7 @@ function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: { resum
           onRetry: (info) => { ensureOpen(); send('coordinator:retry', { streamId, roleId, ...info }) },
           onEvent: (ev) => {
             ensureOpen()
+            lanes.flushAll() // assistant/results/compaction land in the message stream — text first
             if (ev.type === 'assistant') send('coordinator:assistant', { streamId, roleId, blocks: serializeAssistantBlocks(ev.message.content) })
             else if (ev.type === 'compaction') send('coordinator:compaction', { streamId, roleId, kind: ev.kind, freedTokens: ev.freedTokens, phase: ev.phase })
             else send('coordinator:results', { streamId, roleId, results: serializeToolResults(ev.message.content) })
@@ -142,7 +150,7 @@ function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: { resum
             return permissions.request(
               streamId,
               [controller.signal, signal],
-              (permissionId) => send('coordinator:permission', { streamId, permissionId, roleId, toolName: req.toolName, input: req.input, reason: req.reason }),
+              (permissionId) => { lanes.flushAll(); send('coordinator:permission', { streamId, permissionId, roleId, toolName: req.toolName, input: req.input, reason: req.reason }) },
               (permissionId) => send('coordinator:permission:cancel', { streamId, permissionId }),
             )
           },
@@ -172,15 +180,18 @@ function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: { resum
         // done closes the stream: the exact two-beat every dispatched step ends with. ensureOpen covers a
         // degenerate zero-event run so the settle still has a segment to land on.
         ensureOpen()
+        lanes.flushAll()
         send('coordinator:step:done', { streamId, roleId, text: r.text, inputTokens: r.contextTokens, outputTokens: r.outputTokens, sentTokens: r.sentTokens })
         send('coordinator:done', { streamId, inputTokens: r.contextTokens, outputTokens: r.outputTokens, reason: r.reason })
       })
       .catch((err: unknown) => {
         const code = err instanceof LlmError ? err.code : 'unknown'
         const message = err instanceof Error ? err.message : String(err)
+        lanes.flushAll()
         send('coordinator:error', { streamId, code, message })
       })
       .finally(() => {
+        lanes.flushAll() // belt-and-suspenders: no armed timer may outlive the stream
         workspaceTasks.finalizeConv(input.convId) // run silent → finalize an all-complete phase (design §5 P19)
         sweepStream(streamId) // deny any prompt the renderer never answered before the run ended
         finish()

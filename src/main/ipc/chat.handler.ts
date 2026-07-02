@@ -4,6 +4,7 @@ import * as chatService from '../services/chat.service'
 import * as compressionService from '../services/compression.service'
 import { LlmError } from '../llm/types'
 import { broadcastUsage } from './usage-broadcast'
+import { DeltaCoalescer } from './stream-coalesce'
 import type { ChatSendInput, ChatCompressInput } from './contracts'
 
 // Streaming chat over IPC: `chat:send` starts a stream and returns its streamId promptly; tokens
@@ -23,18 +24,26 @@ export function registerChatHandlers(): void {
     const controller = new AbortController()
     streams.set(streamId, controller)
     const sender = e.sender
+    const sendEvent = (channel: string, data: unknown): void => {
+      if (!sender.isDestroyed()) sender.send(channel, data)
+    }
+    // 16ms delta coalescing (streaming-render-alignment §3.1): leading send + one merged trailing send
+    // per window. Text and reasoning ride separate lanes so they never merge into one payload; both are
+    // flushed before the terminal done/error so no text arrives after (and no timer outlives) the stream.
+    const textLane = new DeltaCoalescer((text) => sendEvent('chat:delta', { streamId, text }))
+    const reasoningLane = new DeltaCoalescer((text) => sendEvent('chat:reasoning', { streamId, text }))
+    const flushLanes = (): void => {
+      textLane.flush()
+      reasoningLane.flush()
+    }
 
     // fire-and-forget so the streamId returns immediately; results arrive as events
     void chatService
       .send(
         input,
         {
-          onDelta: (text) => {
-            if (!sender.isDestroyed()) sender.send('chat:delta', { streamId, text })
-          },
-          onReasoning: (text) => {
-            if (!sender.isDestroyed()) sender.send('chat:reasoning', { streamId, text })
-          },
+          onDelta: (text) => textLane.push(text),
+          onReasoning: (text) => reasoningLane.push(text),
           // chat.service fires onUsage from two sources: the up-front per-turn count_tokens (input only →
           // current context, drives the "/ window" indicator) and the streaming live usage (input+output →
           // the live ↑/↓ readout). The presence of outputTokens distinguishes them.
@@ -57,21 +66,23 @@ export function registerChatHandlers(): void {
         controller.signal
       )
       .then((result) => {
-        if (!sender.isDestroyed())
-          sender.send('chat:done', {
-            streamId,
-            text: result.text,
-            usage: result.usage,
-            model: result.model,
-            inputTokens: result.promptTokens
-          })
+        flushLanes() // buffered tail out BEFORE the terminal event (ordering)
+        sendEvent('chat:done', {
+          streamId,
+          text: result.text,
+          usage: result.usage,
+          model: result.model,
+          inputTokens: result.promptTokens
+        })
       })
       .catch((err: unknown) => {
         const code = err instanceof LlmError ? err.code : 'unknown'
         const message = err instanceof Error ? err.message : String(err)
-        if (!sender.isDestroyed()) sender.send('chat:error', { streamId, code, message })
+        flushLanes()
+        sendEvent('chat:error', { streamId, code, message })
       })
       .finally(() => {
+        flushLanes() // belt-and-suspenders: no armed timer may outlive the stream
         streams.delete(streamId)
       })
 

@@ -55,3 +55,13 @@
 .code-body .shiki { margin: 0; padding: 12px; background: transparent !important; font-family: var(--mono); }
 .code-body.code-plain { margin: 0; padding: 12px; background: #0d1117; }
 .code-plain code { font-family: var(--mono); white-space: pre; color: var(--text-2); }
+
+/* streaming new-text fade-in (streaming-render-alignment §3.5): one-shot, plays on mount only — settled
+   spans keep their identity across re-renders (positional diff), so text never re-animates. `both`
+   pins the settled state. Opacity ONLY — the earlier blur ramp read as out-of-focus text during fast
+   streams (user feedback 2026-07-03), so new text now fades in sharp. */
+.md .md-fadein { animation: mdFadeIn 0.18s ease-out both; }
+@keyframes mdFadeIn {
+  from { opacity: 0.3; }
+  to { opacity: 1; }
+}

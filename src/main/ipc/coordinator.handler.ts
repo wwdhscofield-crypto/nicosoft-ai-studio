@@ -13,6 +13,7 @@ import * as coordinatorService from '../services/coordinator.service'
 import { LlmError } from '../llm/types'
 import { broadcastConvImage, broadcastConvTodos, broadcastUsage } from './usage-broadcast'
 import { StreamRegistry } from './stream-lifecycle'
+import { CoalescerGroup } from './stream-coalesce'
 import { PermissionBridge } from './permission-bridge'
 import { serializeAssistantBlocks, serializeToolResults } from './agent-serialize'
 import * as workspaceTasks from '../services/workspace-tasks.service'
@@ -59,6 +60,11 @@ export function registerCoordinatorHandlers(): void {
     const sender = e.sender
     const { controller, send, finish } = streams.open(streamId, sender)
     permissions.open(streamId)
+    // 16ms delta coalescing (streaming-render-alignment §3.1), one lane per (kind × roleId) — collab/
+    // dispatch interleave several experts' streams on this ONE streamId and their deltas must never merge
+    // into one payload. Every structural event that lands in the message stream flushes the lanes first
+    // (ordering barrier); high-rate sub_tool_delta stays direct and is NOT a flush point.
+    const lanes = new CoalescerGroup()
 
     void coordinatorService
       .run(
@@ -66,23 +72,33 @@ export function registerCoordinatorHandlers(): void {
         {
           onDispatch: (chain, reason) => {
             const ev: CoordinatorDispatchEvent = { streamId, chain, reason }
+            lanes.flushAll()
             send('coordinator:dispatch', ev)
           },
           onStepStart: (roleId, dispatch, model, segmentKind) => {
             const ev: CoordinatorStepStart = { streamId, roleId, dispatch, model, segmentKind }
+            lanes.flushAll()
             send('coordinator:step:start', ev)
           },
-          onExpertActive: (roleId, active) => send('coordinator:expert:active', { streamId, roleId, active }),
+          onExpertActive: (roleId, active) => {
+            lanes.flushAll() // parked-flag lands on the role's bubble — its text must be there first
+            send('coordinator:expert:active', { streamId, roleId, active })
+          },
           onDelta: (roleId, text) => {
-            const ev: CoordinatorStepDelta = { streamId, roleId, text }
-            send('coordinator:delta', ev)
+            lanes.lane(`t:${roleId}`, (t) => {
+              const ev: CoordinatorStepDelta = { streamId, roleId, text: t }
+              send('coordinator:delta', ev)
+            }).push(text)
           },
           onReasoning: (roleId, text) => {
-            const ev: CoordinatorReasoning = { streamId, roleId, text }
-            send('coordinator:reasoning', ev)
+            lanes.lane(`r:${roleId}`, (t) => {
+              const ev: CoordinatorReasoning = { streamId, roleId, text: t }
+              send('coordinator:reasoning', ev)
+            }).push(text)
           },
           onStepDone: (roleId, text, inputTokens, outputTokens, sentTokens) => {
             const ev: CoordinatorStepDone = { streamId, roleId, text, inputTokens, outputTokens, sentTokens }
+            lanes.flushAll()
             send('coordinator:step:done', ev)
           },
           // The coordinator fires onUsage from up-front count_tokens (input only → current context, the "/
@@ -110,6 +126,7 @@ export function registerCoordinatorHandlers(): void {
           // tagged with roleId, to the coordinator UI (doc 19 §11 phase 2). Mirrors agent.handler's bridge.
           onToolStart: (roleId, id, name) => {
             const ev: CoordinatorToolStart = { streamId, roleId, id, name }
+            lanes.flushAll()
             send('coordinator:tool:start', ev)
           },
           onToolInputDelta: (roleId, toolId, delta) => {
@@ -118,20 +135,26 @@ export function registerCoordinatorHandlers(): void {
           },
           onToolEvent: (roleId, evt) => {
             if (evt.type === 'sub_tool_start') {
+              lanes.flushAll()
               send('coordinator:sub-tool:start', { streamId, roleId, ...evt })
             } else if (evt.type === 'sub_tool_done') {
+              lanes.flushAll()
               send('coordinator:sub-tool:done', { streamId, roleId, ...evt })
             } else if (evt.type === 'sub_tool_delta') {
               send('coordinator:sub-tool:delta', { streamId, roleId, ...evt })
             } else if (evt.type === 'sub_tool_progress') {
+              lanes.flushAll()
               send('coordinator:sub-tool:progress', { streamId, roleId, ...evt })
             } else if (evt.type === 'assistant') {
               const ev: CoordinatorAssistant = { streamId, roleId, blocks: serializeAssistantBlocks(evt.message.content) }
+              lanes.flushAll()
               send('coordinator:assistant', ev)
             } else if (evt.type === 'tool_results') {
               const ev: CoordinatorToolResults = { streamId, roleId, results: serializeToolResults(evt.message.content) }
+              lanes.flushAll()
               send('coordinator:results', ev)
             } else if (evt.type === 'compaction') {
+              lanes.flushAll()
               send('coordinator:compaction', { streamId, roleId, kind: evt.kind, freedTokens: evt.freedTokens, phase: evt.phase })
             }
           },
@@ -141,6 +164,7 @@ export function registerCoordinatorHandlers(): void {
               [controller.signal, signal],
               (permissionId) => {
                 const ev: CoordinatorPermissionRequest = { streamId, permissionId, roleId, toolName: req.toolName, input: req.input, reason: req.reason }
+                lanes.flushAll()
                 send('coordinator:permission', ev)
               },
               (permissionId) => send('coordinator:permission:cancel', { streamId, permissionId }),
@@ -150,6 +174,7 @@ export function registerCoordinatorHandlers(): void {
           onApproval: (e) => {
             if (e.zone !== 'red') return
             const ev: CoordinatorApprovalEvent = { streamId, ...e }
+            lanes.flushAll()
             send('coordinator:approval', ev)
           },
           // phase 5c: a live collab event changed the backing project — push so an open ProjectDetail refetches.
@@ -174,15 +199,18 @@ export function registerCoordinatorHandlers(): void {
       )
       .then((r) => {
         const ev: CoordinatorDoneDto = { streamId, inputTokens: r.inputTokens, outputTokens: r.outputTokens, reason: r.reason }
+        lanes.flushAll()
         send('coordinator:done', ev)
       })
       .catch((err: unknown) => {
         const code = err instanceof LlmError ? err.code : 'unknown'
         const message = err instanceof Error ? err.message : String(err)
         const ev: CoordinatorErrorDto = { streamId, code, message }
+        lanes.flushAll()
         send('coordinator:error', ev)
       })
       .finally(() => {
+        lanes.flushAll() // belt-and-suspenders: no armed timer may outlive the stream
         workspaceTasks.finalizeConv(input.convId) // turn silent → finalize an all-complete phase (design §5 P19)
         sweepStream(streamId) // deny any approval the renderer never answered before the turn ended
         finish()

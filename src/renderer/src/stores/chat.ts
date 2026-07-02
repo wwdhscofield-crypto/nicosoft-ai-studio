@@ -5,6 +5,7 @@ import { useCustomRoles } from '@/stores/custom-roles'
 import { useWorkspace } from '@/stores/workspace'
 import { attachVerifyListeners } from '@/stores/verify'
 import { roleHasAgent, roleIsCoordinator, uid, applySubToolStart, applySubToolDone, applySubToolDelta, applySubToolProgress, locateSubToolMsgIndex, SHOWN_SERVER_BLOCKS } from './chat-helpers'
+import { appendTextToTail, appendReasoningToTail, appendTextToRole, appendReasoningToRole } from './chat-append'
 import type { ApprovalCard, ChatMessage, ChatState, MsgBlock } from './chat-types'
 
 // Unified per-conversation chat store (L3). A conversation is a real DB row; messages persist to the
@@ -36,59 +37,27 @@ const pingTurnSettled = (convId: string): void => {
 }
 
 export const useChat = create<ChatState>((set, get) => {
-  // Append a text delta into a message's ordered block list: extend the trailing text block, or open a new
-  // one if the list is empty or ends in a tool block (text emitted AFTER a tool call → its own segment, so
-  // the renderer interleaves it below that tool card). Keeps blocks in sync with cur.text on every delta.
-  const pushTextDelta = (cur: ChatMessage, text: string): void => {
-    const blocks = cur.blocks ? [...cur.blocks] : []
-    const last = blocks[blocks.length - 1]
-    if (last && last.kind === 'text') blocks[blocks.length - 1] = { kind: 'text', text: last.text + text }
-    else blocks.push({ kind: 'text', text })
-    cur.blocks = blocks
-  }
-
-  // Append a reasoning (visible-thinking) delta into the ordered block list: extend the trailing reasoning
-  // block, or open a new one if the list is empty or ends in a different block kind. Reasoning is kept SEPARATE
-  // from cur.text (the answer) — it lives only in blocks, rendered as a distinct "Thinking" section that breaks
-  // the tool fold exactly where the model paused to think.
-  const pushReasoningDelta = (cur: ChatMessage, text: string): void => {
-    const blocks = cur.blocks ? [...cur.blocks] : []
-    const last = blocks[blocks.length - 1]
-    if (last && last.kind === 'reasoning') blocks[blocks.length - 1] = { kind: 'reasoning', text: last.text + text }
-    else blocks.push({ kind: 'reasoning', text })
-    cur.blocks = blocks
-  }
+  // Delta appends go through the minimal-immutable reducers in chat-append.ts (streaming-render-alignment
+  // §3.2): per delta, ONLY the array and the one message being appended to change identity — every other
+  // message keeps its reference, so memoized segments/chunks skip re-rendering. The old inline versions
+  // cloned every message per delta, defeating all memoization down the tree on every token.
+  const freshBubble = (): ChatMessage => ({ id: uid(), role: 'assistant', text: '', streaming: true })
 
   // Append a text delta to the last streaming assistant message; start a fresh one if the last isn't
   // streaming. Used by the plain-text chat path only — agent-loop streams are roleId-tagged and route
   // through appendDeltaToRole below.
   const appendDelta = (convId: string, text: string): void => {
-    set((s) => {
-      const msgs = (s.byConversation[convId] ?? []).map((m) => ({ ...m }))
-      let cur = msgs[msgs.length - 1]
-      if (!cur || cur.role !== 'assistant' || !cur.streaming) {
-        cur = { id: uid(), role: 'assistant', text: '', streaming: true }
-        msgs.push(cur)
-      }
-      cur.text += text
-      pushTextDelta(cur, text)
-      return { byConversation: { ...s.byConversation, [convId]: msgs } }
-    })
+    set((s) => ({
+      byConversation: { ...s.byConversation, [convId]: appendTextToTail(s.byConversation[convId] ?? [], text, freshBubble) }
+    }))
   }
 
   // Append a reasoning (visible-thinking) delta to the last streaming assistant message; start a fresh one if
   // the last isn't streaming. Mirrors appendDelta but routes to the reasoning block (never cur.text).
   const appendReasoning = (convId: string, text: string): void => {
-    set((s) => {
-      const msgs = (s.byConversation[convId] ?? []).map((m) => ({ ...m }))
-      let cur = msgs[msgs.length - 1]
-      if (!cur || cur.role !== 'assistant' || !cur.streaming) {
-        cur = { id: uid(), role: 'assistant', text: '', streaming: true }
-        msgs.push(cur)
-      }
-      pushReasoningDelta(cur, text)
-      return { byConversation: { ...s.byConversation, [convId]: msgs } }
-    })
+    set((s) => ({
+      byConversation: { ...s.byConversation, [convId]: appendReasoningToTail(s.byConversation[convId] ?? [], text, freshBubble) }
+    }))
   }
 
   // Attach a generated image (nsai-media:// url) to the current streaming assistant message. An agent tool
@@ -111,33 +80,18 @@ export const useChat = create<ChatState>((set, get) => {
   // interleave their text. Route each delta to the streaming bubble tagged with its roleId instead.
   const appendDeltaToRole = (convId: string, roleId: string, text: string): void => {
     set((s) => {
-      const msgs = (s.byConversation[convId] ?? []).map((m) => ({ ...m }))
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        if (msgs[i].role === 'assistant' && msgs[i].streaming && msgs[i].expertId === roleId) {
-          const cur = { ...msgs[i], text: msgs[i].text + text }
-          pushTextDelta(cur, text) // keep the ordered block stream in sync (interleave with this step's tool cards)
-          msgs[i] = cur
-          return { byConversation: { ...s.byConversation, [convId]: msgs } }
-        }
-      }
-      return s // no matching streaming bubble yet (step:start creates it first) — drop rather than mis-route
+      const next = appendTextToRole(s.byConversation[convId] ?? [], roleId, text)
+      // null = no matching streaming bubble yet (step:start creates it first) — drop rather than mis-route
+      return next ? { byConversation: { ...s.byConversation, [convId]: next } } : s
     })
   }
 
   // Coordinator: route a dispatched expert's visible-thinking delta to ITS streaming bubble's reasoning block
   // (parity with appendDeltaToRole). Never touches cur.text — reasoning stays out of the answer prose.
-  const appendReasoningToRole = (convId: string, roleId: string, text: string): void => {
+  const appendReasoningToRoleDelta = (convId: string, roleId: string, text: string): void => {
     set((s) => {
-      const msgs = (s.byConversation[convId] ?? []).map((m) => ({ ...m }))
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        if (msgs[i].role === 'assistant' && msgs[i].streaming && msgs[i].expertId === roleId) {
-          const cur = { ...msgs[i] }
-          pushReasoningDelta(cur, text)
-          msgs[i] = cur
-          return { byConversation: { ...s.byConversation, [convId]: msgs } }
-        }
-      }
-      return s
+      const next = appendReasoningToRole(s.byConversation[convId] ?? [], roleId, text)
+      return next ? { byConversation: { ...s.byConversation, [convId]: next } } : s
     })
   }
 
@@ -398,7 +352,7 @@ export const useChat = create<ChatState>((set, get) => {
     })
     at.onReasoning((d) => {
       const meta = runMeta.get(d.streamId)
-      if (meta) appendReasoningToRole(meta.convId, d.roleId, d.text)
+      if (meta) appendReasoningToRoleDelta(meta.convId, d.roleId, d.text)
     })
     at.onStepDone((d) => {
       const meta = runMeta.get(d.streamId)

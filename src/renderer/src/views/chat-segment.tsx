@@ -10,7 +10,7 @@ import type { ChatMessage, MsgBlock, ToolCall } from '@/stores/chat'
 import { ServerBubble, Sources } from '@/components/tool-bubble'
 import { ToolRun, OMIT_WHEN_DONE, INLINE_SURFACE } from '@/components/tool-run'
 import { WidgetCard } from '@/components/widget-card'
-import { Markdown } from '@/components/markdown'
+import { ChunkedMarkdown } from '@/components/markdown'
 import { useT } from '@/stores/locale'
 import { isSynthesis, groupRuns, sameChain, segmentFolds } from '@/stores/chat-helpers'
 import type { Expert } from '@/types'
@@ -218,11 +218,17 @@ function RunBody({ msgs, onOpenImage, live }: { msgs: ChatMessage[]; onOpenImage
       ...tools.filter((tl) => !covered.has(tl.id)).map((tl) => ({ kind: 'tool' as const, id: tl.id })),
       ...(!hasText && m.text ? [{ kind: 'text' as const, text: m.text }] : [])
     ]
+    // The typewriter/fade pipeline applies to the LIVE TAIL only: while this message streams, its last
+    // text/reasoning block is the one growing (append reducers only ever extend the trailing block) —
+    // that block renders through the reveal stepper; every earlier block is settled and renders as
+    // memoized chunks (parse-once). Same component either way (ChunkedMarkdown), so the done transition
+    // is a prop flip in place — no remount, no flash.
+    const lastLiveIdx = m.streaming ? walk.findLastIndex((x) => x.kind === 'text' || x.kind === 'reasoning') : -1
     walk.forEach((b, bi) => {
       if (b.kind === 'text') {
         if (!b.text) return
         flushFold(false)
-        out.push(<Markdown key={`t${m.id}:${bi}`}>{b.text}</Markdown>)
+        out.push(<ChunkedMarkdown key={`t${m.id}:${bi}`} text={b.text} live={bi === lastLiveIdx} />)
         return
       }
       if (b.kind === 'reasoning') {
@@ -231,7 +237,7 @@ function RunBody({ msgs, onOpenImage, live }: { msgs: ChatMessage[]; onOpenImage
         // Flush the tool fold first so it lands where the model paused to think.
         if (!b.text.trim()) return
         flushFold(false)
-        out.push(<Markdown key={`r${m.id}:${bi}`}>{b.text}</Markdown>)
+        out.push(<ChunkedMarkdown key={`r${m.id}:${bi}`} text={b.text} live={bi === lastLiveIdx} />)
         return
       }
       if (b.kind === 'compaction') {
