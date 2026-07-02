@@ -82,6 +82,8 @@ function lineTarget(t: ToolCall): string {
       return str(i.query)
     case 'Task':
       return str(i.description)
+    case 'remember_project_map':
+      return str(i.reason) // the one-line audit note ("stale: src/ was restructured"); the map body is too long for a summary
     default:
       return toolSummary(t.name, i)
   }
@@ -113,6 +115,7 @@ function verbDone(t: ToolCall): string {
     case 'GateBFailHandler': return 'Reworked after failed verification'
     case 'PlanReview': return 'Reviewed the plan'
     case 'route_decision': return 'Chose the team'
+    case 'remember_project_map': return 'Recorded the project map'
     // studio_lens internals normally render inside LensCard; these guard the rare top-level leak.
     case 'StudioLens': return 'Examined across perspectives'
     case 'Subject': return 'Reviewed a perspective'
@@ -148,6 +151,7 @@ function verbLive(t: ToolCall): string {
     case 'GateBFailHandler': return 'Reworking after failed verification'
     case 'PlanReview': return 'Reviewing the plan'
     case 'route_decision': return 'Choosing the team'
+    case 'remember_project_map': return 'Recording the project map'
     // studio_lens internals normally render inside LensCard; these guard the rare top-level leak.
     case 'StudioLens': return 'Examining across perspectives'
     case 'Subject': return 'Reviewing a perspective'
@@ -232,6 +236,9 @@ export function summarizeRun(tools: ToolCall[]): string {
       case 'EnterWorktree':
       case 'ExitWorktree':
         bump('worktree', () => 'switched worktrees')
+        break
+      case 'remember_project_map':
+        bump('projectmap', () => 'recorded the project map')
         break
       default:
         bump(`other:${t.name}`, (n) => (n === 1 ? `used ${t.name}` : `used ${t.name} ×${n}`))

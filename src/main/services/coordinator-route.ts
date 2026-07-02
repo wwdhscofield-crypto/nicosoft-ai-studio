@@ -22,12 +22,12 @@ import { COORDINATOR_INVESTIGATION_TOOLS } from './agent-tools'
 import { buildTool, type Tool } from '../agent/tool'
 import { runRoleStep } from './coordinator-step'
 import * as projectMap from './project-map.service'
+import { PROJECT_MAP_MAX_CHARS } from './project-map.service' // shared clamp — same bound as remember_project_map (§4.6)
 import { protocolFamily } from '@shared/thinking'
 import { CODE_FILE_RE } from './lang-registry'
 import type { RouteDecision, CoordinatorCallbacks } from './coordinator-types'
 
 const ROUTER_HISTORY_LIMIT = 4 // last N messages handed to the router for context
-const PROJECT_MAP_MAX_CHARS = 4000 // bound on Danny's remembered project-shape summary (prompt asks ≤1200; headroom)
 
 export interface RouteContext {
   // The coordinator's project folder (cwdByRole['coordinator']) — the boundary Danny's routing investigation

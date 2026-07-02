@@ -21,6 +21,7 @@ import { playwrightRequestTool } from '../agent/tools/playwright-request'
 import { PREVIEW_TOOLS } from '../agent/tools/preview'
 import { monitorStartTool, monitorStopTool } from '../agent/tools/monitor'
 import { scheduleWakeupTool } from '../agent/tools/schedule-wakeup'
+import { rememberProjectMapTool } from '../agent/tools/remember-project-map'
 import type { Tool } from '../agent/tool'
 import { AGENT_ROLE_IDS } from '@shared/roles'
 import * as settingsService from './settings.service'
@@ -114,5 +115,8 @@ export function toolsForAgentRole(roleId: string): Tool[] {
   // so it does not get it; the runtime gate handles whether an independent reviewer can be formed.
   const panel = AGENT_ROLE_IDS.has(roleId) ? PANEL_TOOLS : []
   const monitor = AGENT_ROLE_IDS.has(roleId) ? MONITOR_TOOLS : []
-  return [...core, ...PLAN_TOOLS, askUserQuestionTool as unknown as Tool, ...panel, ...monitor, ...mcpManager.toolsForRole(roleId), ...(skill ? [skill] : [])]
+  // remember_project_map — project memory's write side for every role incl. coordinator-direct (§4.6: seed when
+  // none recorded / refresh when verified stale; app-DB only, read-only classified). Sub-agents are stripped in
+  // loop.ts (a Task/async child sees a narrow slice by construction — exactly the write the prompt forbids).
+  return [...core, ...PLAN_TOOLS, askUserQuestionTool as unknown as Tool, rememberProjectMapTool as unknown as Tool, ...panel, ...monitor, ...mcpManager.toolsForRole(roleId), ...(skill ? [skill] : [])]
 }

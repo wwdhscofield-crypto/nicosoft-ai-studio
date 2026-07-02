@@ -49,6 +49,7 @@ const TOOL_ACTIVITY: Record<string, string> = {
   agent_batch: 'Delegating', agent_close: 'Delegating', assign_task: 'Delegating', send_message: 'Delegating', wait: 'Delegating',
   elect_lens_driver: 'Delegating',
   route_decision: 'Routing',
+  remember_project_map: 'Recording',
   schedule_create: 'Scheduling', schedule_delete: 'Scheduling', schedule_list: 'Scheduling', schedule_wakeup: 'Scheduling',
   monitor_start: 'Monitoring', monitor_stop: 'Monitoring',
   // A parked/awaiting background op can hold the readout for many minutes (a solo lens review runs ~an hour)
