@@ -49,6 +49,16 @@ import type { AgentResult } from '../agent/loop'
 export type { CoordinatorCallbacks, CoordinatorRunInput, RouteDecision } from './coordinator-types'
 export { route, parseRouteDecision } from './coordinator-route'
 
+// Gate evidence is a SUB-RUN's first-person report (the verifier narrating its own git/build checks). When a
+// coordinator beat quotes it, it must read as an ATTRIBUTED quote — a blockquote — never as Danny's own prose:
+// the tools it mentions ran inside a quiet verifier sub-run (no cards accompany them by design), so "I ran
+// git diff" pasted bare into Danny's voice looked like Danny claiming tool calls the chat never showed
+// (dogfood 2026-07-02).
+function quoteEvidence(evidence: string | undefined, fallback: string, cap = 1500): string {
+  const body = (evidence?.trim() ? evidence.trim() : fallback).slice(0, cap)
+  return body.split('\n').map((l) => `> ${l}`).join('\n')
+}
+
 // Collaborate's independent final audit (collab-review-flow — the original 8c7a984 "independent Verifier segment").
 // The team already SELF-CHECKED during the build: the elected driver ran studio_lens (a tool) over the combined
 // change and owners fixed those findings one round. Here a reviewer INDEPENDENT of EVERY collaborator
@@ -202,8 +212,8 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
         [
           '**Task NOT delivered — quality verification did not pass and the follow-up did not resolve it.**',
           '',
-          'Verifier evidence:',
-          (out.gateEvidence ?? 'no evidence captured').slice(0, 1500),
+          "The verifier's evidence:",
+          quoteEvidence(out.gateEvidence, 'no evidence captured'),
           '',
           'The requested change has not been completed. Review the evidence above, then retry or adjust the task.'
         ].join('\n'),
@@ -215,8 +225,8 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
         [
           '**Delivered — verification raised a FAIL that was proven a false positive.**',
           '',
-          'The handler\'s evidence:',
-          (out.gateEvidence ?? 'no evidence captured').slice(0, 1500)
+          "The handler's evidence:",
+          quoteEvidence(out.gateEvidence, 'no evidence captured')
         ].join('\n'),
         cb
       )
@@ -226,7 +236,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
         [
           '**Delivered UNVERIFIED — independent verification could not run.**',
           '',
-          (out.gateEvidence ?? 'no detail captured').slice(0, 1500),
+          quoteEvidence(out.gateEvidence, 'no detail captured'),
           '',
           'Treat the result as unreviewed: spot-check the change or re-run the task to get a verified verdict.'
         ].join('\n'),
@@ -243,8 +253,9 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
           ? [
               '**Delivered — independent verification flagged a defect; the implementer fixed it and re-verification passed.**',
               '',
-              (out.gateEvidence ?? '').slice(0, 1200)
-            ].filter(Boolean).join('\n')
+              "The re-verifier's evidence:",
+              quoteEvidence(out.gateEvidence, 'no evidence captured', 1200)
+            ].join('\n')
           : '**Delivered — independent verification passed.**',
         cb
       )
@@ -433,8 +444,8 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
       emitCoordinatorIntro(input.convId, [
         `**Pipeline halted at ${displayName(roleId)} — quality verification did not pass and the follow-up did not resolve it.**`,
         '',
-        'Verifier evidence:',
-        (out.gateEvidence ?? 'no evidence captured').slice(0, 1500),
+        "The verifier's evidence:",
+        quoteEvidence(out.gateEvidence, 'no evidence captured'),
         '',
         'Later pipeline steps were NOT run, to avoid building on undelivered work. Review the evidence, then retry or adjust the task.'
       ].join('\n'), cb)
@@ -444,7 +455,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
       emitCoordinatorIntro(input.convId, [
         `**Note — ${displayName(roleId)}'s change was delivered UNVERIFIED (independent verification could not run); the pipeline continues on it.**`,
         '',
-        (out.gateEvidence ?? '').slice(0, 800)
+        quoteEvidence(out.gateEvidence, 'no detail captured', 800)
       ].join('\n'), cb)
     }
     noteReason(out.reason)
