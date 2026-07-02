@@ -105,7 +105,8 @@ import type {
   PreviewResultDto,
   PreviewStatusDto,
   ConvPreviewStatus,
-  PlaywrightAvailabilityDto
+  PlaywrightAvailabilityDto,
+  CompactOutcome
 } from '../main/ipc/contracts'
 
 // Typed bridge exposed to the renderer as `window.api`. Window controls (Batch 0) + Batch 1
@@ -269,7 +270,7 @@ const api = {
   agent: {
     run: (input: AgentRunInput): Promise<{ streamId: string }> => ipcRenderer.invoke('agent:run', input),
     stop: (streamId: string): Promise<void> => ipcRenderer.invoke('agent:stop', streamId),
-    compact: (convId: string): Promise<void> => ipcRenderer.invoke('agent:compact', convId),
+    compact: (convId: string): Promise<CompactOutcome> => ipcRenderer.invoke('agent:compact', convId),
     respondPermission: (resp: AgentPermissionResponse): Promise<void> =>
       ipcRenderer.invoke('agent:permission:respond', resp),
     respondQuestion: (resp: AgentQuestionResponse): Promise<void> =>

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { STUDIO_DATA } from '@/data/studio-data'
+import { toast } from '@/stores/toast'
 import { useCustomRoles } from '@/stores/custom-roles'
 import { useWorkspace } from '@/stores/workspace'
 import { attachVerifyListeners } from '@/stores/verify'
@@ -720,6 +721,7 @@ export const useChat = create<ChatState>((set, get) => {
     liveCached: {},
     streamStartedAt: {},
     retry: {},
+    compacting: {},
 
     loadConversations: async () => {
       set({ conversations: await window.api.conversations.list() })
@@ -1066,6 +1068,50 @@ export const useChat = create<ChatState>((set, get) => {
           activeConv: s.activeConv === convId ? null : s.activeConv
         }
       })
+    },
+
+    // Manual /compact. The old wiring was fire-and-forget into a Promise<void> — success, "nothing to
+    // fold" and a dead endpoint were indistinguishable, so the UI stayed silent and the user couldn't
+    // tell whether compaction happened (dogfood 2026-07-02). Now: a per-conv "Compacting…" readout while
+    // the fold runs (composer toolbar), then the SAME receipt language the auto path uses — a compaction
+    // block on the conversation's last assistant segment — or a skip/fail toast naming the reason.
+    compactNow: async (convId) => {
+      if (get().compacting[convId]) return // main also holds a per-conv lock; this just de-dups the UI
+      set((s) => ({ compacting: { ...s.compacting, [convId]: true } }))
+      try {
+        const out = await window.api.agent.compact(convId)
+        if (out.status === 'compacted') {
+          const k = out.foldedTokens >= 1000 ? `${Math.round(out.foldedTokens / 1000)}k` : `${out.foldedTokens}`
+          let anchored = false // set() runs synchronously — this records whether a receipt block landed
+          set((s) => {
+            const msgs = (s.byConversation[convId] ?? []).map((m) => ({ ...m }))
+            let i = -1
+            for (let j = msgs.length - 1; j >= 0; j--) if (msgs[j].role === 'assistant') { i = j; break }
+            if (i < 0) return s // no assistant segment to anchor (degenerate history) — the toast below covers it
+            anchored = true
+            msgs[i] = { ...msgs[i], blocks: [...(msgs[i].blocks ?? []), { kind: 'compaction', tokens: out.foldedTokens, auto: false, manual: true }] }
+            return { byConversation: { ...s.byConversation, [convId]: msgs } }
+          })
+          if (!anchored) toast.success(`Compacted — folded ${out.foldedMessages} messages (~${k} tokens) into the summary`)
+        } else if (out.status === 'skipped') {
+          const copy: Record<string, string> = {
+            busy: 'A compaction is already running for this conversation.',
+            'too-few-messages': 'Nothing to compact yet — the history is already minimal.',
+            'below-threshold': 'Context is comfortably within the window — nothing to compact.',
+            'no-binding': 'Can’t compact: this conversation has no model bound.',
+            'no-endpoint': 'Can’t compact: the bound endpoint no longer exists.',
+            'no-window': 'Can’t compact: no known context window for this endpoint.',
+            'no-key': 'Can’t compact: the endpoint has no API key.'
+          }
+          toast.info(copy[out.reason] ?? 'Compaction skipped.')
+        } else {
+          toast.error('Compaction failed — the conversation was left unchanged.')
+        }
+      } catch {
+        toast.error('Compaction failed — the conversation was left unchanged.')
+      } finally {
+        set((s) => ({ compacting: { ...s.compacting, [convId]: false } }))
+      }
     },
 
     rename: async (convId, title) => {

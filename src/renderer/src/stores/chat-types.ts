@@ -23,7 +23,9 @@ export interface ToolCall {
 export type MsgBlock =
   | { kind: 'text'; text: string }
   | { kind: 'tool'; id: string }
-  | { kind: 'compaction'; tokens: number; auto: boolean }
+  // manual=true → the /compact receipt (user-initiated fold). auto=false WITHOUT manual is the legacy
+  // microcompaction note shape, which the renderer still filters out (see chat-segment).
+  | { kind: 'compaction'; tokens: number; auto: boolean; manual?: boolean }
   | { kind: 'reasoning'; text: string } // the model's VISIBLE thinking (extended thinking / reasoning summary) — rendered as a distinct dim "Thinking" block, interleaved before the turn's tools
 export interface ChatMessage {
   id: string
@@ -122,11 +124,13 @@ export interface ChatState {
   liveCached: Record<string, number> // per-conversation cache-read share of liveInput — the cache-aware ↑ split renders fresh = liveInput − liveCached as the main number, cached as a "(+N cached)" note
   streamStartedAt: Record<string, number> // per-conversation epoch ms when the current turn started; read only while streaming (Overview "In progress" elapsed). Overwritten each send, left stale after (never read when not streaming)
   retry: Record<string, { attempt: number; max: number; since: number } | null> // per-conversation transient-failure retry status ("retrying (N/M)"); null/absent when not retrying
+  compacting: Record<string, boolean> // per-conversation manual /compact in flight — drives the composer "Compacting…" readout
   loadConversations: () => Promise<void>
   openConversation: (convId: string) => Promise<void>
   newConversation: () => void
   send: (opts: SendOpts) => Promise<void>
   stop: () => void
+  compactNow: (convId: string) => Promise<void> // manual /compact — awaits the fold, shows the receipt/skip reason
   respondPermission: (convId: string, allow: boolean) => void
   respondQuestion: (convId: string, answer: string) => void
   approveApproval: (convId: string, pendingId: string) => Promise<void>

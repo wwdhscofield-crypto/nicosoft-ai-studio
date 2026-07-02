@@ -2,6 +2,9 @@ import type { ModelInfo, Protocol } from '../domain'
 import type { ThinkingParam } from '../../shared/thinking'
 import type { AgentLlmEvent } from '../agent/llm'
 
+// Manual /compact result (agent:compact) — the renderer maps it to a receipt block / skip toast.
+export type { CompactOutcome, CompactSkipReason } from '../services/compression.service'
+
 // DTOs crossing the IPC boundary (handlers ↔ preload ↔ renderer). The renderer-facing Endpoint
 // view carries `keyState` but never the key itself — secrets stay in the keychain.
 // 'ok' = usable · 'missing' = never configured · 'unreadable' = stored under a different app identity

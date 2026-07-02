@@ -42,6 +42,23 @@ export interface CompressInput {
   force?: boolean // manual /compact — bypass the 90% threshold and fold now (still needs enough to fold)
 }
 
+// The outcome every compression attempt reports (DTO shape shared with the renderer via ipc/contracts).
+// The auto paths (post-turn maybeCompress callers) ignore it; the manual /compact path surfaces it — the
+// old Promise<void> made success, "nothing to fold" and a dead endpoint indistinguishable, so the UI
+// could only stay silent (dogfood 2026-07-02). Skip reasons stay coarse: the renderer maps them to copy.
+export type CompactSkipReason =
+  | 'busy' // a compression for this conversation is already running
+  | 'no-binding' // conversation has no primary role / role has no endpoint+model bound
+  | 'no-endpoint' // bound endpoint no longer exists
+  | 'no-window' // no known context window anywhere on the endpoint
+  | 'below-threshold' // auto only: under the 90% trigger (manual force bypasses this)
+  | 'too-few-messages' // nothing worth folding (the continuity tail is the whole history)
+  | 'no-key' // endpoint has no API key
+export type CompactOutcome =
+  | { status: 'compacted'; foldedMessages: number; foldedTokens: number }
+  | { status: 'skipped'; reason: CompactSkipReason }
+  | { status: 'failed' }
+
 // Resolve a model's real context window: explicit override → exact catalog slug → largest known
 // text-model window on the same endpoint. The fallback exists because a nicosoft/* OAuth slug is often
 // ABSENT from the endpoint catalog (exact lookup → 0), which would otherwise disable compaction entirely
@@ -59,16 +76,16 @@ export function resolveContextWindow(
     : availableModels.reduce((mx, m) => Math.max(mx, m.contextLength || 0), 0)
 }
 
-export async function maybeCompress(input: CompressInput): Promise<void> {
-  if (compressing.has(input.convId)) return // a compression for this conversation is already running
+export async function maybeCompress(input: CompressInput): Promise<CompactOutcome> {
+  if (compressing.has(input.convId)) return { status: 'skipped', reason: 'busy' } // already running here
   compressing.add(input.convId)
   try {
     const ep = endpointRepo.getById(input.endpointId)
-    if (!ep) return
+    if (!ep) return { status: 'skipped', reason: 'no-endpoint' }
     // B2/#1: resolve the model's real window, falling back to the endpoint's largest known window when the
     // exact slug is absent from the catalog (the nicosoft/* OAuth-slug case) — see resolveContextWindow.
     const ctxLen = resolveContextWindow(ep.availableModels, input.model, input.contextWindow)
-    if (ctxLen <= 0) return // no known window anywhere on the endpoint — can't compute a threshold
+    if (ctxLen <= 0) return { status: 'skipped', reason: 'no-window' } // no known window on the endpoint
 
     const history = convRepo.listByConversation(input.convId)
     const prevSummary = summaryRepo.getLatest(input.convId)
@@ -91,12 +108,12 @@ export async function maybeCompress(input: CompressInput): Promise<void> {
       (prevSummary ? estimateTextTokens(prevSummary.content) : 0) +
       RESERVED_CONTEXT_TOKENS
     const used = Math.max(input.currentTokens ?? 0, foldTargetEstimate)
-    if (!input.force && used < ctxLen * COMPRESS_RATIO) return // under threshold (force = manual /compact)
+    if (!input.force && used < ctxLen * COMPRESS_RATIO) return { status: 'skipped', reason: 'below-threshold' }
     // B3/#9: normally require a couple more than KEEP_RECENT to bother folding. But a conversation that
     // crossed the window in its first few turns — or via one oversized message — can be over threshold with
     // too few messages to clear that bar, leaving it permanently stuck. Under force (manual /compact or the
     // chat reactive-overflow path) fold down to a minimal continuity tail so it always makes progress.
-    if (input.force ? recent.length < 2 : recent.length <= KEEP_RECENT + 1) return
+    if (input.force ? recent.length < 2 : recent.length <= KEEP_RECENT + 1) return { status: 'skipped', reason: 'too-few-messages' }
     const keepTail = input.force ? Math.min(KEEP_RECENT, recent.length - 1) : KEEP_RECENT
 
     agentEvents.emit({ type: 'compact:pre', convId: input.convId, roleId: input.roleId, ts: Date.now() })
@@ -111,9 +128,9 @@ export async function maybeCompress(input: CompressInput): Promise<void> {
     const coveredUpTo = fold[fold.length - 1].id
 
     const key = keychain.getApiKey(input.endpointId)
-    if (!key) return
+    if (!key) return { status: 'skipped', reason: 'no-key' }
     const summaryText = await foldSummary(fold, prevSummary, ep, key, input.model)
-    if (!summaryText) return
+    if (!summaryText) return { status: 'failed' } // summary calls exhausted their retries — nothing was folded
 
     summaryRepo.create({
       conversationId: input.convId,
@@ -122,22 +139,25 @@ export async function maybeCompress(input: CompressInput): Promise<void> {
       coveredUpTo
     })
     agentEvents.emit({ type: 'compact:post', convId: input.convId, roleId: input.roleId, ts: Date.now() })
+    return { status: 'compacted', foldedMessages: fold.length, foldedTokens: estimateMessageTokens(fold) }
   } catch (err) {
     // best-effort: a compression failure must never break the chat flow, but surface it (CLAUDE.md)
     console.warn('[compression] failed for conversation', input.convId, err)
+    return { status: 'failed' }
   } finally {
     compressing.delete(input.convId)
   }
 }
 
 // B2: manual compaction (the /compact command + future UI button). Resolves the conversation's role
-// binding, then folds NOW regardless of the 90% threshold (force).
-export async function compactNow(convId: string): Promise<void> {
+// binding, then folds NOW regardless of the 90% threshold (force). Returns the outcome so the UI can
+// show a receipt / the skip reason instead of the old silent void.
+export async function compactNow(convId: string): Promise<CompactOutcome> {
   const conv = convRepo.getById(convId)
-  if (!conv?.primaryRoleId) return
+  if (!conv?.primaryRoleId) return { status: 'skipped', reason: 'no-binding' }
   const binding = roleRepo.getBinding(conv.primaryRoleId)
-  if (!binding?.endpointId || !binding.model) return
-  await maybeCompress({
+  if (!binding?.endpointId || !binding.model) return { status: 'skipped', reason: 'no-binding' }
+  return maybeCompress({
     convId,
     roleId: conv.primaryRoleId,
     endpointId: binding.endpointId,

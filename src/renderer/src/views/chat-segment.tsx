@@ -210,15 +210,18 @@ function RunBody({ msgs, onOpenImage, live }: { msgs: ChatMessage[]; onOpenImage
         return
       }
       if (b.kind === 'compaction') {
-        // Only autocompaction (the lossy LLM summary) is surfaced. Microcompaction notes — non-lossy per-turn
-        // tool-output trimming — are no longer emitted (loop.ts), but transcripts recorded before that change
-        // persisted one note per turn; skip them so reopened/scrolled-back conversations aren't flooded.
-        if (!b.auto) return
+        // Only LOSSY summaries are surfaced: autocompaction and the manual /compact receipt. Legacy
+        // microcompaction notes (auto:false without manual) — non-lossy per-turn tool-output trimming — are
+        // no longer emitted (loop.ts), but transcripts recorded before that change persisted one note per
+        // turn; skip them so reopened/scrolled-back conversations aren't flooded.
+        if (!b.auto && !b.manual) return
         flushFold(false)
         const k = b.tokens >= 1000 ? `${Math.round(b.tokens / 1000)}k` : `${b.tokens}`
         out.push(
           <div key={`c${m.id}:${bi}`} className="seg-compaction">
-            🗜 Summarized older context · freed ~{k} tokens to stay within the window
+            {b.manual
+              ? <>🗜 Compacted on request · folded ~{k} tokens of older history into the summary</>
+              : <>🗜 Summarized older context · freed ~{k} tokens to stay within the window</>}
           </div>
         )
         return

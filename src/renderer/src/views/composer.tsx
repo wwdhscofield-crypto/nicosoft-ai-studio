@@ -189,7 +189,9 @@ export function Composer({
     cmd.run({
       newConversation: chat.newConversation,
       compact: () => {
-        if (activeConv) void window.api.agent.compact(activeConv)
+        // Store action (not a bare IPC call): it owns the "Compacting…" readout, the receipt block and
+        // the skip/fail toasts — the old fire-and-forget invoke gave the user zero feedback.
+        if (activeConv) void chat.compactNow(activeConv)
       },
       setPlanMode: (on) => setMode(expert.id, on ? 'plan' : 'default'),
       setMode: (m) => setMode(expert.id, m),
@@ -239,7 +241,11 @@ export function Composer({
             ) : null}
             <ThinkingPicker family={b.family} model={b.model} depth={effectiveDepth} onChange={b.onDepth} disabled={!ready} />
             {agent ? <ModePicker value={mode} onChange={(m) => setMode(expert.id, m)} disabled={!ready} /> : null}
-            {b.contextLength > 0 ? (
+            {activeConv && chat.compacting[activeConv] ? (
+              // Manual /compact in flight — the fold is a minutes-scale LLM call with no stream events, so
+              // this quiet readout (in the meter's slot) is the only sign it's working. Clears on the receipt.
+              <span className="cmp-tokens">Compacting…</span>
+            ) : b.contextLength > 0 ? (
               <span className={'cmp-tokens' + (tokenAmber ? ' amber' : '')}>
                 {fmtTokens(usedTokens)} / {fmtTokens(b.contextLength)}
               </span>
