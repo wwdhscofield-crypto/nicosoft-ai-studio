@@ -42,6 +42,7 @@ import type {
   CoordinatorDoneDto,
   CoordinatorErrorDto,
   CoordinatorToolStart,
+  CoordinatorToolInputDelta,
   CoordinatorAssistant,
   CoordinatorCompaction,
   CoordinatorReasoning,
@@ -314,6 +315,7 @@ const api = {
     // Agent-dispatched expert tool activity + approvals (doc 19 §11 phase 2) — same shapes as agent:* but
     // tagged with roleId. respondPermission reuses the agent permission-response payload.
     onToolStart: (cb: (d: CoordinatorToolStart) => void): (() => void) => agentListen('coordinator:tool:start', cb),
+    onToolInputDelta: (cb: (d: CoordinatorToolInputDelta) => void): (() => void) => agentListen('coordinator:tool:input-delta', cb),
     onSubToolStart: (cb: (d: CoordinatorSubToolStart) => void): (() => void) => agentListen('coordinator:sub-tool:start', cb),
     onSubToolDone: (cb: (d: CoordinatorSubToolDone) => void): (() => void) => agentListen('coordinator:sub-tool:done', cb),
     onSubToolDelta: (cb: (d: CoordinatorSubToolDelta) => void): (() => void) => agentListen('coordinator:sub-tool:delta', cb),

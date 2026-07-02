@@ -13,6 +13,7 @@ export interface ToolCall {
   result?: string
   stream?: string // live partial text from a quiet sub-agent (panel finder/skeptic/reader) — shown while running
   streamLen?: number // MONOTONIC total chars streamed (uncapped) — drives the Tasks-panel re-render key even after `stream` is tail-capped
+  inputStream?: string // show_widget only: the call's accumulated partial input JSON while streaming — drives the WidgetCard's progressive render (visualize §5.2)
   subTools?: ToolCall[]
 }
 // One renderable unit of an assistant turn, in EMISSION order. A 'tool' block references a tool by id in

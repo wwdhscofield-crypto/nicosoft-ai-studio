@@ -58,7 +58,7 @@ interface AgentMessagesBody {
 export type AgentLlmEvent =
   | { type: 'text'; delta: string }
   | { type: 'tool_use_start'; id: string; name: string }
-  | { type: 'tool_use_input'; id: string; delta: string }
+  | { type: 'tool_use_input'; id: string; name: string; delta: string } // name = the OPEN tool_use block's tool — lets forwarders gate per tool (only show_widget streams to the UI)
   | { type: 'sub_tool_start'; parentToolId: string; toolUseId: string; name: string; input?: Record<string, unknown>; subAgentId?: string }
   | { type: 'sub_tool_done'; parentToolId: string; toolUseId: string; name: string; result?: unknown; isError?: boolean; input?: Record<string, unknown>; subAgentId?: string }
   | { type: 'sub_tool_delta'; parentToolId: string; toolUseId: string; delta: string; subAgentId?: string } // DORMANT (no producer): a quiet sub-agent's live text. Removed because Workflow's real contract RETURNS a subagent's output to the script, never streams it token-by-token to the UI (verified in cc 2.1.186) — the lens firehose is gone (coordinator-step.ts). Type + forwarders/consumer remain inert; safe to strip wholesale.
@@ -208,7 +208,7 @@ async function* callWithToolsAnthropic(
             onEvent?.({ type: 'text', delta: d.text })
           } else if (d?.type === 'input_json_delta' && blk?.type === 'tool_use' && typeof d.partial_json === 'string') {
             blk.json += d.partial_json
-            onEvent?.({ type: 'tool_use_input', id: blk.id, delta: d.partial_json })
+            onEvent?.({ type: 'tool_use_input', id: blk.id, name: blk.name, delta: d.partial_json })
           } else if (
             d?.type === 'input_json_delta' &&
             blk?.type === 'server' &&

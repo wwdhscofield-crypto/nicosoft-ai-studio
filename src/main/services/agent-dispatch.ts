@@ -72,6 +72,7 @@ export interface RunStreamSink {
   onDelta: (roleId: string, text: string) => void
   onReasoning?: (roleId: string, text: string) => void
   onToolStart?: (roleId: string, id: string, name: string) => void
+  onToolInputDelta?: (roleId: string, toolId: string, delta: string) => void // show_widget only — the WidgetCard draws progressively off the input stream (visualize §5.2)
   onToolEvent?: (roleId: string, ev: AgentEvent | AgentLlmEvent) => void
   onUsage?: (roleId: string, inputTokens: number, outputTokens?: number, cachedTokens?: number) => void
   onTurnFinalUsage?: (usage: { inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number }) => void
@@ -106,8 +107,10 @@ export function forwardLlmEvent(sink: RunStreamSink, roleId: string, ev: AgentLl
       sink.onTurnFinalUsage?.(ev.usage)
       break
     case 'tool_use_input':
-      // Streaming tool-call JSON — not surfaced live anywhere. Explicit case so it stays a decision, not a
-      // silent omission.
+      // Streaming tool-call JSON — forwarded ONLY for show_widget, whose widget renders progressively off
+      // the input stream (visualize §5.2, CC parity). Every other tool stays silent on purpose: echoing
+      // Write/Edit content deltas would double the stream traffic for no UI.
+      if (ev.name === 'show_widget') sink.onToolInputDelta?.(roleId, ev.id, ev.delta)
       break
     default: {
       const _exhaustive: never = ev

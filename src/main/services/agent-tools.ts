@@ -9,6 +9,7 @@ import { enterPlanModeTool } from '../agent/tools/enter-plan-mode'
 import { exitPlanModeTool } from '../agent/tools/exit-plan-mode'
 import { askUserQuestionTool } from '../agent/tools/ask-user-question'
 import { studioLensTool } from '../agent/tools/studio-lens'
+import { readMeTool, showWidgetTool } from '../agent/tools/visualize'
 import { readTool } from '../agent/tools/read'
 import { globTool } from '../agent/tools/glob'
 import { grepTool } from '../agent/tools/grep'
@@ -78,6 +79,11 @@ const PLAN_TOOLS = [enterPlanModeTool, exitPlanModeTool] as unknown as Tool[]
 // the injection sites (runAgentLoop / collab) key off the kit containing this tool, so handle-presence ⟺
 // tool-presence — a fixed-kit verifier / sub-agent (no studio_lens) automatically gets no handle (recursion guard).
 const PANEL_TOOLS = [studioLensTool] as unknown as Tool[]
+// visualize (CC "Imagine" parity) — UNIVERSAL-tier like studio_lens: read_me returns drawing guidance,
+// show_widget carries the widget as streaming tool INPUT (the renderer's WidgetCard draws it off
+// tool_use_input deltas; the handler only returns CC's fixed receipt). Every agent role; chat-only
+// personas and coordinator-direct excluded by construction (docs/visualize-alignment-design.md §5.1).
+const VISUALIZE_TOOLS = [readMeTool, showWidgetTool] as unknown as Tool[]
 // Session-pacing tools — UNIVERSAL across agent roles, NOT gated to DEV_ROLES (capability parity): Monitor
 // (conditional polling, wakes on change) + schedule_wakeup (self-paced timed wakeup). Both are session-scoped
 // and route their wakeup through the unified bus; sub-agents have them stripped in loop.ts.
@@ -114,9 +120,10 @@ export function toolsForAgentRole(roleId: string): Tool[] {
   // studio_lens for every agent role (decision ⑤). coordinator's read-only DIRECT kit is not an agent role,
   // so it does not get it; the runtime gate handles whether an independent reviewer can be formed.
   const panel = AGENT_ROLE_IDS.has(roleId) ? PANEL_TOOLS : []
+  const visualize = AGENT_ROLE_IDS.has(roleId) ? VISUALIZE_TOOLS : []
   const monitor = AGENT_ROLE_IDS.has(roleId) ? MONITOR_TOOLS : []
   // remember_project_map — project memory's write side for every role incl. coordinator-direct (§4.6: seed when
   // none recorded / refresh when verified stale; app-DB only, read-only classified). Sub-agents are stripped in
   // loop.ts (a Task/async child sees a narrow slice by construction — exactly the write the prompt forbids).
-  return [...core, ...PLAN_TOOLS, askUserQuestionTool as unknown as Tool, rememberProjectMapTool as unknown as Tool, ...panel, ...monitor, ...mcpManager.toolsForRole(roleId), ...(skill ? [skill] : [])]
+  return [...core, ...PLAN_TOOLS, askUserQuestionTool as unknown as Tool, rememberProjectMapTool as unknown as Tool, ...panel, ...visualize, ...monitor, ...mcpManager.toolsForRole(roleId), ...(skill ? [skill] : [])]
 }

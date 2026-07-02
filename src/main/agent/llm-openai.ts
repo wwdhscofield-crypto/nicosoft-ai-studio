@@ -213,7 +213,7 @@ export async function* callWithToolsOpenAI(
             const fc = fnCalls.get(ev.item_id)
             if (fc) {
               fc.args += ev.delta
-              onEvent?.({ type: 'tool_use_input', id: fc.callId, delta: ev.delta })
+              onEvent?.({ type: 'tool_use_input', id: fc.callId, name: fc.name, delta: ev.delta })
             }
           }
           break

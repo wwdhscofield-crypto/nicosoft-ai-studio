@@ -550,6 +550,14 @@ export interface CoordinatorToolStart {
   id: string
   name: string
 }
+// Streaming tool-call input JSON (show_widget only — visualize §5.2): the renderer accumulates per toolId
+// and drives the WidgetCard's progressive render while the call is still streaming.
+export interface CoordinatorToolInputDelta {
+  streamId: string
+  roleId: string
+  toolId: string
+  delta: string
+}
 export interface CoordinatorAssistant {
   streamId: string
   roleId: string

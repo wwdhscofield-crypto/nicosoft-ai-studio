@@ -8,7 +8,8 @@ import type { ViewerImage } from '@/components/image-viewer'
 import { Avatar, NameChip } from '@/components/primitives'
 import type { ChatMessage, MsgBlock, ToolCall } from '@/stores/chat'
 import { ServerBubble, Sources } from '@/components/tool-bubble'
-import { ToolRun, OMIT_WHEN_DONE } from '@/components/tool-run'
+import { ToolRun, OMIT_WHEN_DONE, INLINE_SURFACE } from '@/components/tool-run'
+import { WidgetCard } from '@/components/widget-card'
 import { Markdown } from '@/components/markdown'
 import { useT } from '@/stores/locale'
 import { isSynthesis, groupRuns, sameChain, segmentFolds } from '@/stores/chat-helpers'
@@ -253,6 +254,14 @@ function RunBody({ msgs, onOpenImage, live }: { msgs: ChatMessage[]; onOpenImage
       // on the verifier segment. ToolRun's live branch renders a single gerund for N running tools, exactly like
       // a long Bash/Task — no flush-first split, and no double-render with the Tasks panel's rich card.
       if (OMIT_WHEN_DONE.has(tool.name) && tool.status !== 'running') return
+      // INLINE_SURFACE (show_widget): the call IS a permanently-visible block — the WidgetCard renders the
+      // visual itself, streaming and settled, exactly where the model placed it. It breaks the fold like
+      // model text/images do (CC parity: widgets are first-class inline content, never a collapsed row).
+      if (INLINE_SURFACE.has(tool.name)) {
+        flushFold(false)
+        out.push(<WidgetCard key={`w${tool.id}`} tool={tool} />)
+        return
+      }
       fold.push(tool)
     })
     if (m.images && m.images.length > 0) {

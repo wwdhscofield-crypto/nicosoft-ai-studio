@@ -96,6 +96,7 @@ function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: { resum
     onDelta: (roleId, text) => { ensureOpen(); send('coordinator:delta', { streamId, roleId, text }) },
     onReasoning: (roleId, text) => { ensureOpen(); send('coordinator:reasoning', { streamId, roleId, text }) },
     onToolStart: (roleId, id, name) => { ensureOpen(); send('coordinator:tool:start', { streamId, roleId, id, name }) },
+    onToolInputDelta: (roleId, toolId, delta) => { ensureOpen(); send('coordinator:tool:input-delta', { streamId, roleId, toolId, delta }) },
     onToolEvent: (roleId, ev) => {
       // Only the AgentLlmEvent sub-tool lifecycle arrives here (forwardLlmEvent); assistant/results/compaction
       // ride onEvent below, so this stays a plain sub-tool forwarder.

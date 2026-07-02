@@ -510,6 +510,27 @@ export const useChat = create<ChatState>((set, get) => {
         return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
       })
     })
+    // show_widget streaming input (visualize §5.2): accumulate the call's partial JSON onto its card so the
+    // WidgetCard renders progressively while the call streams. Main only forwards show_widget, but the card
+    // keys off the accumulated field, not the verb. Same bubble-location rule as onToolStart.
+    at.onToolInputDelta((d) => {
+      const meta = runMeta.get(d.streamId)
+      if (!meta) return
+      set((s) => {
+        const msgs = (s.byConversation[meta.convId] ?? []).map((m) => ({ ...m, tools: m.tools ? [...m.tools] : m.tools }))
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i].role === 'assistant' && msgs[i].streaming && msgs[i].expertId === d.roleId) {
+            const idx = msgs[i].tools?.findIndex((t) => t.id === d.toolId) ?? -1
+            if (idx !== -1 && msgs[i].tools) {
+              const t = msgs[i].tools![idx]
+              msgs[i].tools![idx] = { ...t, inputStream: (t.inputStream ?? '') + d.delta }
+            }
+            break
+          }
+        }
+        return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
+      })
+    })
     at.onSubToolStart((d) => {
       const meta = runMeta.get(d.streamId)
       if (!meta) return

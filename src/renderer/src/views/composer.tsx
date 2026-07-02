@@ -217,6 +217,24 @@ export function Composer({
     if (!ready || streaming || compacting) return
     dispatchSend(preset)
   }
+  // A widget's sendPrompt (visualize §5.3): the WidgetCard dispatches 'nsai:send-prompt' scoped to its
+  // conversation; it rides dispatchSend — the SAME visible, auditable turn path as the git chip presets
+  // (G10: no hidden machine channel). Latest-closure ref so the once-registered listener never goes stale.
+  const sendPromptRef = useRef((text: string): void => dispatchSend(text))
+  sendPromptRef.current = (text: string): void => {
+    if (!ready || streaming || compacting) return
+    dispatchSend(text)
+  }
+  useEffect(() => {
+    const onPrompt = (e: Event): void => {
+      const d = (e as CustomEvent).detail as { convId?: string | null; text?: string } | null
+      if (!d || typeof d.text !== 'string' || !d.text.trim()) return
+      if ((d.convId ?? null) !== (activeConv ?? null)) return
+      sendPromptRef.current(d.text)
+    }
+    window.addEventListener('nsai:send-prompt', onPrompt)
+    return () => window.removeEventListener('nsai:send-prompt', onPrompt)
+  }, [activeConv])
   // The chip reads the CONVERSATION's cwd (resolveConvCwd — the same resolver the Files/Diff panels use):
   // for a solo conv that IS the PathBar's cwd; for coordinator/collab convs it falls back to the first
   // participating role with a folder. Greeting (no conversation yet) → the composer's own cwd. This

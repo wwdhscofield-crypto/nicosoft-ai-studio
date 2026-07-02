@@ -156,6 +156,27 @@
   opacity: 0.45;
 }
 
+/* — visualize WidgetCard (visualize §5.3): the show_widget iframe — a permanently-visible inline block
+   (never folded). The sandboxed page carries its own light+dark palette keyed off data-mode; height
+   follows the page's ResizeObserver (ui/notifications/size-changed), capped — taller content scrolls
+   inside the frame. The loading line rotates the model-supplied loading_messages while streaming. — */
+.viz-card { margin: 8px 0; }
+.viz-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-3);
+  padding: 2px 0 6px;
+}
+.viz-frame {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--border-1);
+  border-radius: var(--r-md);
+  background: transparent;
+}
+
 /* — studio_lens card (studio-lens §4.4): ONE foldable card, dedicated to studio_lens only. Reuses the
      breathing .tr-dot (front, running-only) + .tr-chev (right end); no new widgets. Header = agent COUNTS only,
      never a token sum (the "↑48.1m" balloon root). — */

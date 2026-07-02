@@ -54,6 +54,7 @@ export interface CoordinatorCallbacks {
   // tool-using loop; these surface its tool activity + approval prompts to the coordinator UI. Only the
   // coordinator-self synthesis merge beats are tool-less and never fire them, so they're optional.
   onToolStart?: (roleId: string, id: string, name: string) => void
+  onToolInputDelta?: (roleId: string, toolId: string, delta: string) => void // show_widget only — streaming widget_code JSON for the WidgetCard's progressive render (visualize §5.2)
   onToolEvent?: (roleId: string, ev: AgentEvent | AgentLlmEvent) => void
   // A dispatched expert's TodoWrite executed (mid-turn) — live push of the pipeline-shared list so the
   // workspace Tasks panel tracks progress without waiting for the step's turn to settle.

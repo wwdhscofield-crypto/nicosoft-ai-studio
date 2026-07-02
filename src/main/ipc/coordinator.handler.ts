@@ -26,6 +26,7 @@ import type {
   CoordinatorDoneDto,
   CoordinatorErrorDto,
   CoordinatorToolStart,
+  CoordinatorToolInputDelta,
   CoordinatorAssistant,
   CoordinatorToolResults,
   CoordinatorPermissionRequest,
@@ -110,6 +111,10 @@ export function registerCoordinatorHandlers(): void {
           onToolStart: (roleId, id, name) => {
             const ev: CoordinatorToolStart = { streamId, roleId, id, name }
             send('coordinator:tool:start', ev)
+          },
+          onToolInputDelta: (roleId, toolId, delta) => {
+            const ev: CoordinatorToolInputDelta = { streamId, roleId, toolId, delta }
+            send('coordinator:tool:input-delta', ev)
           },
           onToolEvent: (roleId, evt) => {
             if (evt.type === 'sub_tool_start') {

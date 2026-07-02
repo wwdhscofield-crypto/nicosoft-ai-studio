@@ -84,6 +84,10 @@ function lineTarget(t: ToolCall): string {
       return str(i.description)
     case 'remember_project_map':
       return str(i.reason) // the one-line audit note ("stale: src/ was restructured"); the map body is too long for a summary
+    case 'show_widget':
+      return str(i.title)
+    case 'read_me':
+      return Array.isArray(i.modules) ? (i.modules as string[]).join(', ') : ''
     default:
       return toolSummary(t.name, i)
   }
@@ -116,6 +120,10 @@ function verbDone(t: ToolCall): string {
     case 'PlanReview': return 'Reviewed the plan'
     case 'route_decision': return 'Chose the team'
     case 'remember_project_map': return 'Recorded the project map'
+    // visualize pair — top-level show_widget renders as a WidgetCard (INLINE_SURFACE); these verbs cover
+    // the sub-agent ToolLine path. read_me is the silent guidance fetch (CC: an internal setup step).
+    case 'show_widget': return 'Rendered a visual'
+    case 'read_me': return 'Loaded visualization guidance'
     // studio_lens internals normally render inside LensCard; these guard the rare top-level leak.
     case 'StudioLens': return 'Examined across perspectives'
     case 'Subject': return 'Reviewed a perspective'
@@ -152,6 +160,9 @@ function verbLive(t: ToolCall): string {
     case 'PlanReview': return 'Reviewing the plan'
     case 'route_decision': return 'Choosing the team'
     case 'remember_project_map': return 'Recording the project map'
+    // visualize pair — same coverage as the past-tense table.
+    case 'show_widget': return 'Rendering a visual'
+    case 'read_me': return 'Loading visualization guidance'
     // studio_lens internals normally render inside LensCard; these guard the rare top-level leak.
     case 'StudioLens': return 'Examining across perspectives'
     case 'Subject': return 'Reviewing a perspective'
@@ -175,6 +186,11 @@ function verbLive(t: ToolCall): string {
 //   gerund (ToolRun renders running[last] only, never sub-structure); the rich subjects/verdict card renders
 //   exclusively in the Tasks panel, and the settled row never renders inline at all.
 export const OMIT_WHEN_DONE = new Set(['studio_lens', 'StudioLens'])
+// INLINE_SURFACE — tools whose call IS a permanently-visible chat block, never a foldable row: the
+// show_widget WidgetCard renders the visual itself (streaming AND settled), exactly like CC's inline
+// widgets. RunBody flushes the fold and mounts the surface component instead (visualize §5.3). The verb
+// tables below still carry entries for these names — a SUB-agent's call renders as a plain ToolLine.
+export const INLINE_SURFACE = new Set(['show_widget'])
 
 // ---- the run summary ("Read 13 files, ran 18 commands, edited a file, created 3 files") ---------------
 
@@ -239,6 +255,12 @@ export function summarizeRun(tools: ToolCall[]): string {
         break
       case 'remember_project_map':
         bump('projectmap', () => 'recorded the project map')
+        break
+      case 'show_widget':
+        bump('visual', (n) => plural(n, 'rendered a visual', 'rendered {n} visuals'))
+        break
+      case 'read_me':
+        bump('vizguide', () => 'loaded visualization guidance')
         break
       default:
         bump(`other:${t.name}`, (n) => (n === 1 ? `used ${t.name}` : `used ${t.name} ×${n}`))
