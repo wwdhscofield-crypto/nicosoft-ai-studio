@@ -263,7 +263,7 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
     const dims = failedSubjects.map((lv) => lv.key).join(', ')
     emitCoordinatorIntro(
       opts.convId,
-      `**Adversarial review confirmed ${failedSubjects.length} finding${failedSubjects.length === 1 ? '' : 's'}** (${dims})${floorFailed ? ' on top of the failed floor check' : ' beyond the passed floor check'} — routing them to ${displayName(roleId)} for one consolidated fix round.`,
+      `**Adversarial review confirmed ${failedSubjects.length} finding${failedSubjects.length === 1 ? '' : 's'}** (${dims})${floorFailed ? ' on top of the failed floor check' : ' beyond the passed floor check'} — routing them to ${displayName(roleId)} for one consolidated fix round, then re-verifying each finding on a fresh build.`,
       opts.cb
     )
   }
@@ -514,6 +514,17 @@ async function integrateSubjectClosures(
     // Each re-verify subject self-fetches the diff (`git diff`) like a Workflow agent — no shared build to inject.
     for (const lv of lvs) {
       const focus = lv.focus ?? lv.key // the lens carries its own model-authored focus (always set; key is the fallback)
+      // Coarse liveness on the subject's panel row while its quiet re-verify runs (the SAME #8
+      // sub_tool_progress the lens finders use) — this stretch is otherwise ZERO events (a quiet sub-run per
+      // finding, minutes each), which read as a stall in dogfood 2026-07-02. Progress only touches the row's
+      // lastTool hint; the original FAIL row survives until emitSubjectFinal re-emits the resolved outcome.
+      opts.cb.onToolEvent?.(chooseVerifierRole(implementerRoleId), {
+        type: 'sub_tool_progress',
+        parentToolId: panelCardId(stepId),
+        toolUseId: subjectCardId(lv.key, stepId),
+        tool: 're-verify',
+        summary: focus.slice(0, 60)
+      })
       // quiet: reuses the subject's stable toolUseId; an event would clobber the original FAIL row the panel
       // card keeps (the resolved outcome is re-emitted via emitSubjectFinal). reverify: narrow binary fix-confirm
       // persona (NOT the aggressive FIND prompt) so a fresh weak candidate can't flip a real fix to 'unresolved'.
