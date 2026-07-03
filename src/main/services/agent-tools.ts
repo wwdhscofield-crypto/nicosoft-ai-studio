@@ -23,6 +23,7 @@ import { PREVIEW_TOOLS } from '../agent/tools/preview'
 import { monitorStartTool, monitorStopTool } from '../agent/tools/monitor'
 import { scheduleWakeupTool } from '../agent/tools/schedule-wakeup'
 import { rememberProjectMapTool } from '../agent/tools/remember-project-map'
+import { workflowStatusTool } from '../agent/tools/workflow-status'
 import { rememberTool, forgetTool, recallMemoryTool } from '../agent/tools/memory'
 import { distillSkillTool } from '../agent/tools/distill-skill'
 import type { Tool } from '../agent/tool'
@@ -148,8 +149,11 @@ export function toolsForAgentRole(roleId: string): Tool[] {
   const visualize = AGENT_ROLE_IDS.has(roleId) ? VISUALIZE_TOOLS : []
   const preview = AGENT_ROLE_IDS.has(roleId) ? PREVIEW_AGENT_TOOLS : []
   const monitor = AGENT_ROLE_IDS.has(roleId) ? MONITOR_TOOLS : []
+  // workflow_status (§7.5 batch C): the read-only run window — the ONLY standing workflow tool a role
+  // has (launching stays behind the per-turn review closure, so watching ≠ starting).
+  const wfStatus = AGENT_ROLE_IDS.has(roleId) ? [workflowStatusTool as unknown as Tool] : []
   // remember_project_map — project memory's write side for every role incl. coordinator-direct (§4.6: seed when
   // none recorded / refresh when verified stale; app-DB only, read-only classified). Sub-agents are stripped in
   // loop.ts (a Task/async child sees a narrow slice by construction — exactly the write the prompt forbids).
-  return [...core, ...PLAN_TOOLS, askUserQuestionTool as unknown as Tool, rememberProjectMapTool as unknown as Tool, ...MEMORY_TOOLS, ...DISTILL_TOOLS, ...panel, ...visualize, ...preview, ...monitor, ...mcpManager.toolsForRole(roleId), ...(skill ? [skill] : [])]
+  return [...core, ...PLAN_TOOLS, askUserQuestionTool as unknown as Tool, rememberProjectMapTool as unknown as Tool, ...MEMORY_TOOLS, ...DISTILL_TOOLS, ...panel, ...visualize, ...preview, ...monitor, ...wfStatus, ...mcpManager.toolsForRole(roleId), ...(skill ? [skill] : [])]
 }

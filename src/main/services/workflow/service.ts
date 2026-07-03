@@ -402,6 +402,25 @@ export async function run(
   return { runId, convId }
 }
 
+// In-process start: preflight + fire, returning the run ids AND the settle promise — for the launch
+// tool (§7.5 batch C), whose sync mode awaits `done` in the tool call and whose async mode watches it
+// in the background (result wake). IPC callers keep run() (a Promise can't cross the boundary).
+export async function start(
+  id: string,
+  params: Record<string, string | number | boolean>,
+  trigger: WorkflowRunTrigger,
+  onEvent: (ev: WorkflowRunEvent) => void,
+  origin?: { initiator?: string; convId?: string; taskId?: string }
+): Promise<{
+  runId: string
+  convId: string
+  done: Promise<{ status: Exclude<WorkflowRunStatus, 'running'>; failReason: WorkflowFailReason | null; failDetail: string | null; resultText: string }>
+}> {
+  const row = preflightRun(id, params)
+  const executor = await import('./executor')
+  return executor.startRun({ workflow: row, params, trigger, origin, onEvent })
+}
+
 // Run AND await the settle — for in-process callers that consume the outcome: a scheduled `workflow`
 // step (pipes resultText into the next step) and Danny's routing branch (returns it as the turn's
 // reply). Same preflight/gates as run(); throws only on preflight (draft/unknown/bad folder param) or

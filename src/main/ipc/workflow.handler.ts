@@ -8,6 +8,8 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { readFile } from 'node:fs/promises'
 import * as workflowService from '../services/workflow/service'
 import { buildLaunchNote, makeLaunchDecisionTool, type LaunchReviewRequest } from '../services/workflow/launch-review'
+import * as workflowNotify from '../services/workflow/notify'
+import { sessionBus } from '../agent/session-bus'
 import * as rolesService from '../services/roles.service'
 import { resolveDepth } from '../llm/thinking'
 import * as endpointRepo from '../repos/endpoint.repo'
@@ -32,6 +34,9 @@ export function registerWorkflowHandlers(): void {
   // them as stopped so the list/panel/Tasks section never show a ghost run forever.
   const orphans = workflowService.sweepOrphanRuns()
   if (orphans > 0) console.warn(`[workflows] closed ${orphans} orphaned running run(s) from a previous session`)
+  // §7.5 batch C: async-launch wake notes ride the session bus — the launching conversation's armed
+  // delivery resumes its role with the note (the same machinery every self-wakeup source uses).
+  workflowNotify.bindInjector((convId, note) => sessionBus.inject(convId, { text: note.text, source: note.source, priority: 'later', roleId: note.roleId }))
   ipcMain.handle('workflows:list', () => workflowService.list())
   ipcMain.handle('workflows:get', (_e, id: string) => workflowService.get(id))
   ipcMain.handle('workflows:lint', (_e, script: string) => workflowService.lint(script))

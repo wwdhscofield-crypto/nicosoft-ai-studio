@@ -44,6 +44,8 @@ interface LiveRun {
   controller: AbortController
   convId: string
   workflowId: string
+  phase: string | null // live progress for workflow_status (§7.5 batch C) — updated as the script runs
+  stepsDone: number
 }
 
 const live = new Map<string, LiveRun>()
@@ -54,6 +56,13 @@ export function isRunning(runId: string): boolean {
 
 // User Stop → run-level abort: in-flight steps abort through runRoleStep's signal; queued agent() calls
 // throw 'script run aborted' inside the engine; the settle path below records status='stopped'.
+// Live progress snapshot for workflow_status (§7.5 batch C): phase + steps completed for a RUNNING run
+// (null once it settles — the run row carries the durable facts).
+export function liveStatus(runId: string): { phase: string | null; stepsDone: number } | null {
+  const l = live.get(runId)
+  return l ? { phase: l.phase, stepsDone: l.stepsDone } : null
+}
+
 export function stopRun(runId: string): boolean {
   const run = live.get(runId)
   if (!run) return false
@@ -84,7 +93,7 @@ export function startRun(input: StartRunInput): { runId: string; convId: string;
   const conv = convService.create({ kind: 'workflow', title: `${workflow.name} · run` })
   const run = runRepo.create({ workflowId: workflow.id, convId: conv.id, trigger, params, initiator: input.origin?.initiator ?? null, originConvId: input.origin?.convId ?? null, originTaskId: input.origin?.taskId ?? null })
   const controller = new AbortController()
-  live.set(run.id, { controller, convId: conv.id, workflowId: workflow.id })
+  live.set(run.id, { controller, convId: conv.id, workflowId: workflow.id, phase: null, stepsDone: 0 })
 
   const done = executeRun({ runId: run.id, convId: conv.id, workflow, params, controller, onEvent, originConvId: run.originConvId }).finally(() => {
     live.delete(run.id)
@@ -158,6 +167,8 @@ async function executeRun(opts: {
               stallTimeoutMs: WORKFLOW_STALL_MS,
             })
           )
+          const l = live.get(runId)
+          if (l) l.stepsDone++
           onEvent({ kind: 'step-done', runId, stepIndex, ok: true, outTokens: res.outputTokens })
           emitRunningSigma()
           return res.text
@@ -190,6 +201,8 @@ async function executeRun(opts: {
       onLog: (message) => onEvent({ kind: 'log', runId, message }),
       onPhase: (title) => {
         currentPhase = title
+        const l = live.get(runId)
+        if (l) l.phase = title
         onEvent({ kind: 'phase', runId, title })
       },
     },
