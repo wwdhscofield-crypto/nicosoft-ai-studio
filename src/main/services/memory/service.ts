@@ -7,7 +7,13 @@ import { estimateTextTokens } from '../../llm/estimate'
 import { chatOnce, endpointWithKey } from '../llm-once'
 import { pickSmallModel } from '../model-select'
 import * as skillService from '../extensions/skill'
+import * as workflowService from '../workflow/service'
+import { AGENT_ROLE_IDS } from '@shared/roles'
 import type { MemoryLayer, MemoryType, MemorySource, MemoryRow } from '../../repos/memory.repo'
+
+// Role ids a distilled workflow's steps may name — inlined into the gate-lesson instruction so the small
+// model never guesses (an invalid role is DISCARDED by the distill gate, and it has no in-loop retry).
+const WORKFLOW_ROLE_IDS = [...AGENT_ROLE_IDS].map((r) => `'${r}'`).join(', ')
 
 // Memory extraction. A small/fast model (within the conversation's own endpoint) pulls durable
 // facts/preferences from a conversation and tags each as `shared` (global, cross-role) or `role`
@@ -53,6 +59,7 @@ Return a JSON array of 0-2 items. Each element: {"content": "<one concise senten
 - Only patterns that will recur (a check that was skipped, a wrong assumption, a verifier misjudgment pattern). Skip one-off facts tied to this task only.
 - No file paths or line numbers unless essential to the lesson.
 - ONLY IF a lesson is a reusable MULTI-STEP procedure (a workflow to follow next time, not a fact to know) that the closure verified end to end, ALSO add a "skill" field to that element: {"skill": {"name": "<short-kebab-case-slug>", "description": "<one line: what the procedure does>", "whenToUse": "<one line: when to reach for it>", "body": "<the procedure: preconditions, numbered steps, pitfalls, how to verify success>"}}. Most lessons do NOT warrant one — omit the field unless the multi-step shape is clear.
+- ONLY IF a lesson is a reusable MULTI-EXPERT pipeline (several DIFFERENT experts in a fixed order that the closure verified end to end — not one expert's checklist, which is a skill), ALSO add a "workflow" field: {"workflow": {"name": "<short-kebab-case-slug>", "description": "<one line: what the pipeline does>", "script": "<a complete studio workflow script>"}}. The script format: export const meta = { name: '<slug>', description: '<one line>', nsw: 1, params: [{ name: 'x', type: 'string', default: '…' }] } then one statement per step, e.g. const a = await agent(\`analyze \${params.x}\`, { role: 'analyst' }) — role must be one of ${WORKFLOW_ROLE_IDS}. It is rare for a lesson to warrant this — omit the field unless the multi-expert shape is clear.
 - If nothing generalizes, return [].
 - Output ONLY the JSON array — no preamble, no explanation, no markdown code fence.`
 
@@ -186,6 +193,22 @@ export async function learnFromGateClosure(input: GateLessonInput): Promise<void
           /* best-effort: a bad skill proposal never costs the lesson below */
         }
       }
+      // §7 W3: a workflow proposal lands through the SAME distill gate as every workflow write (scanner +
+      // shape + role validity — an invalid proposal is discarded there with a logged reason). Independent
+      // of the skill and memory paths: none of the three short-circuits another.
+      if (lesson.workflow) {
+        try {
+          const outcome = workflowService.distillUpsert({
+            ...lesson.workflow,
+            originRole: input.roleId,
+            originConvId: input.convId
+          })
+          if (outcome.kind === 'rejected') console.warn(`[memory] gate workflow proposal discarded: ${outcome.error}`)
+          else console.log(`[memory] gate workflow draft (${outcome.kind}): ${outcome.name}`)
+        } catch {
+          /* best-effort: a bad workflow proposal never costs the lesson below */
+        }
+      }
       if (findDup(lesson.content, pool, 'collab', null)) continue // same lesson already learned — keep the original
       pool.push(
         memoryRepo.create({
@@ -216,9 +239,18 @@ export interface GateLessonSkill {
   whenToUse: string
   body: string
 }
+// One distilled workflow proposal riding a gate lesson (§7 W3) — the passive counterpart of a saved
+// workflow, landing through workflowService.distillUpsert (draft + the SAME scanner/role gate; a
+// proposal that fails it is discarded there, never half-landed).
+export interface GateLessonWorkflow {
+  name: string
+  description: string
+  script: string
+}
 export interface GateLesson {
   content: string
   skill?: GateLessonSkill
+  workflow?: GateLessonWorkflow
 }
 
 // Lesson replies are {"content": "...", "skill"?: {...}} — layer/type are fixed by the caller
@@ -242,6 +274,15 @@ export function parseGateLessons(raw: string): GateLesson[] {
       const whenToUse = typeof s.whenToUse === 'string' ? s.whenToUse.trim() : ''
       const body = typeof s.body === 'string' ? s.body.trim() : ''
       if (name && description && body) lesson.skill = { name, description, whenToUse, body }
+    }
+    // §7 W3, same defensive shape as skill: a malformed workflow field is dropped WITHOUT dropping its
+    // lesson. Deep validity (parse / scanner / roles) is the distill gate's job, not the parser's.
+    if (o.workflow && typeof o.workflow === 'object') {
+      const w = o.workflow as Record<string, unknown>
+      const name = typeof w.name === 'string' ? w.name.trim() : ''
+      const description = typeof w.description === 'string' ? w.description.trim() : ''
+      const script = typeof w.script === 'string' ? w.script.trim() : ''
+      if (name && description && script) lesson.workflow = { name, description, script }
     }
     out.push(lesson)
   }

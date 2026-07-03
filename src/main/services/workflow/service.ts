@@ -15,6 +15,7 @@ import * as convService from '../conversation.service'
 import { scan, parseFull, NSW_VERSION } from './scanner'
 import { analyze } from './analyze'
 import { parseScript } from '../script/executor'
+import * as settingsService from '../settings.service'
 import { AGENT_ROLE_IDS } from '@shared/roles'
 import { normalizeMemoryName as normalizeSlug } from '../memory/agent-memory'
 import type { WorkflowRow } from '../../repos/workflow.repo'
@@ -296,6 +297,72 @@ export function importConfirm(script: string): WorkflowDto {
     source: 'imported',
   })
   return toDto(row)
+}
+
+// — Workflow distillation (§7 W3 — the workflow twin of skillService.distillUpsert): the single write
+//   entry for AGENT-authored workflows, landing from the gate-lesson pipeline (memory/service). Same
+//   name + source='distilled' → update in place (keeping the user's enabled decision); else create a
+//   DRAFT (enabled=false — never a runnable entry point until the user reviews + activates), unless
+//   workflows.autoActivateDistilled opts new ones straight in. The SAME gate as import/save applies —
+//   a proposal that fails the scanner, doesn't parse, or names an unknown/unbound role is DISCARDED
+//   (rejected outcome), never landed half-valid: the proposing model has no in-loop retry. —
+
+export interface DistillWorkflowInput {
+  name: string
+  description: string
+  script: string // a complete .nsw script (meta + steps) — meta.name/description are rewritten in sync
+  originRole: string
+  originConvId: string | null
+}
+
+export type DistillWorkflowOutcome =
+  | { kind: 'created' | 'updated'; name: string; active: boolean }
+  | { kind: 'rejected'; error: string }
+
+export function distillUpsert(input: DistillWorkflowInput): DistillWorkflowOutcome {
+  const name = normalizeSlug(input.name.trim())
+  if (!name) return { kind: 'rejected', error: 'workflow needs a slug name' }
+  // Sync the meta to the (normalized) proposal fields FIRST, so the gate below checks what will land.
+  // rewriteMeta never throws — a script whose meta doesn't even validate comes back UNCHANGED and the
+  // lint below rejects it with the real parse error (the proposal must carry a complete meta).
+  const script = rewriteMeta(input.script, { name, description: input.description })
+  const l = lint(script)
+  if (l.scan && !l.scan.ok) {
+    const first = l.scan.violations[0]
+    return { kind: 'rejected', error: `security scan failed — line ${first.line}: ${first.message}` }
+  }
+  if (l.error) return { kind: 'rejected', error: l.error }
+  if (l.unknownRoles.length) return { kind: 'rejected', error: `unknown or disabled role \`${l.unknownRoles[0]}\`` }
+
+  const existing = repo.getByName(name)
+  if (existing && existing.source === 'distilled') {
+    // update-over-duplicate: refresh the procedure, keep the user's enabled decision untouched
+    const row = repo.update(existing.id, { description: l.description ?? input.description, script, params: l.params, cwd: l.cwd })
+    if (!row) return { kind: 'rejected', error: 'update failed' }
+    return { kind: 'updated', name, active: row.enabled }
+  }
+  let finalName = name
+  let finalScript = script
+  if (existing) {
+    // the name belongs to a user/imported workflow — suffix like importConfirm, never overwrite it
+    let n = 2
+    while (repo.getByName(`${finalName}-${n}`)) n++
+    finalName = `${finalName}-${n}`
+    finalScript = rewriteMetaName(finalScript, finalName)
+  }
+  const autoActivate = settingsService.get<boolean>('workflows.autoActivateDistilled') === true
+  const row = repo.create({
+    name: finalName,
+    description: l.description ?? input.description,
+    script: finalScript,
+    params: l.params,
+    cwd: l.cwdWarning === 'missing' ? null : l.cwd,
+    enabled: autoActivate,
+    source: 'distilled',
+    originRole: input.originRole,
+    originConvId: input.originConvId,
+  })
+  return { kind: 'created', name: finalName, active: row.enabled }
 }
 
 // ── run / stop / history ────────────────────────────────────────────────────────────────────────────────
