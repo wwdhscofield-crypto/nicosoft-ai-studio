@@ -100,6 +100,14 @@ async function executeRun(opts: {
 
   let stepCounter = 0
   let currentPhase: string | null = null
+  // §4.3 live header Σ: after EVERY step settles, re-broadcast the run's turn-final aggregate so the
+  // panel header moves during the run — still never a live-stream accumulation (the doc-39 red line);
+  // each usage_events row this sums was written once at that step's settle.
+  const emitRunningSigma = (): void => {
+    if (signal.aborted) return
+    const u = usageRepo.sumByConversation(convId)
+    onEvent({ kind: 'status', runId, workflowId: workflow.id, status: 'running', inTokens: u.inTokens, outTokens: u.outTokens })
+  }
   // The most recent UNCAUGHT-candidate step failure — when the script rejects with a message containing
   // this failure's message, the run classifies as that step's kind instead of a generic script-error.
   // (A holder object, not a let: the assignment happens inside the spawnAgent closure, which TS's flow
@@ -134,6 +142,7 @@ async function executeRun(opts: {
             })
           )
           onEvent({ kind: 'step-done', runId, stepIndex, ok: true, outTokens: res.outputTokens })
+          emitRunningSigma()
           return res.text
         } catch (e) {
           if (e instanceof LensStallError && attempt < STALL_RETRIES && !signal.aborted) {
@@ -150,6 +159,7 @@ async function executeRun(opts: {
       const stalled = e instanceof LensStallError
       if (!signal.aborted) failed.last = { kind: stalled ? 'stalled' : 'step-error', label, message }
       onEvent({ kind: 'step-done', runId, stepIndex, ok: false, outTokens: 0, error: message, stalled })
+      emitRunningSigma()
       throw e // parallel()/pipeline() degrade this slot to null; an uncaught rejection fails the run
     }
   }

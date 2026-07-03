@@ -338,6 +338,16 @@ function WorkflowList({
       .then(() => { reload(); toast.success('workflow deleted') })
       .catch(() => toast.error('delete failed'))
   }
+  // the chip / menu entry into the panel for a SETTLED workflow: latest run id resolved on demand
+  // (the list DTO carries only {status, startedAt} — one runs() call at click time keeps the DTO light)
+  const openLatestRun = (w: WorkflowDto): void => {
+    const running = liveByWorkflow(w.id)
+    if (running) return onOpenRun(w.id, running.runId)
+    void window.api.workflows.runs(w.id).then((rs) => {
+      if (rs[0]) onOpenRun(w.id, rs[0].id)
+      else toast.error('no runs yet')
+    })
+  }
   const onImport = (): void => {
     window.api.workflows
       .importPick()
@@ -395,24 +405,27 @@ function WorkflowList({
                     </div>
                     <div className="wf-meta">
                       <span>{w.params.length} param{w.params.length === 1 ? '' : 's'}</span>
-                      <span className="wf-last">
-                        {running ? (
-                          <><span className="wf-dot run" />running{running.phase ? ` · ${running.phase}` : ''} {doneSteps}/{Math.max(w.steps, running.steps.length)}</>
-                        ) : w.lastRun ? (
-                          <>
-                            <span className={'wf-dot' + (w.lastRun.status === 'failed' ? ' err' : w.lastRun.status === 'stopped' ? ' stop' : '')} />
-                            {w.lastRun.status === 'ok' ? `ran ${ago(w.lastRun.startedAt)}` : `${w.lastRun.status} · ${ago(w.lastRun.startedAt)}`}
-                          </>
-                        ) : (
-                          <>{w.enabled ? 'never run' : 'draft — never run'}</>
-                        )}
-                      </span>
+                      {running ? (
+                        <button className="wf-last" title="Open the run panel" onClick={() => onOpenRun(w.id, running.runId)}>
+                          <span className="wf-dot run" />running{running.phase ? ` · ${running.phase}` : ''} {doneSteps}/{Math.max(w.steps, running.steps.length)}
+                          <span className="wf-arr">›</span>
+                        </button>
+                      ) : w.lastRun ? (
+                        <button className="wf-last" title="Open the last run" onClick={() => openLatestRun(w)}>
+                          <span className={'wf-dot' + (w.lastRun.status === 'failed' ? ' err' : w.lastRun.status === 'stopped' ? ' stop' : '')} />
+                          {w.lastRun.status === 'ok' ? `ran ${ago(w.lastRun.startedAt)}` : `${w.lastRun.status} · ${ago(w.lastRun.startedAt)}`}
+                          <span className="wf-arr">›</span>
+                        </button>
+                      ) : (
+                        <span className="wf-last">{w.enabled ? 'never run' : 'draft — never run'}</span>
+                      )}
                       <button className="btn ghost sm" onClick={() => (w.enabled ? onRunClick(w) : onEdit(w.id))}>
                         {running ? 'View' : w.enabled ? 'Run' : 'Review'}
                       </button>
                       <Switch on={w.enabled} onClick={() => onToggle(w)} />
                       <RowMenu
                         items={[
+                          { label: 'Runs', disabled: !running && !w.lastRun, onClick: () => openLatestRun(w) },
                           { label: 'Edit', onClick: () => onEdit(w.id) },
                           { label: 'Duplicate', onClick: () => onDuplicate(w) },
                           { label: 'Export', onClick: () => onExport(w) },
@@ -1031,7 +1044,7 @@ function RunPanel({
         <span className={'wf-run-stat' + (runRow?.status === 'failed' || liveRun?.status === 'failed' ? ' err' : '')}>
           {running ? (
             <><span className="wf-dot run" />{liveRun?.phase ? `${liveRun.phase} · ` : ''}{doneCount}/{Math.max(workflow.steps, all.length)} · {elapsed}
-              <button className="btn ghost sm danger" onClick={stop}>■ Stop</button></>
+              <button className="btn sm danger" onClick={stop}>■ Stop</button></>
           ) : (
             <>
               <span className={'wf-dot' + ((liveRun?.status ?? runRow?.status) === 'failed' ? ' err' : (liveRun?.status ?? runRow?.status) === 'stopped' ? ' stop' : '')} />

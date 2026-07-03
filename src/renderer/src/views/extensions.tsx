@@ -25,7 +25,7 @@ import { useT } from '@/stores/locale'
 /* — three-dot row action menu. Portals to <body> with fixed positioning (useAnchoredMenu) so the
      .ext-list overflow:hidden / .ext-body scroll can't clip it off at the card edge. Self-manages
      open state; one instance per row. — */
-export function RowMenu({ items }: { items: { label: string; danger?: boolean; onClick: () => void }[] }): ReactElement {
+export function RowMenu({ items }: { items: { label: string; danger?: boolean; disabled?: boolean; onClick: () => void }[] }): ReactElement {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const { menuRef, style } = useAnchoredMenu(open, btnRef, "right");
@@ -42,8 +42,8 @@ export function RowMenu({ items }: { items: { label: string; danger?: boolean; o
                 {items.map((it, i) => (
                   <div
                     key={i}
-                    className={"rm-item" + (it.danger ? " danger" : "")}
-                    onClick={() => { it.onClick(); setOpen(false); }}
+                    className={"rm-item" + (it.danger ? " danger" : "") + (it.disabled ? " disabled" : "")}
+                    onClick={it.disabled ? undefined : () => { it.onClick(); setOpen(false); }}
                   >
                     {it.label}
                   </div>
