@@ -6,6 +6,7 @@ import * as roleRepo from '../repos/role.repo'
 import { estimateTextTokens } from '../llm/estimate'
 import { chatOnce, endpointWithKey } from './llm-once'
 import { pickSmallModel } from './model-select'
+import * as skillService from './skill.service'
 import type { MemoryLayer, MemoryType, MemorySource, MemoryRow } from '../repos/memory.repo'
 
 // Memory extraction. A small/fast model (within the conversation's own endpoint) pulls durable
@@ -51,6 +52,7 @@ const GATE_LESSON_INSTRUCTION = `An independent verification gate FAILED a code 
 Return a JSON array of 0-2 items. Each element: {"content": "<one concise sentence: the mistake class + how to avoid or check it>"}. Rules:
 - Only patterns that will recur (a check that was skipped, a wrong assumption, a verifier misjudgment pattern). Skip one-off facts tied to this task only.
 - No file paths or line numbers unless essential to the lesson.
+- ONLY IF a lesson is a reusable MULTI-STEP procedure (a workflow to follow next time, not a fact to know) that the closure verified end to end, ALSO add a "skill" field to that element: {"skill": {"name": "<short-kebab-case-slug>", "description": "<one line: what the procedure does>", "whenToUse": "<one line: when to reach for it>", "body": "<the procedure: preconditions, numbered steps, pitfalls, how to verify success>"}}. Most lessons do NOT warrant one — omit the field unless the multi-step shape is clear.
 - If nothing generalizes, return [].
 - Output ONLY the JSON array — no preamble, no explanation, no markdown code fence.`
 
@@ -164,23 +166,39 @@ export async function learnFromGateClosure(input: GateLessonInput): Promise<void
     const text = await chatOnce(target.ep, target.key, model, [
       { role: 'user', content: `${GATE_LESSON_INSTRUCTION}\n\nCase:\n${caseText}` }
     ])
-    const items = parseLessons(text)
+    const items = parseGateLessons(text)
     if (!items.length) return
     const pool = memoryRepo.listForRole(input.roleId) // includes collab — the dedup target layer
-    for (const content of items) {
-      if (findDup(content, pool, 'collab', null)) continue // same lesson already learned — keep the original
+    for (const lesson of items) {
+      // A lesson that also carries a skill proposal (P1b) lands it through the SAME draft gate as the
+      // distill_skill tool — per-implementer-role scope, enabled=false until the user activates. A
+      // memory-dedup hit must not short-circuit it (the sentence may be known while the procedure is
+      // new), and a failed upsert must not cost the lesson — both stay best-effort and independent.
+      if (lesson.skill) {
+        try {
+          const outcome = skillService.distillUpsert({
+            ...lesson.skill,
+            originRole: input.roleId,
+            originConvId: input.convId
+          })
+          console.log(`[memory] gate skill draft (${outcome.kind}): ${lesson.skill.name}`)
+        } catch {
+          /* best-effort: a bad skill proposal never costs the lesson below */
+        }
+      }
+      if (findDup(lesson.content, pool, 'collab', null)) continue // same lesson already learned — keep the original
       pool.push(
         memoryRepo.create({
           layer: 'collab',
           roleId: null,
           type: 'learning',
-          content,
+          content: lesson.content,
           source: 'auto',
-          tokens: estimateTextTokens(content),
+          tokens: estimateTextTokens(lesson.content),
           sourceConvId: input.convId
         })
       )
-      console.log(`[memory] gate lesson (${input.kind}): ${content.slice(0, 120)}`)
+      console.log(`[memory] gate lesson (${input.kind}): ${lesson.content.slice(0, 120)}`)
     }
   } catch {
     // best-effort: a failed lesson extraction must never affect the gate flow
@@ -189,15 +207,43 @@ export async function learnFromGateClosure(input: GateLessonInput): Promise<void
   }
 }
 
-// Lesson replies are {"content": "..."} only — layer/type are fixed by the caller (collab/learning),
-// so parseExtracted's layer gate would drop every item; this parser only validates content.
-function parseLessons(raw: string): string[] {
+// One distilled skill proposal riding a gate lesson (P1b, skill-distillation design §3.35) — the
+// passive counterpart of the distill_skill tool, landing through the SAME skillService.distillUpsert
+// (per-role draft, user activates). whenToUse may be empty (the listing degrades to description-only).
+export interface GateLessonSkill {
+  name: string
+  description: string
+  whenToUse: string
+  body: string
+}
+export interface GateLesson {
+  content: string
+  skill?: GateLessonSkill
+}
+
+// Lesson replies are {"content": "...", "skill"?: {...}} — layer/type are fixed by the caller
+// (collab/learning), so parseExtracted's layer gate would drop every item; this parser validates
+// content, plus the optional skill proposal. Defensive per §3.35: a malformed skill field is dropped
+// WITHOUT dropping its lesson (the sentence is still worth keeping when the procedure isn't).
+export function parseGateLessons(raw: string): GateLesson[] {
   const arr = extractJsonArray(raw)
   if (!Array.isArray(arr)) return []
-  const out: string[] = []
+  const out: GateLesson[] = []
   for (const e of arr.slice(0, 2)) {
-    const content = e && typeof e === 'object' ? (e as Record<string, unknown>).content : null
-    if (typeof content === 'string' && content.trim() && content.length <= MAX_CONTENT_CHARS) out.push(content.trim())
+    if (!e || typeof e !== 'object') continue
+    const o = e as Record<string, unknown>
+    const content = typeof o.content === 'string' ? o.content.trim() : ''
+    if (!content || content.length > MAX_CONTENT_CHARS) continue
+    const lesson: GateLesson = { content }
+    if (o.skill && typeof o.skill === 'object') {
+      const s = o.skill as Record<string, unknown>
+      const name = typeof s.name === 'string' ? s.name.trim() : ''
+      const description = typeof s.description === 'string' ? s.description.trim() : ''
+      const whenToUse = typeof s.whenToUse === 'string' ? s.whenToUse.trim() : ''
+      const body = typeof s.body === 'string' ? s.body.trim() : ''
+      if (name && description && body) lesson.skill = { name, description, whenToUse, body }
+    }
+    out.push(lesson)
   }
   return out
 }

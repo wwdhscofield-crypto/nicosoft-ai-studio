@@ -19,6 +19,8 @@ export interface SkillRow {
   scope: SkillScope
   enabled: boolean
   ownerPluginId: string | null
+  originRole: string | null // distilled: authoring roleId; imported/builtin: null
+  originConvId: string | null // distilled: conversation it was learned from
   createdAt: string
 }
 
@@ -33,6 +35,8 @@ export interface SkillCreateInput {
   scope: SkillScope
   enabled: boolean
   ownerPluginId?: string | null
+  originRole?: string | null
+  originConvId?: string | null
 }
 
 export interface SkillUpdatePatch {
@@ -58,6 +62,8 @@ interface SkillRaw {
   scope: string
   enabled: number
   owner_plugin_id: string | null
+  origin_role: string | null
+  origin_conv_id: string | null
   created_at: string | null
 }
 
@@ -67,13 +73,15 @@ function mapRow(raw: SkillRaw): SkillRow {
     name: raw.name,
     description: raw.description ?? '',
     whenToUse: raw.when_to_use ?? '',
-    source: raw.source === 'imported' ? 'imported' : 'builtin',
+    source: raw.source === 'imported' ? 'imported' : raw.source === 'distilled' ? 'distilled' : 'builtin',
     body: raw.body,
     dirPath: raw.dir_path,
     allowedTools: parseJson<string[]>(raw.allowed_tools, []),
     scope: parseJson<SkillScope>(raw.scope, 'all'),
     enabled: raw.enabled === 1,
     ownerPluginId: raw.owner_plugin_id,
+    originRole: raw.origin_role,
+    originConvId: raw.origin_conv_id,
     createdAt: raw.created_at ?? ''
   }
 }
@@ -97,8 +105,8 @@ export function create(input: SkillCreateInput): SkillRow {
   const createdAt = new Date().toISOString()
   getDb()
     .prepare(
-      `INSERT INTO skills (id, name, description, when_to_use, source, body, dir_path, allowed_tools, scope, enabled, owner_plugin_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO skills (id, name, description, when_to_use, source, body, dir_path, allowed_tools, scope, enabled, owner_plugin_id, origin_role, origin_conv_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id,
@@ -112,6 +120,8 @@ export function create(input: SkillCreateInput): SkillRow {
       JSON.stringify(input.scope),
       input.enabled ? 1 : 0,
       input.ownerPluginId ?? null,
+      input.originRole ?? null,
+      input.originConvId ?? null,
       createdAt
     )
   return getById(id) as SkillRow

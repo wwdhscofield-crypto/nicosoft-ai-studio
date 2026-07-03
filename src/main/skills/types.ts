@@ -3,8 +3,9 @@
 export const SKILL_FILE = 'SKILL.md'
 
 // Where a skill came from: 'imported' = a folder with SKILL.md (body read lazily, supports ${SKILL_DIR}
-// + attached files); 'builtin' = authored in studio's UI (body stored in DB, no folder).
-export type SkillSource = 'imported' | 'builtin'
+// + attached files); 'builtin' = authored in studio's UI (body stored in DB, no folder); 'distilled' =
+// authored by an agent via distill_skill (body in DB like builtin; starts as a draft, enabled=false).
+export type SkillSource = 'imported' | 'builtin' | 'distilled'
 
 // Same scope model as MCP: 'all' roles, or an explicit roleId allow-list.
 export type SkillScope = 'all' | string[]

@@ -22,6 +22,10 @@ export function runMigrations(db: DatabaseSync): void {
   ensureColumn(db, 'skills', 'allowed_tools', "TEXT NOT NULL DEFAULT '[]'")
   ensureColumn(db, 'skills', 'created_at', 'TEXT')
   ensureColumn(db, 'skills', 'owner_plugin_id', 'TEXT')
+  // Skill distillation (docs/skill-distillation-design.md §3.1): provenance for agent-authored
+  // ('distilled') skills — which role learned it, from which conversation. NULL on imported/builtin.
+  ensureColumn(db, 'skills', 'origin_role', 'TEXT')
+  ensureColumn(db, 'skills', 'origin_conv_id', 'TEXT')
   ensureColumn(db, 'mcp_servers', 'owner_plugin_id', 'TEXT')
   ensureColumn(db, 'plugins', 'version', 'TEXT')
   ensureColumn(db, 'plugins', 'author', 'TEXT')

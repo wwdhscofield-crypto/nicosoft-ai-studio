@@ -238,13 +238,15 @@ CREATE TABLE IF NOT EXISTS skills (
   name          TEXT NOT NULL,
   description   TEXT,
   when_to_use   TEXT,
-  source        TEXT NOT NULL DEFAULT 'builtin',   -- imported | builtin
-  body          TEXT,                              -- builtin: inline instructions; imported: SKILL.md snapshot
-  dir_path      TEXT,                              -- imported: skill folder; builtin: null
+  source        TEXT NOT NULL DEFAULT 'builtin',   -- imported | builtin | distilled
+  body          TEXT,                              -- builtin/distilled: inline instructions; imported: SKILL.md snapshot
+  dir_path      TEXT,                              -- imported: skill folder; builtin/distilled: null
   allowed_tools TEXT NOT NULL DEFAULT '[]',        -- JSON string[]
   scope         TEXT NOT NULL DEFAULT '"all"',     -- JSON: "all" | string[]
-  enabled       INTEGER NOT NULL DEFAULT 1,
+  enabled       INTEGER NOT NULL DEFAULT 1,        -- distilled rows start 0: draft until the user activates
   owner_plugin_id TEXT,                            -- set when installed by a plugin (locked in the UI)
+  origin_role   TEXT,                              -- distilled: authoring roleId (provenance; agent_memories parity)
+  origin_conv_id TEXT,                             -- distilled: conversation it was learned from
   created_at    TEXT
 );
 

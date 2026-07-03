@@ -1,6 +1,7 @@
 import * as skillRepo from '../repos/skill.repo'
 import { SkillManager } from '../skills/manager'
 import { loadSkillDir } from '../skills/loader'
+import * as settingsService from './settings.service'
 import type { SkillRow, SkillUpdatePatch } from '../repos/skill.repo'
 import type { SkillDto, SkillInput } from '../ipc/contracts'
 import type { LoadedSkill } from '../skills/types'
@@ -31,12 +32,14 @@ function toDto(row: SkillRow): SkillDto {
     description: row.description,
     whenToUse: row.whenToUse,
     source: row.source,
-    // builtin body is editable in the UI; imported body lives in the folder (not surfaced for edit).
-    body: row.source === 'builtin' ? row.body : null,
+    // builtin/distilled body lives in the DB and is surfaced (a distilled draft must be reviewable
+    // before activation); imported body lives in the folder (not surfaced for edit).
+    body: row.source !== 'imported' ? row.body : null,
     dirPath: row.dirPath,
     scope: row.scope,
     enabled: row.enabled,
-    ownerPluginId: row.ownerPluginId
+    ownerPluginId: row.ownerPluginId,
+    originRole: row.originRole
   }
 }
 
@@ -125,6 +128,71 @@ export function update(id: string, patch: SkillInput): SkillDto | null {
   if (!updated) return null
   register(updated)
   return toDto(updated)
+}
+
+// — Skill distillation (docs/skill-distillation-design.md §3.2/§3.35) — the single write entry for
+//   agent-authored skills, shared by the distill_skill tool (active path) and the gate-lesson upgrade
+//   (passive path). Same name + same origin role → update in place (update-over-duplicate, keeping the
+//   user's enabled decision); otherwise create a per-role DRAFT (enabled=false — invisible to
+//   listing/tool until the user activates it in Extensions → Skills), unless the single opt-in setting
+//   skills.autoActivateDistilled flips new ones straight to active. —
+
+// Soft cap on ACTIVE distilled skills per role (§3.6 anti-bloat): at the cap, new creates are refused
+// with a "consolidate first" outcome. Updates always pass (they don't grow the pool).
+export const DISTILL_ACTIVE_CAP = 12
+
+export interface DistillInput {
+  name: string
+  description: string
+  whenToUse: string
+  body: string
+  originRole: string
+  originConvId: string | null
+}
+
+export type DistillOutcome =
+  | { kind: 'created' | 'updated'; name: string; active: boolean }
+  | { kind: 'limit'; activeCount: number }
+
+export function distillUpsert(input: DistillInput): DistillOutcome {
+  const name = input.name.trim()
+  if (!name) throw new Error('Skill needs a name')
+  const body = input.body.trim()
+  if (!body) throw new Error('Skill needs instructions')
+  const rows = skillRepo.list()
+  const existing = rows.find(
+    (r) => r.source === 'distilled' && r.name === name && r.originRole === input.originRole
+  )
+  if (existing) {
+    const updated = skillRepo.update(existing.id, {
+      description: input.description,
+      whenToUse: input.whenToUse,
+      body
+    })
+    if (!updated) throw new Error('Skill update failed')
+    register(updated)
+    return { kind: 'updated', name, active: updated.enabled }
+  }
+  const activeCount = rows.filter(
+    (r) => r.source === 'distilled' && r.originRole === input.originRole && r.enabled
+  ).length
+  if (activeCount >= DISTILL_ACTIVE_CAP) return { kind: 'limit', activeCount }
+  const autoActivate = settingsService.get<boolean>('skills.autoActivateDistilled') === true
+  const row = skillRepo.create({
+    name,
+    description: input.description,
+    whenToUse: input.whenToUse,
+    source: 'distilled',
+    body,
+    dirPath: null,
+    allowedTools: [],
+    scope: [input.originRole],
+    enabled: autoActivate,
+    originRole: input.originRole,
+    originConvId: input.originConvId
+  })
+  register(row)
+  return { kind: 'created', name, active: row.enabled }
 }
 
 // Toggle only the enabled flag + re-register (used by the plugin enable/disable cascade).

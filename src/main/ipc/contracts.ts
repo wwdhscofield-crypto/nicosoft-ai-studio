@@ -954,7 +954,7 @@ export interface McpTestResult {
   error?: string
 }
 
-export type SkillSource = 'imported' | 'builtin'
+export type SkillSource = 'imported' | 'builtin' | 'distilled'
 export type SkillScope = 'all' | string[] // 'all', or an explicit list of role ids
 
 export interface SkillDto {
@@ -963,11 +963,12 @@ export interface SkillDto {
   description: string
   whenToUse: string
   source: SkillSource
-  body: string | null // builtin: editable instruction body; imported: null (the body lives in the folder)
-  dirPath: string | null // imported: the skill folder; builtin: null
+  body: string | null // builtin/distilled: instruction body (in DB); imported: null (the body lives in the folder)
+  dirPath: string | null // imported: the skill folder; builtin/distilled: null
   scope: SkillScope
-  enabled: boolean
+  enabled: boolean // distilled skills start disabled — that IS the draft state the user activates
   ownerPluginId: string | null // non-null when installed by a plugin (locked in the UI)
+  originRole: string | null // distilled: the roleId that authored it (provenance badge); others: null
 }
 
 export interface SkillInput {

@@ -57,6 +57,27 @@ const TOOL_AWARENESS =
   "batch text work) — those are your deliverables too. The hard line is the user's APPLICATION source code: " +
   'creating or editing THAT belongs to the engineers.'
 
+// The unified self-learning criteria block (skill-distillation design §0.5 point 1): the ONE place the
+// model sees all three saving outlets — remember (declarative), distill_skill (procedural),
+// remember_project_map (structural) — and the boundary line between them. Each tool's own prompt
+// carries its detailed write rules; this block only routes "what I learned" to the right outlet and
+// carries the distillation gate. Rides right after the # Memory section (same learning layer of the
+// prompt); injected unconditionally on the buildAgentSystem paths — every such run holds all three tools.
+const SELF_LEARNING =
+  '# Self-learning: where what you learn goes\n' +
+  'Three outlets, split by the shape of the learning:\n' +
+  '- Something to KNOW next time (a fact, preference, constraint, pointer) → `remember`.\n' +
+  '- Something to DO step-by-step next time (a reusable multi-step procedure you verified here) → ' +
+  '`distill_skill`. It is saved as a DRAFT the user activates in Extensions → Skills — it does NOT ' +
+  'take effect by itself.\n' +
+  '- The SHAPE of this project (structure, entry points, commands) → `remember_project_map`.\n' +
+  'Distill sparingly — only when the same class of task will recur, the working procedure was ' +
+  'non-obvious, and you verified it end to end in this session. Do not distill one-off tasks, anything ' +
+  "the project's own files already document, plain facts (that is `remember`), or unverified guesses. " +
+  'Check the Available skills listing first: if a similar skill exists, call distill_skill with that ' +
+  'SAME name to update it instead of duplicating. At most one distill per conversation; most ' +
+  'conversations warrant none.'
+
 // Project-convention files (CLAUDE.md / AGENTS.md) from the agent's working dir — the user's
 // project-specific rules. Injected as REFERENCE BELOW the hardcoded system rules (PLAN_FIRST), which
 // always win; on conflict the agent follows the system rule and tells the user. Missing dir → null.
@@ -153,6 +174,9 @@ export function buildAgentSystem(
   // snapshot, built per run by agent-memory.service.indexText (undefined for folder-free runs). The
   // MemoryRow block below is the separate passive-extraction layer; both coexist by design.
   if (memoryIndex) parts.push(memoryIndex)
+  // Self-learning criteria (remember vs distill_skill vs remember_project_map) — unconditional: the
+  // memory tools degrade gracefully without a folder, and distill_skill is folder-independent.
+  parts.push(SELF_LEARNING)
   if (memories.length) {
     parts.push(
       "What you've learned about this user (engineering preferences, project conventions):\n" +

@@ -24,6 +24,7 @@ import { monitorStartTool, monitorStopTool } from '../agent/tools/monitor'
 import { scheduleWakeupTool } from '../agent/tools/schedule-wakeup'
 import { rememberProjectMapTool } from '../agent/tools/remember-project-map'
 import { rememberTool, forgetTool, recallMemoryTool } from '../agent/tools/memory'
+import { distillSkillTool } from '../agent/tools/distill-skill'
 import type { Tool } from '../agent/tool'
 import { AGENT_ROLE_IDS } from '@shared/roles'
 import * as settingsService from './settings.service'
@@ -124,6 +125,12 @@ export const COORDINATOR_INVESTIGATION_TOOLS = [globTool, readTool, grepTool, ta
 // rules forbid). App-DB only, read-only classified.
 export const MEMORY_TOOLS = [rememberTool, forgetTool, recallMemoryTool] as unknown as Tool[]
 
+// distill_skill (skill distillation §3.2) — same tier as MEMORY_TOOLS: every agent role plus
+// coordinator-direct, alongside the Skill tool's injection point below (a role that can LOAD skills can
+// also propose them). Output is a per-role DRAFT gated by the user in Extensions → Skills. Sub-agents
+// are stripped in loop.ts (a child's narrow slice is exactly what the distillation gate forbids saving).
+export const DISTILL_TOOLS = [distillSkillTool] as unknown as Tool[]
+
 export function toolsForAgentRole(roleId: string): Tool[] {
   let core =
     DEV_ROLES.has(roleId)
@@ -144,5 +151,5 @@ export function toolsForAgentRole(roleId: string): Tool[] {
   // remember_project_map — project memory's write side for every role incl. coordinator-direct (§4.6: seed when
   // none recorded / refresh when verified stale; app-DB only, read-only classified). Sub-agents are stripped in
   // loop.ts (a Task/async child sees a narrow slice by construction — exactly the write the prompt forbids).
-  return [...core, ...PLAN_TOOLS, askUserQuestionTool as unknown as Tool, rememberProjectMapTool as unknown as Tool, ...MEMORY_TOOLS, ...panel, ...visualize, ...preview, ...monitor, ...mcpManager.toolsForRole(roleId), ...(skill ? [skill] : [])]
+  return [...core, ...PLAN_TOOLS, askUserQuestionTool as unknown as Tool, rememberProjectMapTool as unknown as Tool, ...MEMORY_TOOLS, ...DISTILL_TOOLS, ...panel, ...visualize, ...preview, ...monitor, ...mcpManager.toolsForRole(roleId), ...(skill ? [skill] : [])]
 }

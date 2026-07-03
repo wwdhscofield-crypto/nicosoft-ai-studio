@@ -83,10 +83,16 @@ export function SkillDialog({
       <div>
         <label className="field-label">{t('skill.source')}</label>
         <Segmented
-          options={[
-            { v: 'imported', l: t('skill.importFolder'), disabled: editing },
-            { v: 'builtin', l: t('skill.writeInStudio'), disabled: editing }
-          ]}
+          options={
+            source === 'distilled'
+              ? // Editing an agent-distilled skill: source is immutable and neither authored kind — show
+                // its own (disabled) segment so the control doesn't render with nothing selected.
+                [{ v: 'distilled', l: 'Distilled', disabled: true }]
+              : [
+                  { v: 'imported', l: t('skill.importFolder'), disabled: editing },
+                  { v: 'builtin', l: t('skill.writeInStudio'), disabled: editing }
+                ]
+          }
           value={source}
           onChange={(v) => setSource(v as SkillSource)}
         />

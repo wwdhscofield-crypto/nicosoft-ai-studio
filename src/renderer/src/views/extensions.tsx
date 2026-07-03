@@ -185,11 +185,25 @@ function MCPTab({ onCount }: { onCount: (n: number) => void }): ReactElement {
 }
 
 /* ——— Skills (real data via window.api.skills) ——— */
+const AUTO_ACTIVATE_KEY = 'skills.autoActivateDistilled';
+
 function SkillsTab({ onCount }: { onCount: (n: number) => void }): ReactElement {
   const t = useT();
+  const { EXPERT_BY_ID } = STUDIO_DATA;
   const [skills, setSkills] = useState<SkillDto[]>([]);
   const [plugins, setPlugins] = useState<PluginDto[]>([]);
   const [dialog, setDialog] = useState<{ editing: SkillDto | null } | null>(null);
+  // The single distillation setting (skill-distillation design §3.5): default OFF keeps the human gate
+  // (agent-distilled skills land as drafts); ON = Hermes-style immediate activation, opt-in.
+  const [autoActivate, setAutoActivate] = useState(false);
+  useEffect(() => {
+    void window.api.settings.get<boolean>(AUTO_ACTIVATE_KEY).then((v) => { if (v !== null) setAutoActivate(v); });
+  }, []);
+  const toggleAutoActivate = (): void => {
+    const next = !autoActivate;
+    setAutoActivate(next);
+    void window.api.settings.set(AUTO_ACTIVATE_KEY, next).catch(() => toast.error(t('skill.updateFailed')));
+  };
 
   const reload = (): void => {
     void window.api.skills.list().then((s) => { setSkills(s); onCount(s.length); });
@@ -197,6 +211,8 @@ function SkillsTab({ onCount }: { onCount: (n: number) => void }): ReactElement 
   };
   useEffect(() => { reload(); }, []);
   const pluginName = (id: string | null): string => plugins.find((p) => p.id === id)?.name ?? "plugin";
+  const roleName = (id: string | null): string => (id ? (EXPERT_BY_ID[id]?.name ?? id) : "agent");
+  const draftCount = skills.filter((s) => s.source === "distilled" && !s.enabled).length;
 
   const onToggle = (s: SkillDto): void => {
     void window.api.skills
@@ -214,6 +230,15 @@ function SkillsTab({ onCount }: { onCount: (n: number) => void }): ReactElement 
   return (
     <div className="ext-tab">
       <ExtTabHead help="Packaged instructions an expert's agent loads on demand when a request matches." action="Add skill" onAdd={() => setDialog({ editing: null })} />
+      <div className="ext-note">
+        {draftCount > 0 ? (
+          <span className="ext-drafts"><Icons.zap size={12} /> {draftCount} draft{draftCount > 1 ? "s" : ""} from agents — review and activate below</span>
+        ) : <span />}
+        <span className="ext-note-set">
+          Auto-activate distilled skills
+          <Switch on={autoActivate} onClick={toggleAutoActivate} />
+        </span>
+      </div>
       <div className="ext-list">
         {skills.length === 0 ? (
           <div className="ext-empty">No skills yet — import a SKILL.md folder or write one in studio.</div>
@@ -226,7 +251,7 @@ function SkillsTab({ onCount }: { onCount: (n: number) => void }): ReactElement 
                 <div className="ext-main">
                   <div className="ext-line1">
                     <span className="ext-name">{s.name}</span>
-                    <span className="ext-source">{s.source === "imported" ? "imported" : "studio"}</span>
+                    <span className="ext-source">{s.source === "imported" ? "imported" : s.source === "distilled" ? `distilled · ${roleName(s.originRole)}` : "studio"}</span>
                     {owned ? <OwnedTag name={pluginName(s.ownerPluginId)} /> : null}
                   </div>
                   <div className="ext-line2">{s.description}{s.whenToUse ? ` · ${s.whenToUse}` : ""}</div>
