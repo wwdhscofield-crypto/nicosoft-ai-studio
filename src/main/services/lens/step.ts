@@ -11,7 +11,7 @@
 //                 (understand-mode READER_SYSTEM moved to understand.ts — it's a tool-less pinned summary, not a persona.)
 
 import * as rolesService from '../roles.service'
-import { runRoleStep, LensStallError, type RunStepOptions } from '../coordinator-step'
+import { runRoleStep, LensStallError, type RunStepOptions } from '../coordinator/step'
 import { chatOnce, endpointWithKey } from '../llm-once'
 import { resolveDepth } from '../../llm/thinking'
 import { subjectExaminePrompt, refutePrompt, refutePromptPrecision, reverifyPrompt, COORDINATOR_VERIFIER_PROMPT } from '../../agent/roles/prompts'

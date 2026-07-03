@@ -1,13 +1,13 @@
 import { BrowserWindow } from 'electron'
-import * as memoryRepo from '../repos/memory.repo'
-import * as extractionRepo from '../repos/extraction.repo'
-import * as convRepo from '../repos/conversation.repo'
-import * as roleRepo from '../repos/role.repo'
-import { estimateTextTokens } from '../llm/estimate'
-import { chatOnce, endpointWithKey } from './llm-once'
-import { pickSmallModel } from './model-select'
-import * as skillService from './skill.service'
-import type { MemoryLayer, MemoryType, MemorySource, MemoryRow } from '../repos/memory.repo'
+import * as memoryRepo from '../../repos/memory.repo'
+import * as extractionRepo from '../../repos/extraction.repo'
+import * as convRepo from '../../repos/conversation.repo'
+import * as roleRepo from '../../repos/role.repo'
+import { estimateTextTokens } from '../../llm/estimate'
+import { chatOnce, endpointWithKey } from '../llm-once'
+import { pickSmallModel } from '../model-select'
+import * as skillService from '../extensions/skill'
+import type { MemoryLayer, MemoryType, MemorySource, MemoryRow } from '../../repos/memory.repo'
 
 // Memory extraction. A small/fast model (within the conversation's own endpoint) pulls durable
 // facts/preferences from a conversation and tags each as `shared` (global, cross-role) or `role`

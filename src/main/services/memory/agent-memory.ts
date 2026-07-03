@@ -5,10 +5,10 @@
 // best-effort contract: a store failure logs + no-ops, a read failure degrades to empty — memory can
 // never block or break a run (§4.5). Distinct from memory.service (the passive extraction layer).
 
-import { normalizeProjectKey } from './project-map.service'
-import * as repo from '../repos/agent-memory.repo'
-import { selectRecalls, renderRecallReminder } from '../agent/memory-recall'
-import type { AgentMemoryRow, AgentMemoryType } from '../repos/agent-memory.repo'
+import { normalizeProjectKey } from './project-map'
+import * as repo from '../../repos/agent-memory.repo'
+import { selectRecalls, renderRecallReminder } from '../../agent/memory-recall'
+import type { AgentMemoryRow, AgentMemoryType } from '../../repos/agent-memory.repo'
 
 // Hard bound on one memory's content (PROJECT_MAP_MAX_CHARS precedent — headroom, not a target).
 export const MEMORY_MAX_CHARS = 4000

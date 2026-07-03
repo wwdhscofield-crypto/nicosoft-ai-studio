@@ -8,7 +8,7 @@
 //   serialized to a text transcript first (capped), so the summary call never carries dangling
 //   tool_use blocks and can't itself overflow.
 
-import { collectTurn } from './llm'
+import { collectTurn } from './llm/anthropic'
 import { isContentBlock } from './types'
 import type { AgentMessage, ToolResultBlock, Usage } from './types'
 import { CHARS_PER_TOKEN } from '../llm/estimate'

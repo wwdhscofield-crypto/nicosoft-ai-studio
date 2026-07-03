@@ -5,15 +5,15 @@
 // verdict re-injection into the conversation so the next turn's history carries the verified outcome.
 
 import { Notification } from 'electron'
-import * as convService from './conversation.service'
-import * as memoryService from './memory.service'
-import * as gateOutcomeRepo from '../repos/gate-outcome.repo'
-import { backgroundVerifyQueue, GATE_C_MAX_ROUNDS, type E2ERoundResult, type E2EVerdict } from '../agent/background-verify-queue'
-import { COORDINATOR_E2E_PROMPT } from '../agent/roles/prompts'
-import { describeSnapshot, snapshotWorkspace } from './git-snapshot'
-import { runRoleStep } from './coordinator-step'
-import { chooseVerifierRole } from './lens/verifier'
-import type { CoordinatorCallbacks, CoordinatorRunInput, RouteDecision } from './coordinator-types'
+import * as convService from '../conversation.service'
+import * as memoryService from '../memory/service'
+import * as gateOutcomeRepo from '../../repos/gate-outcome.repo'
+import { backgroundVerifyQueue, GATE_C_MAX_ROUNDS, type E2ERoundResult, type E2EVerdict } from '../../agent/background-verify-queue'
+import { COORDINATOR_E2E_PROMPT } from '../../agent/roles/prompts'
+import { describeSnapshot, snapshotWorkspace } from '../workspace/git-snapshot'
+import { runRoleStep } from './step'
+import { chooseVerifierRole } from '../lens/verifier'
+import type { CoordinatorCallbacks, CoordinatorRunInput, RouteDecision } from './types'
 
 // Submit this turn's e2e verification onto the background queue. Never awaited by the caller — the queue
 // owns the FAIL→retry loop (it imports nothing from the coordinator modules, so no import cycle).

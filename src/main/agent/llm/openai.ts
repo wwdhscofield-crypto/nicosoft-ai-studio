@@ -5,9 +5,9 @@
 // See docs/nicosoft-studio/16-openai-agent-loop.md.
 
 import { appendFileSync } from 'node:fs'
-import { DEFAULT_INSTRUCTIONS, iterSSE, openStream, openaiHeaders, parseJSON, stablePromptCacheKey, toLlmError, trimBase } from '../llm/_shared'
-import { streamIdleGuard, LLM_STREAM_IDLE_MS, LLM_STREAM_IDLE_MS_OPENAI_REASONING, streamEnvelopeGuard, LLM_EMPTY_ENVELOPE_MS } from './stream-timeout'
-import type { AgentLlmEvent, AgentLlmRequest } from './llm'
+import { DEFAULT_INSTRUCTIONS, iterSSE, openStream, openaiHeaders, parseJSON, stablePromptCacheKey, toLlmError, trimBase } from '../../llm/_shared'
+import { streamIdleGuard, LLM_STREAM_IDLE_MS, LLM_STREAM_IDLE_MS_OPENAI_REASONING, streamEnvelopeGuard, LLM_EMPTY_ENVELOPE_MS } from '../stream-timeout'
+import type { AgentLlmEvent, AgentLlmRequest } from './anthropic'
 import type {
   AgentMessage,
   AnyToolSchema,
@@ -18,8 +18,8 @@ import type {
   TextBlock,
   ToolResultBlock,
   ToolUseBlock,
-} from './types'
-import { isContentBlock } from './types'
+} from '../types'
+import { isContentBlock } from '../types'
 
 const PROVIDER = 'openai'
 

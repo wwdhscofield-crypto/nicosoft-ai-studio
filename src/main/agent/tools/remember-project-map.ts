@@ -9,7 +9,7 @@ import { z } from 'zod'
 import { buildTool } from '../tool'
 import type { AgentContext } from '../context'
 import type { ToolResultBlock } from '../types'
-import { remember, PROJECT_MAP_MAX_CHARS } from '../../services/project-map.service'
+import { remember, PROJECT_MAP_MAX_CHARS } from '../../services/memory/project-map'
 
 const schema = z.object({
   map: z

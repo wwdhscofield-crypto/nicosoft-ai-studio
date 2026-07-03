@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import { pickDirectory } from './dialogs'
-import * as pluginService from '../services/plugin.service'
+import * as pluginService from '../services/extensions/plugin'
 
 // IPC boundary for plugins (Extensions → Plugins). install throws on a bad manifest / failed
 // registration (after rolling back); the renderer surfaces the message.

@@ -28,8 +28,8 @@ import { distillSkillTool } from '../agent/tools/distill-skill'
 import type { Tool } from '../agent/tool'
 import { AGENT_ROLE_IDS } from '@shared/roles'
 import * as settingsService from './settings.service'
-import { manager as mcpManager } from './mcp.service'
-import { manager as skillManager } from './skill.service'
+import { manager as mcpManager } from './extensions/mcp'
+import { manager as skillManager } from './extensions/skill'
 
 export const ENGINEER_ROLE_ID = 'engineer'
 // Full-stack dev roles: Flynn (backend) + Shuri (frontend). Both get the complete tool set, a

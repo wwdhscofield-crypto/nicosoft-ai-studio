@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import * as workspaceTasks from '../services/workspace-tasks.service'
+import * as workspaceTasks from '../services/workspace/tasks'
 
 // IPC boundary for the workspace Tasks panel history (design §5). Read is SQLite-only (never re-derived
 // from the transcript); clear hides rows (durable). Live tasks stay on the existing conv:todos push.

@@ -1,6 +1,6 @@
 import type { ModelInfo, Protocol } from '../domain'
 import type { ThinkingParam } from '../../shared/thinking'
-import type { AgentLlmEvent } from '../agent/llm'
+import type { AgentLlmEvent } from '../agent/llm/anthropic'
 
 // Manual /compact result (agent:compact) — the renderer maps it to a receipt block / skip toast.
 export type { CompactOutcome, CompactSkipReason } from '../services/compression.service'

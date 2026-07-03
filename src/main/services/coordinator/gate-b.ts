@@ -3,23 +3,23 @@
 // loop); a FAIL routes the verdict + evidence to the expert who OWNS the failing domain, who fixes the
 // real defect or proves a false positive. Automatic re-work loops are Gate C's (e2e) job.
 
-import * as memoryService from './memory.service'
-import * as settingsService from './settings.service'
-import * as gateOutcomeRepo from '../repos/gate-outcome.repo'
-import { displayName } from '../agent/roles/prompts'
-import { deriveAcceptanceCriteria } from './coordinator-route'
-import { gitHead, changedPathsSince } from './lens/diff'
-import type { WrittenFile } from '../agent/context'
-import { describeSnapshot, snapshotWorkspace } from './git-snapshot'
-import { emitCoordinatorIntro, runRoleStep, type RunStepOptions } from './coordinator-step'
-import { ulid } from '../db/id'
+import * as memoryService from '../memory/service'
+import * as settingsService from '../settings.service'
+import * as gateOutcomeRepo from '../../repos/gate-outcome.repo'
+import { displayName } from '../../agent/roles/prompts'
+import { deriveAcceptanceCriteria } from './route'
+import { gitHead, changedPathsSince } from '../lens/diff'
+import type { WrittenFile } from '../../agent/context'
+import { describeSnapshot, snapshotWorkspace } from '../workspace/git-snapshot'
+import { emitCoordinatorIntro, runRoleStep, type RunStepOptions } from './step'
+import { ulid } from '../../db/id'
 // Studio Lens (§3): the multi-lens fan-out is now the YAML engine — Gate-B drives it via runLensReview and
 // consumes the raw folded SubjectFinding[]. The SHARED single FLOOR verifier body stays in examine/verifier —
 // the floor (runGatedRoleStep + closeFloor + the subject integrator re-verify) calls the SAME runVerifierStep.
-import { runLensReview, lensEnabled } from './lens/agent-lens'
-import { panelCardId, subjectCardId } from './lens/contracts'
-import { subjectEvidence, type SubjectFinding } from './lens/types'
-import { runVerifierStep, chooseVerifierRole } from './lens/verifier'
+import { runLensReview, lensEnabled } from '../lens/agent-lens'
+import { panelCardId, subjectCardId } from '../lens/contracts'
+import { subjectEvidence, type SubjectFinding } from '../lens/types'
+import { runVerifierStep, chooseVerifierRole } from '../lens/verifier'
 
 // How the gated step ended. 'pass' = verifier approved the implementer's change directly. 'fixed' =
 // verifier FAILed, the fail handler claimed a fix AND a re-verification confirmed it. 'false-positive' =

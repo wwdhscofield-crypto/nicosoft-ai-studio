@@ -1,5 +1,5 @@
 import type { AgentContext } from '../context'
-import { getWorktreeSettings } from '../../services/worktree.service'
+import { getWorktreeSettings } from '../../services/workspace/worktree'
 
 const BG_ISOLATION_MESSAGE = "Background sub-agents may not write to the main checkout. Re-spawn with isolation:'worktree' or call EnterWorktree before using write tools."
 

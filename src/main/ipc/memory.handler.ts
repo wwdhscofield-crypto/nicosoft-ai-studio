@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import * as memoryService from '../services/memory.service'
+import * as memoryService from '../services/memory/service'
 import type { MemoryAddInput, MemoryUpdateInput, MemoryOnTurnInput } from './contracts'
 
 // IPC boundary for memory: list/add/update/remove for the Memory UI, plus onTurn — the post-turn /

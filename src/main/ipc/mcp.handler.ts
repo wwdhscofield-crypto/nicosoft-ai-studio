@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import * as mcpService from '../services/mcp.service'
+import * as mcpService from '../services/extensions/mcp'
 import type { McpServerInput } from './contracts'
 
 // IPC boundary for MCP servers (Extensions → MCP). Parse args, call the service, return — no logic here.

@@ -5,20 +5,20 @@
 // calls surface as ordinary tool cards (onToolEvent); the richer orchestration-tree event stream (onEvent)
 // is wired to the UI in phase 5. A Gemini-backed expert is skipped (the agent loop is Anthropic/OpenAI only).
 
-import * as endpointRepo from '../repos/endpoint.repo'
-import * as keychain from '../keychain/keychain'
-import * as rolesService from './roles.service'
-import * as agentService from './agent-collab'
-import * as convService from './conversation.service'
-import * as collabProject from './collab-project.service'
-import { forwardLlmEvent } from './agent-dispatch'
-import { resolveDepth } from '../llm/thinking'
+import * as endpointRepo from '../../repos/endpoint.repo'
+import * as keychain from '../../keychain/keychain'
+import * as rolesService from '../roles.service'
+import * as agentService from '../agent-collab'
+import * as convService from '../conversation.service'
+import * as collabProject from '../collab-project.service'
+import { forwardLlmEvent } from '../agent-dispatch'
+import { resolveDepth } from '../../llm/thinking'
 import { protocolFamily } from '@shared/thinking'
-import { isContentBlock } from '../agent/types'
-import { LlmError } from '../llm/types'
-import { coordinatorApproval } from './coordinator-approvals'
-import type { CoordinatorCallbacks, CoordinatorRunInput } from './coordinator-types'
-import type { AgentResult } from '../agent/loop'
+import { isContentBlock } from '../../agent/types'
+import { LlmError } from '../../llm/types'
+import { coordinatorApproval } from './approvals'
+import type { CoordinatorCallbacks, CoordinatorRunInput } from './types'
+import type { AgentResult } from '../../agent/loop'
 
 export async function runCollaboration(
   input: CoordinatorRunInput,

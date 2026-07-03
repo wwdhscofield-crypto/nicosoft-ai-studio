@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import { pickDirectory } from './dialogs'
-import * as skillService from '../services/skill.service'
+import * as skillService from '../services/extensions/skill'
 import type { SkillInput } from './contracts'
 
 // IPC boundary for skills (Extensions → Skills). Parse args, call the service, return — no logic here.

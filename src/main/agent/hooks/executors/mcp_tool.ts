@@ -4,7 +4,7 @@
 // (e.g. ${tool_input.command} pulls the bash command being run). The MCP result text is parsed exactly like a
 // command hook's stdout, so an MCP tool can return a structured decision.
 
-import { manager as mcpManager } from '../../../services/mcp.service'
+import { manager as mcpManager } from '../../../services/extensions/mcp'
 import type { McpToolHookConfig, HookExecContext, HookOutcome } from '../types'
 import type { HookPayload } from '../events'
 import { parseHookResult } from '../parse'

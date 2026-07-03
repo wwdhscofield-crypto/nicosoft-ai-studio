@@ -1,13 +1,13 @@
-import * as pluginRepo from '../repos/plugin.repo'
-import * as skillService from './skill.service'
-import * as mcpService from './mcp.service'
-import * as rolesService from './roles.service'
-import { parsePlugin } from '../plugins/manifest'
-import { flattenHookGroups } from '../agent/hooks/config'
-import { hookRegistry, type MatchedHook } from '../agent/hooks/registry'
-import type { PluginRow } from '../repos/plugin.repo'
-import type { HookEventName } from '../agent/hooks/events'
-import type { McpServerInput, PluginBundleDto, PluginDto } from '../ipc/contracts'
+import * as pluginRepo from '../../repos/plugin.repo'
+import * as skillService from './skill'
+import * as mcpService from './mcp'
+import * as rolesService from '../roles.service'
+import { parsePlugin } from '../../plugins/manifest'
+import { flattenHookGroups } from '../../agent/hooks/config'
+import { hookRegistry, type MatchedHook } from '../../agent/hooks/registry'
+import type { PluginRow } from '../../repos/plugin.repo'
+import type { HookEventName } from '../../agent/hooks/events'
+import type { McpServerInput, PluginBundleDto, PluginDto } from '../../ipc/contracts'
 
 // A plugin is an aggregate installer: it owns no capability of its own, it registers a plugin's
 // declared skills / MCP servers / custom roles through the already-verified skill/mcp/role services,

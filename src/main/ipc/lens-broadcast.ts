@@ -14,7 +14,7 @@
 // untouched. roleId = the calling run's roleId (agent-dispatch passes loop.roleId): the renderer anchors the
 // lens card to that role's segment with the SAME roleId anchoring every other stream event uses.
 import { BrowserWindow } from 'electron'
-import type { AgentLlmEvent } from '../agent/llm'
+import type { AgentLlmEvent } from '../agent/llm/anthropic'
 import type { ConvLens } from './contracts'
 
 export function broadcastConvLens(convId: string, roleId: string, event: AgentLlmEvent): void {

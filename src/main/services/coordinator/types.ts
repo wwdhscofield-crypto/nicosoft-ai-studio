@@ -1,10 +1,10 @@
 // Coordinator domain contracts shared by the orchestrator (coordinator.service) and its section modules
 // (route / step / gate-b / gate-c / approvals / collab). Types only — no logic, no state.
 
-import type { AgentEvent } from '../agent/loop'
-import type { AgentLlmEvent } from '../agent/llm'
-import type { PermissionRequest, PermissionDecision, PermissionMode } from '../agent/context'
-import type { MessageAttachmentDto, VerifyProgressEvent, VerifyToolEvent, VerifyDoneEvent } from '../ipc/contracts'
+import type { AgentEvent } from '../../agent/loop'
+import type { AgentLlmEvent } from '../../agent/llm/anthropic'
+import type { PermissionRequest, PermissionDecision, PermissionMode } from '../../agent/context'
+import type { MessageAttachmentDto, VerifyProgressEvent, VerifyToolEvent, VerifyDoneEvent } from '../../ipc/contracts'
 
 interface RouteBase {
   reason: string

@@ -7,7 +7,7 @@ import type {
   PreviewExternalOpenInput,
   PreviewOpenRequest,
 } from './contracts'
-import { attachPreview, detachPreview, openPreview, previewStatus, setPreviewDevTools } from '../services/active-preview'
+import { attachPreview, detachPreview, openPreview, previewStatus, setPreviewDevTools } from '../services/workspace/preview'
 import { getPlaywrightAvailability } from '../agent/tools/playwright-resolver'
 
 export function registerPreviewHandlers(): void {

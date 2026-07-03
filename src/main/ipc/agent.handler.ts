@@ -9,7 +9,7 @@ import { serializeAssistantBlocks, serializeToolResults } from './agent-serializ
 import * as agentService from '../services/agent.service'
 import { forwardLlmEvent, type RunStreamSink } from '../services/agent-dispatch'
 import * as compressionService from '../services/compression.service'
-import * as workspaceTasks from '../services/workspace-tasks.service'
+import * as workspaceTasks from '../services/workspace/tasks'
 import { sessionBus } from '../agent/session-bus'
 import { drainSoloResume } from '../services/solo-async'
 import { ENGINEER_ROLE_ID } from '../services/agent-tools'

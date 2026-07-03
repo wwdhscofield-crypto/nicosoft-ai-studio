@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import * as filesService from '../services/workspace-files.service'
+import * as filesService from '../services/workspace/files'
 
 // IPC boundary for the workspace Files panel. Every channel takes (cwd, relPath): cwd is the root the
 // renderer resolved for the active expert (cwdByExpert[role]); the service confines relPath under it via

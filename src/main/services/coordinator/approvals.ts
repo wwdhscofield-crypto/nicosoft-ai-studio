@@ -6,16 +6,16 @@
 // still applies before re-running), not on every tool call — keeping unattended runs fast. 4b: yellow logs
 // a chat note; red posts an alert.
 
-import { classifyApproval } from '../agent/approval'
-import * as pendingRepo from '../repos/pending-approval.repo'
-import * as endpointRepo from '../repos/endpoint.repo'
-import * as keychain from '../keychain/keychain'
-import * as rolesService from './roles.service'
-import { chatOnce } from './llm-once'
-import { resolveDepth } from '../llm/thinking'
-import type { PermissionRequest, PermissionDecision } from '../agent/context'
-import { COORDINATOR_PLAN_REVIEW_PROMPT } from '../agent/roles/prompts'
-import type { CoordinatorCallbacks } from './coordinator-types'
+import { classifyApproval } from '../../agent/approval'
+import * as pendingRepo from '../../repos/pending-approval.repo'
+import * as endpointRepo from '../../repos/endpoint.repo'
+import * as keychain from '../../keychain/keychain'
+import * as rolesService from '../roles.service'
+import { chatOnce } from '../llm-once'
+import { resolveDepth } from '../../llm/thinking'
+import type { PermissionRequest, PermissionDecision } from '../../agent/context'
+import { COORDINATOR_PLAN_REVIEW_PROMPT } from '../../agent/roles/prompts'
+import type { CoordinatorCallbacks } from './types'
 
 export async function coordinatorApproval(convId: string, roleId: string, cwd: string, req: PermissionRequest, cb: CoordinatorCallbacks, taskPrompt = ''): Promise<PermissionDecision> {
   if (req.toolName === 'ExitPlanMode') {

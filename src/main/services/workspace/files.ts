@@ -10,8 +10,8 @@ import { shell, type WebContents } from 'electron'
 import { readdir, stat, readFile } from 'node:fs/promises'
 import { watch, type FSWatcher } from 'node:fs'
 import { basename, extname } from 'node:path'
-import { confineReal } from '../agent/confine'
-import type { FsListDirResult, FsReadForViewResult, FsEntryDto } from '../ipc/contracts'
+import { confineReal } from '../../agent/confine'
+import type { FsListDirResult, FsReadForViewResult, FsEntryDto } from '../../ipc/contracts'
 
 const MAX_VIEW_BYTES = 1024 * 1024 // 1 MB text cap for the viewer (design §3 P18; distinct from agent Read's 256 KB)
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024 // don't base64 a huge image into the renderer

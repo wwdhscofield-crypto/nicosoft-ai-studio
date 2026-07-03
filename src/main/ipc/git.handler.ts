@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import * as gitService from '../services/git.service'
+import * as gitService from '../services/workspace/git'
 
 // IPC boundary for the composer git chip + the Workspace Diff panel (docs/workspace-git-diff-design.md §4).
 // READS ONLY — both channels land on git.service's TTL memos (info/dirty 5 s, stats/diff 30 s), so the

@@ -16,23 +16,23 @@
 // step's expert_id and (for pipeline turns) the full dispatch chain. The renderer groups consecutive
 // messages sharing the same dispatch chain under one badge.
 
-import * as convRepo from '../repos/conversation.repo'
-import * as memoryService from './memory.service'
-import * as rolesService from './roles.service'
-import * as collabProject from './collab-project.service'
-import * as compressionService from './compression.service'
-import { chatOnce, endpointWithKey } from './llm-once'
-import { resolveDepth } from '../llm/thinking'
-import { LlmError, type ChatMessage } from '../llm/types'
-import { COORDINATOR_FACILITATOR_PROMPT, DISPATCHABLE_ROLE_IDS, displayName, roleIdFromName } from '../agent/roles/prompts'
-import { detectE2EIntent, disabledRoleIds, route, routeNeedsPlan } from './coordinator-route'
-import { emitCoordinatorIntro, runRoleStep, type RunStepOptions } from './coordinator-step'
-import { resetPipelineTodos } from './pipeline-todos'
-import { runGatedRoleStep, runGateBFailFollowUp } from './coordinator-gate-b'
-import { chooseVerifierRole, runVerifierStep } from './lens/verifier'
-import { AGENT_ROLE_IDS } from './agent-dispatch'
-import { submitGateC } from './coordinator-gate-c'
-import { runCollaboration } from './coordinator-collab'
+import * as convRepo from '../../repos/conversation.repo'
+import * as memoryService from '../memory/service'
+import * as rolesService from '../roles.service'
+import * as collabProject from '../collab-project.service'
+import * as compressionService from '../compression.service'
+import { chatOnce, endpointWithKey } from '../llm-once'
+import { resolveDepth } from '../../llm/thinking'
+import { LlmError, type ChatMessage } from '../../llm/types'
+import { COORDINATOR_FACILITATOR_PROMPT, DISPATCHABLE_ROLE_IDS, displayName, roleIdFromName } from '../../agent/roles/prompts'
+import { detectE2EIntent, disabledRoleIds, route, routeNeedsPlan } from './route'
+import { emitCoordinatorIntro, runRoleStep, type RunStepOptions } from './step'
+import { resetPipelineTodos } from '../pipeline-todos'
+import { runGatedRoleStep, runGateBFailFollowUp } from './gate-b'
+import { chooseVerifierRole, runVerifierStep } from '../lens/verifier'
+import { AGENT_ROLE_IDS } from '../agent-dispatch'
+import { submitGateC } from './gate-c'
+import { runCollaboration } from './collab'
 import {
   buildCouncilSynthesisInput,
   buildCritiquePrompt,
@@ -41,13 +41,13 @@ import {
   buildPanelPrompt,
   buildParallelSynthesisInput,
   buildSynthesisInput
-} from './coordinator-prompts'
-import type { CoordinatorCallbacks, CoordinatorRunInput } from './coordinator-types'
-import type { AgentResult } from '../agent/loop'
+} from './prompts'
+import type { CoordinatorCallbacks, CoordinatorRunInput } from './types'
+import type { AgentResult } from '../../agent/loop'
 
 // Re-exported for the IPC boundary + any future consumer — the contracts live in coordinator-types.
-export type { CoordinatorCallbacks, CoordinatorRunInput, RouteDecision } from './coordinator-types'
-export { route, parseRouteDecision } from './coordinator-route'
+export type { CoordinatorCallbacks, CoordinatorRunInput, RouteDecision } from './types'
+export { route, parseRouteDecision } from './route'
 
 // Gate evidence is a SUB-RUN's first-person report (the verifier narrating its own git/build checks). When a
 // coordinator beat quotes it, it must read as an ATTRIBUTED quote — a blockquote — never as Danny's own prose:

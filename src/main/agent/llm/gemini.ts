@@ -18,10 +18,10 @@ import {
   parseJSON,
   sanitizeGeminiSchema,
   toLlmError,
-} from '../llm/_shared'
-import { streamIdleGuard, LLM_STREAM_IDLE_MS, streamEnvelopeGuard, LLM_EMPTY_ENVELOPE_MS } from './stream-timeout'
-import { ulid } from '../db/id'
-import type { AgentLlmEvent, AgentLlmRequest } from './llm'
+} from '../../llm/_shared'
+import { streamIdleGuard, LLM_STREAM_IDLE_MS, streamEnvelopeGuard, LLM_EMPTY_ENVELOPE_MS } from '../stream-timeout'
+import { ulid } from '../../db/id'
+import type { AgentLlmEvent, AgentLlmRequest } from './anthropic'
 import type {
   AgentMessage,
   AnyToolSchema,
@@ -32,8 +32,8 @@ import type {
   ToolResultBlock,
   ToolSchema,
   ToolUseBlock,
-} from './types'
-import { isContentBlock } from './types'
+} from '../types'
+import { isContentBlock } from '../types'
 
 const PROVIDER = 'gemini'
 

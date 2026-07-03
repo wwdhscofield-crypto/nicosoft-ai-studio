@@ -3,7 +3,7 @@
 // SAME AgentSpec / AgentOut / LensDeps types and the SAME panel/subject card ids survive the rewrite — the UI
 // renderer + reload key on these card ids, so they must stay byte-identical to the engine's (and panel.ts's).
 
-import type { CoordinatorCallbacks } from '../coordinator-types'
+import type { CoordinatorCallbacks } from '../coordinator/types'
 import type { WrittenFile } from '../../agent/context'
 
 // --- injected dependencies (the testability seam) ----------------------------------------------------------

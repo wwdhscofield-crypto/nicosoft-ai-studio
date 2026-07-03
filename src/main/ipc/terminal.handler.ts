@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import * as terminal from '../services/terminal.service'
+import * as terminal from '../services/workspace/terminal'
 import type { TerminalCreateInput } from './contracts'
 
 // IPC boundary for the workspace Terminal panel (design §4). create binds the pty to the calling

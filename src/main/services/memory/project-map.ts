@@ -13,8 +13,8 @@
 import { createHash } from 'node:crypto'
 import { readdir, realpath } from 'node:fs/promises'
 import { basename, dirname } from 'node:path'
-import { gitCommonDir, gitDir } from './git.service'
-import * as repo from '../repos/project-map.repo'
+import { gitCommonDir, gitDir } from '../workspace/git'
+import * as repo from '../../repos/project-map.repo'
 
 // Top-level directories that are build output / tooling caches / VCS internals, not part of the project's
 // SHAPE — excluded from the fingerprint so a fresh `node_modules` or `dist` never reads as a structure change.

@@ -9,14 +9,14 @@ import { readFile } from 'node:fs/promises'
 import { dataDir } from '../db/connection'
 import { join, resolve, sep } from 'node:path'
 import { ulid } from '../db/id'
-import * as coordinatorService from '../services/coordinator.service'
+import * as coordinatorService from '../services/coordinator/service'
 import { LlmError } from '../llm/types'
 import { broadcastConvImage, broadcastConvTodos, broadcastUsage } from './usage-broadcast'
 import { StreamRegistry } from './stream-lifecycle'
 import { CoalescerGroup } from './stream-coalesce'
 import { PermissionBridge } from './permission-bridge'
 import { serializeAssistantBlocks, serializeToolResults } from './agent-serialize'
-import * as workspaceTasks from '../services/workspace-tasks.service'
+import * as workspaceTasks from '../services/workspace/tasks'
 import type {
   CoordinatorRunInputDto,
   CoordinatorDispatchEvent,

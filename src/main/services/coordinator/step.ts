@@ -4,38 +4,38 @@
 // Both paths persist the step (tagged with the dispatch chain), record usage, and bridge their streams to the
 // per-role coordinator callbacks.
 
-import { ulid } from '../db/id'
-import * as endpointRepo from '../repos/endpoint.repo'
-import * as convRepo from '../repos/conversation.repo'
-import * as summaryRepo from '../repos/summary.repo'
-import * as usageRepo from '../repos/usage.repo'
-import * as keychain from '../keychain/keychain'
-import * as memoryService from './memory.service'
-import * as convService from './conversation.service'
-import * as rolesService from './roles.service'
-import * as agentService from './agent-dispatch'
-import { chat as llmChat } from '../llm/client'
-import { resolveDepth } from '../llm/thinking'
+import { ulid } from '../../db/id'
+import * as endpointRepo from '../../repos/endpoint.repo'
+import * as convRepo from '../../repos/conversation.repo'
+import * as summaryRepo from '../../repos/summary.repo'
+import * as usageRepo from '../../repos/usage.repo'
+import * as keychain from '../../keychain/keychain'
+import * as memoryService from '../memory/service'
+import * as convService from '../conversation.service'
+import * as rolesService from '../roles.service'
+import * as agentService from '../agent-dispatch'
+import { chat as llmChat } from '../../llm/client'
+import { resolveDepth } from '../../llm/thinking'
 import { protocolFamily } from '@shared/thinking'
-import { countContext } from './token-count.service'
-import { pickSmallModel } from './model-select'
-import { LlmError, type ChatAttachment, type ChatMessage } from '../llm/types'
-import { resolveImageForLlm, MAX_REPLAY_IMAGES } from '../media/storage'
-import type { AgentContext, PermissionMode, WrittenFile } from '../agent/context'
-import type { Tool } from '../agent/tool'
-import type { AgentResult } from '../agent/loop'
-import type { MemoryRow } from '../repos/memory.repo'
+import { countContext } from '../token-count.service'
+import { pickSmallModel } from '../model-select'
+import { LlmError, type ChatAttachment, type ChatMessage } from '../../llm/types'
+import { resolveImageForLlm, MAX_REPLAY_IMAGES } from '../../media/storage'
+import type { AgentContext, PermissionMode, WrittenFile } from '../../agent/context'
+import type { Tool } from '../../agent/tool'
+import type { AgentResult } from '../../agent/loop'
+import type { MemoryRow } from '../../repos/memory.repo'
 import {
   COORDINATOR_COUNCIL_SYNTHESIS_PROMPT,
   COORDINATOR_DIRECT_PROMPT,
   COORDINATOR_PARALLEL_SYNTHESIS_PROMPT,
   COORDINATOR_SYNTHESIS_PROMPT,
   buildRolePrompt
-} from '../agent/roles/prompts'
-import { coordinatorApproval } from './coordinator-approvals'
-import type { CoordinatorCallbacks } from './coordinator-types'
-import { getPipelineTodos, setPipelineTodos } from './pipeline-todos'
-import { indexText as agentMemoryIndexText } from './agent-memory.service'
+} from '../../agent/roles/prompts'
+import { coordinatorApproval } from './approvals'
+import type { CoordinatorCallbacks } from './types'
+import { getPipelineTodos, setPipelineTodos } from '../pipeline-todos'
+import { indexText as agentMemoryIndexText } from '../memory/agent-memory'
 
 // #6 Workflow parity (cc 2.1.186 `GKa=5`): the P4 stall-watchdog abort is RETRYABLE — Workflow re-runs a stalled
 // agent up to 5× before giving up. runRoleStep surfaces a stall (the watchdog fired, NOT a real user/run abort) as

@@ -10,7 +10,7 @@ import { z } from 'zod'
 import { buildTool } from '../tool'
 import type { AgentContext } from '../context'
 import type { ToolResultBlock } from '../types'
-import * as agentMemory from '../../services/agent-memory.service'
+import * as agentMemory from '../../services/memory/agent-memory'
 
 const NO_FOLDER = 'unavailable here (no project folder open — memories are keyed by project).'
 

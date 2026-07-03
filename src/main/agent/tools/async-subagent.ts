@@ -8,7 +8,7 @@
 import { z } from 'zod'
 import { buildTool } from '../tool'
 import type { ToolResultBlock } from '../types'
-import { getWorktreeSettings } from '../../services/worktree.service'
+import { getWorktreeSettings } from '../../services/workspace/worktree'
 import { withJsonDirective, jsonRetryDirective, parseJsonReply, asStructuredResult } from './subagent-output'
 
 const idSchema = z.strictObject({

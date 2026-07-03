@@ -1,13 +1,13 @@
-import * as mcpRepo from '../repos/mcp.repo'
-import * as keychain from '../keychain/keychain'
-import { McpManager } from '../mcp/manager'
-import type { McpServerConfig } from '../mcp/types'
-import type { McpServerRow } from '../repos/mcp.repo'
+import * as mcpRepo from '../../repos/mcp.repo'
+import * as keychain from '../../keychain/keychain'
+import { McpManager } from '../../mcp/manager'
+import type { McpServerConfig } from '../../mcp/types'
+import type { McpServerRow } from '../../repos/mcp.repo'
 import type {
   McpServerDto,
   McpServerInput,
   McpTestResult
-} from '../ipc/contracts'
+} from '../../ipc/contracts'
 
 // One MCP manager for the whole app — agent.service injects manager.toolsForRole(roleId).
 export const manager = new McpManager()

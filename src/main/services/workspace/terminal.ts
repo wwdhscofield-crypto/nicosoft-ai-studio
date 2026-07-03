@@ -13,7 +13,7 @@ import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
 import type { WebContents } from 'electron'
 import type { IPty } from 'node-pty'
-import { ulid } from '../db/id'
+import { ulid } from '../../db/id'
 
 const FRAME_MS = 16 // coalesce pty output into one IPC message per frame
 const HIGH_WATER = 2 * 1024 * 1024 // pause the pty if a single frame buffers more than this

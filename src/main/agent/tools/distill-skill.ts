@@ -11,7 +11,7 @@ import { z } from 'zod'
 import { buildTool } from '../tool'
 import type { AgentContext } from '../context'
 import type { ToolResultBlock } from '../types'
-import * as skillService from '../../services/skill.service'
+import * as skillService from '../../services/extensions/skill'
 
 function textResult(toolUseId: string, text: string, isError = false): ToolResultBlock {
   return { type: 'tool_result', tool_use_id: toolUseId, content: text, is_error: isError }

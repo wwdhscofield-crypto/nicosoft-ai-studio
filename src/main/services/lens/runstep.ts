@@ -3,7 +3,7 @@
 // UNIT-TESTABLE without dragging step.ts's heavy runtime imports (coordinator-step → agent-dispatch → Electron).
 // Type-only imports erase at runtime, so this module pulls in NOTHING heavy — the test imports it directly.
 
-import type { RunStepOptions } from '../coordinator-step'
+import type { RunStepOptions } from '../coordinator/step'
 import type { AgentSpec } from './contracts'
 
 // Build the runRoleStep options for ONE lens sub-agent (finder / skeptic / reader) from the base run options +

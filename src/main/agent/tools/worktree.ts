@@ -4,8 +4,8 @@ import { z } from 'zod'
 import type { ActiveWorktreeSession } from '../context'
 import { buildTool } from '../tool'
 import type { ToolResultBlock } from '../types'
-import * as git from '../../services/git.service'
-import { createAgentWorktree, removeAgentWorktree, type ManagedWorktree } from '../../services/worktree.service'
+import * as git from '../../services/workspace/git'
+import { createAgentWorktree, removeAgentWorktree, type ManagedWorktree } from '../../services/workspace/worktree'
 import { semanticBoolean } from './semantic'
 
 const enterSchema = z

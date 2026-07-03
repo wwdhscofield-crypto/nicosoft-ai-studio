@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron'
 import { pickDirectory } from './dialogs'
 import * as projectService from '../services/project.service'
-import * as gitService from '../services/git.service'
+import * as gitService from '../services/workspace/git'
 import type { ProjectCreateInput, ProjectPhase, ProjectTaskInput, ProjectTaskStatus, ProjectTestStatus } from './contracts'
 
 // Project picker + git branch list / switch for Engineer's path selector (a chip row), plus

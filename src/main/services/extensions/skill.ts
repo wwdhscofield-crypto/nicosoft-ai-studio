@@ -1,11 +1,11 @@
-import * as skillRepo from '../repos/skill.repo'
-import { SkillManager } from '../skills/manager'
-import { loadSkillDir } from '../skills/loader'
-import * as settingsService from './settings.service'
-import { normalizeMemoryName as normalizeSlug } from './agent-memory.service'
-import type { SkillRow, SkillUpdatePatch } from '../repos/skill.repo'
-import type { SkillDto, SkillInput } from '../ipc/contracts'
-import type { LoadedSkill } from '../skills/types'
+import * as skillRepo from '../../repos/skill.repo'
+import { SkillManager } from '../../skills/manager'
+import { loadSkillDir } from '../../skills/loader'
+import * as settingsService from '../settings.service'
+import { normalizeMemoryName as normalizeSlug } from '../memory/agent-memory'
+import type { SkillRow, SkillUpdatePatch } from '../../repos/skill.repo'
+import type { SkillDto, SkillInput } from '../../ipc/contracts'
+import type { LoadedSkill } from '../../skills/types'
 
 // One SkillManager for the whole app — agent.service injects manager.skillTool(roleId) +
 // manager.listingForRole(roleId). Imported skills re-read SKILL.md at call time; builtin skills carry

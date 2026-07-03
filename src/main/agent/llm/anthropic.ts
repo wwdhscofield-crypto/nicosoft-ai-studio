@@ -4,13 +4,13 @@
 // Reuses the shared SSE plumbing. See docs/nicosoft-studio/12-hex-coding-agent.md §2.4.
 
 import { appendFileSync } from 'node:fs'
-import { iterSSE, openStream, parseJSON, toLlmError, trimBase } from '../llm/_shared'
-import { anthropicHeaders, anthropicThinkingDirective, applyAnthropicCacheControls } from '../llm/anthropic-wire'
-import { streamIdleGuard, LLM_STREAM_IDLE_MS, streamEnvelopeGuard, LLM_EMPTY_ENVELOPE_MS } from './stream-timeout'
-import { callWithToolsOpenAI } from './llm-openai'
-import { callWithToolsGemini } from './llm-gemini'
-import { acquireLlmSlot } from './llm-gate'
-import type { ThinkingParam } from '../llm/types'
+import { iterSSE, openStream, parseJSON, toLlmError, trimBase } from '../../llm/_shared'
+import { anthropicHeaders, anthropicThinkingDirective, applyAnthropicCacheControls } from '../../llm/anthropic-wire'
+import { streamIdleGuard, LLM_STREAM_IDLE_MS, streamEnvelopeGuard, LLM_EMPTY_ENVELOPE_MS } from '../stream-timeout'
+import { callWithToolsOpenAI } from './openai'
+import { callWithToolsGemini } from './gemini'
+import { acquireLlmSlot } from './gate'
+import type { ThinkingParam } from '../../llm/types'
 import type {
   AgentMessage,
   AnyToolSchema,
@@ -19,7 +19,7 @@ import type {
   StopReason,
   TextBlock,
   ToolUseBlock,
-} from './types'
+} from '../types'
 
 const PROVIDER = 'anthropic'
 

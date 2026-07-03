@@ -27,7 +27,7 @@ import { readFile } from 'node:fs/promises'
 import { ulid } from '../db/id'
 import { confineReal } from '../agent/confine'
 import { sessionBus } from '../agent/session-bus'
-import { currentPreviewWebContents } from './active-preview'
+import { currentPreviewWebContents } from './workspace/preview'
 import { safeFetch } from './ssrf-guard'
 import type { MonitorInfoDto } from '../ipc/contracts'
 

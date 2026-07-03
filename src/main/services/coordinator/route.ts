@@ -8,25 +8,25 @@
 // Batch 2 lesson). No assistant prefill: Sonnet 4.6 / Opus 4.6+ dropped prefill support.
 
 import { z } from 'zod'
-import * as convRepo from '../repos/conversation.repo'
-import * as roleRepo from '../repos/role.repo'
-import * as endpointRepo from '../repos/endpoint.repo'
-import * as keychain from '../keychain/keychain'
-import * as rolesService from './roles.service'
-import * as agentService from './agent-dispatch'
-import { chatOnce } from './llm-once'
-import { resolveDepth } from '../llm/thinking'
-import type { ChatMessage } from '../llm/types'
-import { COORDINATOR_ROUTER_PROMPT, COORDINATOR_INVESTIGATION_PROMPT, DISPATCHABLE_ROLE_IDS, displayName, roleIdFromName } from '../agent/roles/prompts'
-import { COORDINATOR_INVESTIGATION_TOOLS } from './agent-tools'
-import { buildTool, type Tool } from '../agent/tool'
-import { runRoleStep } from './coordinator-step'
-import * as projectMap from './project-map.service'
-import { PROJECT_MAP_MAX_CHARS } from './project-map.service' // shared clamp — same bound as remember_project_map (§4.6)
-import { indexText as agentMemoryIndexText } from './agent-memory.service'
+import * as convRepo from '../../repos/conversation.repo'
+import * as roleRepo from '../../repos/role.repo'
+import * as endpointRepo from '../../repos/endpoint.repo'
+import * as keychain from '../../keychain/keychain'
+import * as rolesService from '../roles.service'
+import * as agentService from '../agent-dispatch'
+import { chatOnce } from '../llm-once'
+import { resolveDepth } from '../../llm/thinking'
+import type { ChatMessage } from '../../llm/types'
+import { COORDINATOR_ROUTER_PROMPT, COORDINATOR_INVESTIGATION_PROMPT, DISPATCHABLE_ROLE_IDS, displayName, roleIdFromName } from '../../agent/roles/prompts'
+import { COORDINATOR_INVESTIGATION_TOOLS } from '../agent-tools'
+import { buildTool, type Tool } from '../../agent/tool'
+import { runRoleStep } from './step'
+import * as projectMap from '../memory/project-map'
+import { PROJECT_MAP_MAX_CHARS } from '../memory/project-map' // shared clamp — same bound as remember_project_map (§4.6)
+import { indexText as agentMemoryIndexText } from '../memory/agent-memory'
 import { protocolFamily } from '@shared/thinking'
-import { CODE_FILE_RE } from './lang-registry'
-import type { RouteDecision, CoordinatorCallbacks } from './coordinator-types'
+import { CODE_FILE_RE } from '../lang-registry'
+import type { RouteDecision, CoordinatorCallbacks } from './types'
 
 const ROUTER_HISTORY_LIMIT = 4 // last N messages handed to the router for context
 

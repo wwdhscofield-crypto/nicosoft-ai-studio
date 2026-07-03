@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import type { GitFileDiff, GitWorkDiff, GitWorkStatus } from '../ipc/contracts'
+import type { GitFileDiff, GitWorkDiff, GitWorkStatus } from '../../ipc/contracts'
 
 const execFileAsync = promisify(execFile)
 

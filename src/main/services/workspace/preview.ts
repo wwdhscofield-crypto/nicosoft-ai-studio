@@ -1,5 +1,5 @@
 import { BrowserWindow, session, webContents as electronWebContents, type WebContents } from 'electron'
-import { ulid } from '../db/id'
+import { ulid } from '../../db/id'
 import { assertPreviewUrlAllowed } from './preview-url-guard'
 import type {
   PreviewAttachInput,
@@ -9,8 +9,8 @@ import type {
   PreviewOpenRequest,
   PreviewResultDto,
   PreviewStatusDto,
-} from '../ipc/contracts'
-import type { PreviewHandle } from '../agent/preview'
+} from '../../ipc/contracts'
+import type { PreviewHandle } from '../../agent/preview'
 
 export const PREVIEW_PARTITION = 'persist:preview'
 

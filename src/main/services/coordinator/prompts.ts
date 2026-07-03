@@ -2,7 +2,7 @@
 // functions over (question, prior outputs). The personas these pair with live in agent/roles/prompts.ts;
 // these build the per-turn USER message content.
 
-import { displayName } from '../agent/roles/prompts'
+import { displayName } from '../../agent/roles/prompts'
 
 // Pipeline step N+1 hand-off: the next role sees the user's original request + every prior step's
 // output + a one-line directive. Without this, the next role sees just the previous output and may

@@ -1,11 +1,11 @@
 import { cp, lstat, mkdir, readFile, readdir, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
-import type { AgentContext } from '../agent/context'
-import { baseHookPayload, hookContextFromAgent } from '../agent/hooks/adapter'
-import { runHooks } from '../agent/hooks/engine'
-import { hookRegistry } from '../agent/hooks/registry'
-import * as settingsService from './settings.service'
-import * as git from './git.service'
+import type { AgentContext } from '../../agent/context'
+import { baseHookPayload, hookContextFromAgent } from '../../agent/hooks/adapter'
+import { runHooks } from '../../agent/hooks/engine'
+import { hookRegistry } from '../../agent/hooks/registry'
+import * as settingsService from '../settings.service'
+import * as git from './git'
 
 export type WorktreeBaseRefSetting = 'fresh' | 'head' | string
 export type WorktreeBgIsolation = 'worktree' | 'none'

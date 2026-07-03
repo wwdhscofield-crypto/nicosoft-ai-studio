@@ -7,7 +7,7 @@
 import * as rolesService from '../roles.service'
 import * as agentService from '../agent-dispatch'
 import { COORDINATOR_VERIFIER_PROMPT, subjectExaminePrompt, reverifyPrompt } from '../../agent/roles/prompts'
-import { runRoleStep, type RunStepOptions } from '../coordinator-step'
+import { runRoleStep, type RunStepOptions } from '../coordinator/step'
 import { LENS_PANEL_ROOT, subjectCardId } from './contracts'
 
 // Delta-stall watchdog threshold for panel SUBJECTS (finders/skeptics): 3 min of zero stream activity = a frozen
