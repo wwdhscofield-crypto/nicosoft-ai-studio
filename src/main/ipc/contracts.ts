@@ -516,6 +516,14 @@ export interface CoordinatorStepDone {
   outputTokens?: number // real output tokens for this step — corrects the live ↓ estimate at step end
   sentTokens?: number // cumulative billing input (total SENT) for this step — billing/accounting only, never displayed (no settled per-turn readout)
 }
+// §7 W2 Danny → workflow: a launch-card row was just persisted in the conversation (same shape the
+// /workflow composer command writes: segmentKind='workflow-launch', content = versioned JSON payload) —
+// the renderer slots it into the live message list; reload rebuilds it from the row.
+export interface CoordinatorWorkflowLaunchCard {
+  streamId: string
+  messageId: string
+  payload: string
+}
 export interface CoordinatorDoneDto {
   streamId: string
   inputTokens?: number // tokens of the LAST step in the turn — drives the composer readout

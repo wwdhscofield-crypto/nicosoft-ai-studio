@@ -12,6 +12,7 @@ import { ulid } from '../db/id'
 import * as coordinatorService from '../services/coordinator/service'
 import { LlmError } from '../llm/types'
 import { broadcastConvImage, broadcastConvTodos, broadcastUsage } from './usage-broadcast'
+import { broadcastRunEvent } from './workflow.handler'
 import { StreamRegistry } from './stream-lifecycle'
 import { CoalescerGroup } from './stream-coalesce'
 import { PermissionBridge } from './permission-bridge'
@@ -100,6 +101,14 @@ export function registerCoordinatorHandlers(): void {
             const ev: CoordinatorStepDone = { streamId, roleId, text, inputTokens, outputTokens, sentTokens }
             lanes.flushAll()
             send('coordinator:step:done', ev)
+          },
+          // §7 W2 Danny → workflow: the launched run's live events mirror onto the SAME broadcast every
+          // other entry point uses (an open run panel follows it); the launch-card row rides this stream
+          // so the card appears in the live conversation exactly where it was persisted.
+          onWorkflowRunEvent: (ev) => broadcastRunEvent(ev),
+          onWorkflowLaunchCard: (messageId, payload) => {
+            lanes.flushAll() // the card lands between segments — text before it must be flushed first
+            send('coordinator:workflow:launch-card', { streamId, messageId, payload })
           },
           // The coordinator fires onUsage from up-front count_tokens (input only → current context, the "/
           // window" indicator) and from streaming live usage — both the tool-less llmChat path and a

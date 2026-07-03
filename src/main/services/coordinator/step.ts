@@ -76,6 +76,19 @@ export function emitCoordinatorIntro(convId: string, intro: string, cb: Coordina
   cb.onStepDone('coordinator', intro, 0)
 }
 
+// §7 W2 Danny → workflow: persist the SAME launch-card row the /workflow composer command leaves
+// (segmentKind='workflow-launch', content = the versioned JSON payload) and hand it to the renderer via
+// the dedicated callback so the card appears live; reload rebuilds it from the row like any card.
+export function emitWorkflowLaunchCard(
+  convId: string,
+  card: { workflowId: string; runId: string; name: string; params: Record<string, string | number | boolean> },
+  cb: CoordinatorCallbacks
+): void {
+  const payload = JSON.stringify({ v: 1, workflowId: card.workflowId, runId: card.runId, name: card.name, params: card.params })
+  const row = convService.append(convId, { author: 'expert', content: payload, segmentKind: 'workflow-launch' })
+  cb.onWorkflowLaunchCard?.(row.id, payload)
+}
+
 export interface RunStepOptions {
   convId: string
   roleId: string

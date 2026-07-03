@@ -14,13 +14,19 @@ import type { WorkflowRunEvent, WorkflowRunTrigger } from './contracts'
 // not a workflow file).
 const MAX_NSW_BYTES = 1_000_000
 
-function broadcastRunEvent(ev: WorkflowRunEvent): void {
+// Exported: the coordinator handler mirrors a Danny-launched run's events onto this same channel, so
+// every entry point's runs light up an open panel identically (IPC run / scheduled / Danny).
+export function broadcastRunEvent(ev: WorkflowRunEvent): void {
   for (const w of BrowserWindow.getAllWindows()) {
     if (!w.webContents.isDestroyed()) w.webContents.send('workflow:run:event', ev)
   }
 }
 
 export function registerWorkflowHandlers(): void {
+  // Startup sweep: rows a previous process left 'running' (crash / power loss) can never settle — close
+  // them as stopped so the list/panel/Tasks section never show a ghost run forever.
+  const orphans = workflowService.sweepOrphanRuns()
+  if (orphans > 0) console.warn(`[workflows] closed ${orphans} orphaned running run(s) from a previous session`)
   ipcMain.handle('workflows:list', () => workflowService.list())
   ipcMain.handle('workflows:get', (_e, id: string) => workflowService.get(id))
   ipcMain.handle('workflows:lint', (_e, script: string) => workflowService.lint(script))

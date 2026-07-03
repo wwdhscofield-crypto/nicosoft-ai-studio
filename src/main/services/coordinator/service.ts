@@ -26,7 +26,8 @@ import { resolveDepth } from '../../llm/thinking'
 import { LlmError, type ChatMessage } from '../../llm/types'
 import { COORDINATOR_FACILITATOR_PROMPT, DISPATCHABLE_ROLE_IDS, displayName, roleIdFromName } from '../../agent/roles/prompts'
 import { detectE2EIntent, disabledRoleIds, route, routeNeedsPlan } from './route'
-import { emitCoordinatorIntro, runRoleStep, type RunStepOptions } from './step'
+import { emitCoordinatorIntro, emitWorkflowLaunchCard, runRoleStep, type RunStepOptions } from './step'
+import * as workflowService from '../workflow/service'
 import { resetPipelineTodos } from '../pipeline-todos'
 import { runGatedRoleStep, runGateBFailFollowUp } from './gate-b'
 import { chooseVerifierRole, runVerifierStep } from '../lens/verifier'
@@ -178,6 +179,54 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
     noteReason(out.reason)
     fireSideEffects(input.convId, 'coordinator', out.endpointId, out.model, out.inputTokens)
     return { inputTokens: out.inputTokens, outputTokens: out.outputTokens, reason: runReason }
+  }
+
+  if (decision.mode === 'workflow') {
+    // §7 W2: the request matched a SAVED workflow — the deterministic pinned path replaces a free-form
+    // dispatch. The visible beats mirror the /workflow command: a hand-off line ("using workflow: …"),
+    // the launch card (live status, links to the run panel), and the run's return text closing the turn
+    // as Danny's reply. The run's tokens stay on ITS hidden conversation (the Runs history carries the
+    // bill) — this chat turn only accounts Danny's own routing. A workflow is a pinned path: Gate B
+    // never applies (needsPlan=false by construction).
+    const wf = decision.workflow
+    cb.onDispatch(['coordinator'], `using workflow: ${wf.name}`)
+    emitCoordinatorIntro(input.convId, decision.intro ?? `Using workflow: ${wf.name}.`, cb)
+    let launchedRunId: string | null = null
+    // Chat Stop also stops the launched run (the run panel's own Stop stays independent) — without this
+    // the turn would sit awaiting a run the user can no longer see the point of.
+    const onAbort = (): void => {
+      if (launchedRunId) void workflowService.stop(launchedRunId)
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    try {
+      const res = await workflowService.runAndWait(
+        wf.id,
+        wf.params,
+        'danny',
+        (ev) => cb.onWorkflowRunEvent?.(ev),
+        ({ runId }) => {
+          launchedRunId = runId
+          emitWorkflowLaunchCard(input.convId, { workflowId: wf.id, runId, name: wf.name, params: wf.params }, cb)
+        }
+      )
+      if (signal.aborted) throw new LlmError('network', 'aborted mid-workflow run')
+      const closing =
+        res.status === 'ok'
+          ? res.resultText.trim() || `Workflow ${wf.name} completed — open its run panel for the step-by-step record.`
+          : `Workflow ${wf.name} ${res.status}${res.failDetail ? ` — ${res.failDetail}` : ''}. The run panel has the full record.`
+      emitCoordinatorIntro(input.convId, closing, cb)
+      // No fireSideEffects: the chat side of a workflow turn is just the hand-off + card + closing line —
+      // nothing worth memory-extracting; the run's own record lives in its hidden conversation.
+      noteReason(res.status === 'ok' ? 'completed' : 'incomplete')
+      return { inputTokens: 0, outputTokens: 0, reason: runReason }
+    } catch (e) {
+      if (signal.aborted) throw e // a user abort must propagate — the handler ends the turn as aborted
+      // Preflight refusal (deleted/disabled since routing) or an infra fault — close the turn honestly.
+      emitCoordinatorIntro(input.convId, `Workflow ${wf.name} could not start — ${e instanceof Error ? e.message : String(e)}`, cb)
+      return { inputTokens: 0, outputTokens: 0, reason: 'incomplete' }
+    } finally {
+      signal.removeEventListener('abort', onAbort)
+    }
   }
 
   if (decision.mode === 'single') {

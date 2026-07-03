@@ -4,7 +4,7 @@
 import type { AgentEvent } from '../../agent/loop'
 import type { AgentLlmEvent } from '../../agent/llm/anthropic'
 import type { PermissionRequest, PermissionDecision, PermissionMode } from '../../agent/context'
-import type { MessageAttachmentDto, VerifyProgressEvent, VerifyToolEvent, VerifyDoneEvent } from '../../ipc/contracts'
+import type { MessageAttachmentDto, VerifyProgressEvent, VerifyToolEvent, VerifyDoneEvent, WorkflowRunEvent } from '../../ipc/contracts'
 
 interface RouteBase {
   reason: string
@@ -27,6 +27,9 @@ export type RouteDecision =
   | (RouteBase & { mode: 'direct'; role?: undefined; roles?: undefined })
   | (RouteBase & { mode: 'single'; role: string; roles?: undefined })
   | (RouteBase & { mode: 'pipeline' | 'parallel' | 'council' | 'collaborate'; roles: string[]; role?: undefined })
+  // §7 W2: the request matched a SAVED workflow — the deterministic pinned path replaces a free-form
+  // dispatch. Params are the model's fill-ins validated against the workflow's declared params.
+  | (RouteBase & { mode: 'workflow'; workflow: { id: string; name: string; params: Record<string, string | number | boolean> }; role?: undefined; roles?: undefined })
 
 export interface CoordinatorRunInput {
   convId: string
@@ -43,6 +46,12 @@ export interface CoordinatorRunInput {
 
 export interface CoordinatorCallbacks {
   onDispatch: (chain: string[], reason: string) => void
+  // §7 W2 Danny → workflow: the launched run's live events (handler mirrors them onto the same
+  // `workflow:run:event` broadcast the IPC run path uses) + the launch-card row just persisted in the
+  // conversation (renderer slots it into the live list; reload rebuilds it from the row). Both optional —
+  // headless callers (gate/verification paths) don't surface them.
+  onWorkflowRunEvent?: (ev: WorkflowRunEvent) => void
+  onWorkflowLaunchCard?: (messageId: string, payload: string) => void
   // segmentKind (closure-loop): 'verifier' streams this step as an independent "· Verifier" segment. Undefined = normal.
   onStepStart: (roleId: string, dispatch: string[] | null, model: string, segmentKind?: string) => void
   onDelta: (roleId: string, text: string) => void

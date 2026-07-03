@@ -39,6 +39,7 @@ import type {
   CoordinatorExpertActive,
   CoordinatorStepDelta,
   CoordinatorStepDone,
+  CoordinatorWorkflowLaunchCard,
   CoordinatorDoneDto,
   CoordinatorErrorDto,
   CoordinatorToolStart,
@@ -315,6 +316,7 @@ const api = {
     onDelta: (cb: (d: CoordinatorStepDelta) => void): (() => void) => agentListen('coordinator:delta', cb),
     onReasoning: (cb: (d: CoordinatorReasoning) => void): (() => void) => agentListen('coordinator:reasoning', cb),
     onStepDone: (cb: (d: CoordinatorStepDone) => void): (() => void) => agentListen('coordinator:step:done', cb),
+    onWorkflowLaunchCard: (cb: (d: CoordinatorWorkflowLaunchCard) => void): (() => void) => agentListen('coordinator:workflow:launch-card', cb),
     onDone: (cb: (d: CoordinatorDoneDto) => void): (() => void) => agentListen('coordinator:done', cb),
     onError: (cb: (d: CoordinatorErrorDto) => void): (() => void) => agentListen('coordinator:error', cb),
     // Agent-dispatched expert tool activity + approvals (doc 19 §11 phase 2) — same shapes as agent:* but

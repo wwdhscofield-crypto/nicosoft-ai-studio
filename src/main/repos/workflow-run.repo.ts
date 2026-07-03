@@ -98,6 +98,20 @@ export function finish(
     )
 }
 
+// Close out rows a PREVIOUS process left 'running' (crash / power loss / force-quit): the executor's
+// live map died with it, so they can never settle — without this they show as running forever. A clean
+// quit isn't affected (stopAllRuns aborts → each run settles 'stopped' before the process exits).
+// Called once at handler registration (app startup).
+export function sweepOrphans(): number {
+  return Number(
+    getDb()
+      .prepare(
+        `UPDATE workflow_runs SET status = 'stopped', fail_detail = 'the app exited while this run was in flight', finished_at = ? WHERE status = 'running'`
+      )
+      .run(new Date().toISOString()).changes
+  )
+}
+
 export function getById(id: string): WorkflowRunRow | null {
   const row = getDb().prepare('SELECT * FROM workflow_runs WHERE id = ?').get(id) as unknown as
     | WorkflowRunRaw

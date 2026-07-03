@@ -342,7 +342,8 @@ export async function runAndWait(
   id: string,
   params: Record<string, string | number | boolean>,
   trigger: WorkflowRunTrigger,
-  onEvent: (ev: WorkflowRunEvent) => void
+  onEvent: (ev: WorkflowRunEvent) => void,
+  onStarted?: (ids: { runId: string; convId: string }) => void // fires once the run row exists — Danny drops the launch card here, before the (minutes-long) settle
 ): Promise<{
   runId: string
   convId: string
@@ -354,6 +355,7 @@ export async function runAndWait(
   const row = preflightRun(id, params)
   const executor = await import('./executor')
   const { runId, convId, done } = executor.startRun({ workflow: row, params, trigger, onEvent })
+  onStarted?.({ runId, convId })
   const settled = await done
   return { runId, convId, ...settled }
 }
@@ -366,6 +368,11 @@ export async function stop(runId: string): Promise<boolean> {
 export function stopAll(): void {
   // best-effort at quit: if the executor never loaded, there is nothing to stop
   void import('./executor').then((e) => e.stopAllRuns()).catch(() => {})
+}
+
+// Startup: settle rows a previous process left 'running' (crash / power loss) — they can never finish.
+export function sweepOrphanRuns(): number {
+  return runRepo.sweepOrphans()
 }
 
 function runToDto(r: WorkflowRunRow): WorkflowRunDto {

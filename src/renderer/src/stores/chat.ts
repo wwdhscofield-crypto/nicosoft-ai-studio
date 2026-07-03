@@ -313,6 +313,13 @@ export const useChat = create<ChatState>((set, get) => {
       // chain is already stored per-message via step:start.dispatch; nothing global to update here.
       // Future: surface decision.reason as a debug tooltip on the badge.
     })
+    // §7 W2 Danny → workflow: main just persisted the launch-card row — slot it into the live list via
+    // the same insertCard the /workflow composer command uses (streaming-tail-safe; reload rebuilds it).
+    at.onWorkflowLaunchCard((d) => {
+      const meta = runMeta.get(d.streamId)
+      if (!meta) return
+      get().insertCard(meta.convId, { id: d.messageId, content: d.payload, segmentKind: 'workflow-launch' })
+    })
     at.onStepStart((d) => {
       const meta = runMeta.get(d.streamId)
       if (!meta) return
