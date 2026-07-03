@@ -223,6 +223,23 @@ export async function readWorktreeBase(path: string): Promise<{ baseCommit: stri
   return baseCommit ? { baseCommit, baseFile } : null
 }
 
+// cwd → this worktree's immutable base commit (STUDIO_WT_BASE), or undefined for any non-Studio-worktree
+// cwd (main checkout, non-repo, foreign worktree). The git-status IPC composes it into workStatus/workDiff
+// so a worktree conversation's ± reads "what this sandboxed session changed since it forked" instead of
+// the no-upstream degenerate case (merge-base = HEAD → commit zeroes the chip). Cached with a short TTL:
+// the base file is written once at create and never changes, but the chip polls every 5 s and each miss
+// costs a `git rev-parse --git-dir` spawn; the TTL also lets a swept-and-recreated path converge.
+const BASE_REF_TTL_MS = 60_000
+const baseRefCache = new Map<string, { at: number; ref?: string }>()
+export async function worktreeBaseRefFor(cwd: string): Promise<string | undefined> {
+  const key = resolve(cwd)
+  const hit = baseRefCache.get(key)
+  if (hit && Date.now() - hit.at < BASE_REF_TTL_MS) return hit.ref
+  const ref = (await readWorktreeBase(cwd).catch(() => null))?.baseCommit || undefined
+  baseRefCache.set(key, { at: Date.now(), ref })
+  return ref
+}
+
 function isForceRemoveSource(source: WorktreeRemoveSource, discardChanges?: boolean): boolean {
   return discardChanges === true || source === 'job_delete_force'
 }
