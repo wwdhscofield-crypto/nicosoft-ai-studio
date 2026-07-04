@@ -11,7 +11,7 @@ import { loadEnabled as loadSkills } from './services/extensions/skill'
 import { schedulerEngine } from './agent/scheduler/engine'
 import { scheduledTaskStore } from './agent/scheduler/store'
 import { disposeAllPlaywrightSessions } from './agent/tools/playwright-browser'
-import { disposeComputerUse, computerUseEnabled, ensureHelperInstalled } from './services/computer-use'
+import { disposeComputerUse, startComputerUseIfEnabled } from './services/computer-use'
 import { disposeAll as disposeAllTerminals } from './services/workspace/terminal'
 import { disposeAllActiveServices } from './services/active-services'
 import { disposeAllSoloAsync } from './services/solo-async'
@@ -297,10 +297,11 @@ app.whenReady().then(() => {
   initUpdateService() // wire autoUpdater (channel from the build's own version) before any check can run
   // Connect every enabled MCP server (best effort) so their tools are ready when an agent role runs.
   void connectMcpServers().catch(() => {})
-  // If computer use is already enabled, refresh the ~/.nsai/computer-use helper from the copy bundled in
-  // this Studio build (idempotent + version-gated) so a helper fix in a Studio update reaches the user
-  // without re-toggling. No-op unless enabled + macOS + a newer version is bundled.
-  if (computerUseEnabled()) void ensureHelperInstalled().catch(() => {})
+  // Computer use lifecycle: if it's enabled (persisted), LAUNCH the helper now so "enabled = running" holds
+  // across Studio restarts — the tool is ready and the Tools card can read live permission status without a
+  // cold start. Also version-syncs the bundled helper first. No-op when disabled (a disabled start leaves it
+  // stopped) or off-macOS.
+  void startComputerUseIfEnabled().catch(() => {})
   // Register every enabled skill so a role's agent sees it on the first run (sync — DB read only).
   loadSkills()
   createWindow()

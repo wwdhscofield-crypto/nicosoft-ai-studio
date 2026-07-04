@@ -369,6 +369,21 @@ export async function setComputerUseEnabled(enabled: boolean): Promise<ComputerU
   return getComputerUseStatus()
 }
 
+// Lifecycle: the helper's running state follows the persisted enable flag. When enabled, it should be
+// RUNNING — so Studio startup launches it (this fn, called on app ready), toggling enable launches it
+// (setComputerUseEnabled above), and it stays up until the user disables (or Studio quits). This keeps
+// the Tools card's live permission status readable and the tool ready without a cold start. Called at
+// startup; a no-op when disabled — a disabled Studio start leaves the helper stopped, as intended.
+export async function startComputerUseIfEnabled(): Promise<void> {
+  if (process.platform !== 'darwin' || !computerUseEnabled()) return
+  await ensureHelperInstalled() // version-sync from the bundle first (a Studio update may ship a newer helper)
+  try {
+    await ensureHelper(true)
+  } catch {
+    // Not installed / didn't come up — getComputerUseStatus reports it honestly to the card.
+  }
+}
+
 // RPC path for the agent tool: connects (launching if needed) and forwards. Callers get the helper's
 // own error messages verbatim (they carry the actionable guidance, e.g. the permission deep-link hint).
 export async function callComputerUse<T>(
