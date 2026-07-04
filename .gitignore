@@ -200,8 +200,9 @@ Desktop.ini
 .idea/
 .vscode/*
 !.vscode/extensions.json
-!.vscode/launch.json
 !.vscode/settings.json
+# launch.json stays local: it holds a personal Swift-debug config for the computer-use helper (target
+# name drifts with the SPM target) — not something to share/commit. Regenerate via the Swift extension.
 *.swp
 *.swo
 
