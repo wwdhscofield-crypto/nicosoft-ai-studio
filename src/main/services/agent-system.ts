@@ -10,6 +10,7 @@ import { COMMON_PREAMBLE, SAFETY_PREAMBLE } from '../agent/roles/common-preamble
 import type { AgentContext } from '../agent/context'
 import type { MemoryRow } from '../repos/memory.repo'
 import { DEV_PROMPT, DEV_ROLES } from './agent-tools'
+import { STUDIO_GUIDE_INDEX } from './studio-guide'
 
 // Agent system = the role's base prompt (Engineer's coding prompt, or the role section via
 // buildRolePrompt for other agent roles) + the chat layer's injected context (memories, summary, skills).
@@ -174,6 +175,10 @@ export function buildAgentSystem(
   // snapshot, built per run by agent-memory.service.indexText (undefined for folder-free runs). The
   // MemoryRow block below is the separate passive-extraction layer; both coexist by design.
   if (memoryIndex) parts.push(memoryIndex)
+  // Studio product guide (studio-guide-product-manual): the standing one-line directory of the built-in
+  // manual + the anti-hallucination rule (check studio_guide before answering Studio product questions).
+  // Static text, unconditional — every buildAgentSystem run carries the studio_guide tool (agent-tools.ts).
+  parts.push(STUDIO_GUIDE_INDEX)
   // Self-learning criteria (remember vs distill_skill vs remember_project_map) — unconditional: the
   // memory tools degrade gracefully without a folder, and distill_skill is folder-independent.
   parts.push(SELF_LEARNING)

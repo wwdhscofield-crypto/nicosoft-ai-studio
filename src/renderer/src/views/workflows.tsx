@@ -375,7 +375,7 @@ function WorkflowList({
       </div>
       <div className="ext-body">
         <div className="ext-inner">
-          <p className="wf-help">Saved multi-expert procedures — run them by hand; /workflow, schedules and Danny routing arrive next.</p>
+          <p className="wf-help">Saved multi-expert procedures — run them by hand, with /workflow in chat, or from a scheduled task.</p>
           <div className="ext-note">
             {draftCount > 0 ? (
               <span className="ext-drafts"><Icons.zap size={12} /> {draftCount} draft{draftCount > 1 ? 's' : ''} — review and activate below</span>

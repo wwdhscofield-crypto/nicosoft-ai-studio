@@ -26,6 +26,7 @@ import { rememberProjectMapTool } from '../agent/tools/remember-project-map'
 import { workflowStatusTool } from '../agent/tools/workflow-status'
 import { rememberTool, forgetTool, recallMemoryTool } from '../agent/tools/memory'
 import { distillSkillTool } from '../agent/tools/distill-skill'
+import { studioGuideTool } from '../agent/tools/studio-guide'
 import type { Tool } from '../agent/tool'
 import { AGENT_ROLE_IDS } from '@shared/roles'
 import * as settingsService from './settings.service'
@@ -155,5 +156,8 @@ export function toolsForAgentRole(roleId: string): Tool[] {
   // remember_project_map — project memory's write side for every role incl. coordinator-direct (§4.6: seed when
   // none recorded / refresh when verified stale; app-DB only, read-only classified). Sub-agents are stripped in
   // loop.ts (a Task/async child sees a narrow slice by construction — exactly the write the prompt forbids).
-  return [...core, ...PLAN_TOOLS, askUserQuestionTool as unknown as Tool, rememberProjectMapTool as unknown as Tool, ...MEMORY_TOOLS, ...DISTILL_TOOLS, ...panel, ...visualize, ...preview, ...monitor, ...wfStatus, ...mcpManager.toolsForRole(roleId), ...(skill ? [skill] : [])]
+  // studio_guide — the product-manual read (studio-guide-product-manual): same tier as the memory tools —
+  // every agent role plus coordinator-direct (Danny is the front door for "what can Studio do?"), sub-agents
+  // stripped in loop.ts. Pairs with the standing STUDIO_GUIDE_INDEX prompt section (buildAgentSystem).
+  return [...core, ...PLAN_TOOLS, askUserQuestionTool as unknown as Tool, rememberProjectMapTool as unknown as Tool, studioGuideTool as unknown as Tool, ...MEMORY_TOOLS, ...DISTILL_TOOLS, ...panel, ...visualize, ...preview, ...monitor, ...wfStatus, ...mcpManager.toolsForRole(roleId), ...(skill ? [skill] : [])]
 }

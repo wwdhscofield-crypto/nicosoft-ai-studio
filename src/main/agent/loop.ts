@@ -429,7 +429,7 @@ export async function* runAgent(
   // EnterPlanMode/ExitPlanMode would otherwise flip the PARENT's plan state / hit the parent's Gate A.
   // studio_lens is denied at EVERY depth (studio-lens §7 Phase 4 P0): a sub-agent / panel reviewer must NOT trigger
   // another panel fan-out (its own fan-out bound, independent of Task nesting). ctx.panel is also nulled below.
-  const subAgentTools = tools.filter((t) => t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens' && !t.name.startsWith('preview_') && !t.name.startsWith('monitor_') && t.name !== 'schedule_wakeup' && t.name !== 'remember_project_map' && t.name !== 'remember' && t.name !== 'forget' && t.name !== 'recall_memory' && t.name !== 'distill_skill')
+  const subAgentTools = tools.filter((t) => t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens' && !t.name.startsWith('preview_') && !t.name.startsWith('monitor_') && t.name !== 'schedule_wakeup' && t.name !== 'remember_project_map' && t.name !== 'remember' && t.name !== 'forget' && t.name !== 'recall_memory' && t.name !== 'distill_skill' && t.name !== 'studio_guide')
   const makeSpawnSubAgent =
     (signal: AbortSignal): SpawnSubAgent =>
     async ({ prompt, parentToolId, isolation }) => {
@@ -517,7 +517,7 @@ export async function* runAgent(
   // runChild that runs one of a child's turns with the sub-agent tool set — no Task, no nested agent_*
   // (depth 1) — threading the child's persisted readFileState/todos. Sub-agents get subAgents: undefined.
   if (ctx.subAgents instanceof AsyncSubAgentPool) {
-    const asyncChildTools = tools.filter((t) => t.name !== 'Task' && !t.name.startsWith('agent_') && t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens' && !t.name.startsWith('preview_') && !t.name.startsWith('monitor_') && t.name !== 'schedule_wakeup' && t.name !== 'remember_project_map' && t.name !== 'remember' && t.name !== 'forget' && t.name !== 'recall_memory' && t.name !== 'distill_skill')
+    const asyncChildTools = tools.filter((t) => t.name !== 'Task' && !t.name.startsWith('agent_') && t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens' && !t.name.startsWith('preview_') && !t.name.startsWith('monitor_') && t.name !== 'schedule_wakeup' && t.name !== 'remember_project_map' && t.name !== 'remember' && t.name !== 'forget' && t.name !== 'recall_memory' && t.name !== 'distill_skill' && t.name !== 'studio_guide')
     const asyncWorktrees = new Map<string, ManagedWorktree>()
     const asyncWorktreeNames = new Map<string, string>()
     const asyncCwds = new Map<string, string>()

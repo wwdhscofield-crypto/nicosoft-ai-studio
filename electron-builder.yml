@@ -24,6 +24,13 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   - '!{.eslintrc.cjs,.eslintignore,.prettierrc,.prettierignore,.editorconfig}'
 
+# The built-in Studio product manual (the studio_guide tool reads it at runtime) — plain md shipped
+# next to the asar: <process.resourcesPath>/studio-guide (services/studio-guide.ts resolves it there,
+# falling back to the repo's resources/ folder in dev).
+extraResources:
+  - from: resources/studio-guide
+    to: studio-guide
+
 # node-pty is a native module (the Terminal panel's pty backend) — electron-builder must rebuild it
 # against the target Electron's ABI at pack time (npmRebuild defaults to true; kept explicit). node:sqlite
 # stays runtime-built, no action needed for it.

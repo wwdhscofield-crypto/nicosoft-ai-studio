@@ -36,6 +36,7 @@ import { coordinatorApproval } from './approvals'
 import type { CoordinatorCallbacks } from './types'
 import { getPipelineTodos, setPipelineTodos } from '../pipeline-todos'
 import { indexText as agentMemoryIndexText } from '../memory/agent-memory'
+import { STUDIO_GUIDE_INDEX } from '../studio-guide'
 
 // #6 Workflow parity (cc 2.1.186 `GKa=5`): the P4 stall-watchdog abort is RETRYABLE — Workflow re-runs a stalled
 // agent up to 5× before giving up. runRoleStep surfaces a stall (the watchdog fired, NOT a real user/run abort) as
@@ -305,10 +306,12 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
         // Undefined for real dispatches → buildAgentSystem as before. Auto-memory: DIRECT carries the # Memory
         // section too (Danny holds the memory tools — his corrections are where feedback memories are born, and
         // without the index he can't dedupe by name or see what exists); other overrides (Gate B etc.) don't.
+        // DIRECT also carries the studio-guide directory: Danny is the front door for "what can Studio do?" —
+        // his kit holds studio_guide (agent-tools.ts), so the index + anti-hallucination rule must ride along.
         systemPromptOverride:
           opts.systemPromptOverride ??
           (isDirect
-            ? [withCoordinatorContext(COORDINATOR_DIRECT_PROMPT, memories, summaryContent), await agentMemoryIndexText(cwd)].filter(Boolean).join('\n\n')
+            ? [withCoordinatorContext(COORDINATOR_DIRECT_PROMPT, memories, summaryContent), await agentMemoryIndexText(cwd), STUDIO_GUIDE_INDEX].filter(Boolean).join('\n\n')
             : undefined),
         thinking,
         // Pipeline-shared todos: this expert reads + writes the conv's ONE todo list (see pipelineTodos), so
