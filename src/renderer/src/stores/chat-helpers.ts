@@ -224,12 +224,20 @@ export function sameChain(a: string[] | null | undefined, b: string[] | null | u
 // as their OWN segment, never smeared into an adjacent intro/direct/normal step of the same role (GAP-2).
 export function canMerge(a: ChatMessage, b: ChatMessage): boolean {
   const chainsEqual = Array.isArray(a.dispatch) || Array.isArray(b.dispatch) ? sameChain(a.dispatch, b.dispatch) : true
+  // Chain-less messages (solo turns, wake/resume runs) carry their TURN identity in runId: two known,
+  // DIFFERENT runs are two turns and never merge — a workflow/Monitor/schedule wake landing right after
+  // a reply must render as its own turn, not smear into the previous bubble (§7.5 dogfood 2026-07-04).
+  // Chain steps keep CHAIN identity (a pipeline's same-role steps merge across their per-step runs, as
+  // always); a missing runId (legacy rows, anchor bubbles) keeps the old merge so history renders unchanged.
+  const chainless = !Array.isArray(a.dispatch) && !Array.isArray(b.dispatch)
+  const runsEqual = !chainless || a.runId == null || b.runId == null || a.runId === b.runId
   return (
     a.role === 'assistant' &&
     b.role === 'assistant' &&
     (a.expertId ?? null) === (b.expertId ?? null) &&
     (a.segmentKind ?? null) === (b.segmentKind ?? null) &&
     chainsEqual &&
+    runsEqual &&
     isSynthesis(a) === isSynthesis(b)
   )
 }

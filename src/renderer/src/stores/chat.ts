@@ -333,6 +333,7 @@ export const useChat = create<ChatState>((set, get) => {
           cur.expertId = d.roleId
           cur.dispatch = d.dispatch
           cur.segmentKind = d.segmentKind ?? null
+          cur.runId = d.streamId // live turn identity — reload swaps in the persisted run_id
         } else {
           // Else adopt this role's un-adopted streaming PLACEHOLDER anywhere in the list — a sub-tool event (e.g.
           // a studio_lens card) may have opened the role's bubble before this step:start, and it is not
@@ -345,9 +346,9 @@ export const useChat = create<ChatState>((set, get) => {
             if (m.role === 'assistant' && m.streaming && m.expertId === d.roleId && m.dispatch === undefined) { adopt = i; break }
           }
           if (adopt >= 0) {
-            msgs[adopt] = { ...msgs[adopt], dispatch: d.dispatch, segmentKind: d.segmentKind ?? null }
+            msgs[adopt] = { ...msgs[adopt], dispatch: d.dispatch, segmentKind: d.segmentKind ?? null, runId: d.streamId }
           } else {
-            msgs.push({ id: uid(), role: 'assistant', text: '', streaming: true, expertId: d.roleId, dispatch: d.dispatch, segmentKind: d.segmentKind ?? null })
+            msgs.push({ id: uid(), role: 'assistant', text: '', streaming: true, expertId: d.roleId, dispatch: d.dispatch, segmentKind: d.segmentKind ?? null, runId: d.streamId })
           }
         }
         return { byConversation: { ...s.byConversation, [meta.convId]: msgs } }
@@ -508,7 +509,7 @@ export const useChat = create<ChatState>((set, get) => {
         // bubble for the role and anchor the card there. A later step:start for the same role REUSES this bubble
         // (onStepStart matches expertId === roleId), so no duplicate segment.
         if (i < 0 && d.roleId) {
-          msgs.push({ id: uid(), role: 'assistant', text: '', streaming: true, expertId: d.roleId })
+          msgs.push({ id: uid(), role: 'assistant', text: '', streaming: true, expertId: d.roleId, runId: d.streamId })
           i = msgs.length - 1
         }
         if (i >= 0) msgs[i] = applySubToolStart(msgs[i], d.parentToolId, d.toolUseId, d.name, d.input)
@@ -525,7 +526,7 @@ export const useChat = create<ChatState>((set, get) => {
         // IPC race and landed nothing (or whose role segment isn't in the store yet). Ensure a bubble so the
         // resolved card still surfaces rather than vanishing.
         if (i < 0 && d.roleId) {
-          msgs.push({ id: uid(), role: 'assistant', text: '', streaming: true, expertId: d.roleId })
+          msgs.push({ id: uid(), role: 'assistant', text: '', streaming: true, expertId: d.roleId, runId: d.streamId })
           i = msgs.length - 1
         }
         if (i >= 0) msgs[i] = applySubToolDone(msgs[i], d.parentToolId, d.toolUseId, d.name, d.result, d.isError, d.input)
@@ -753,6 +754,7 @@ export const useChat = create<ChatState>((set, get) => {
           expertId: m.author === 'user' ? null : m.expertId,
           dispatch: m.dispatch,
           segmentKind: m.author === 'user' ? null : m.segmentKind,
+          runId: m.author === 'user' ? null : m.runId,
           inputTokens: m.author !== 'user' && m.inputTokens > 0 ? m.inputTokens : undefined,
           cacheReadTokens: m.author !== 'user' && m.cacheReadTokens > 0 ? m.cacheReadTokens : undefined,
           outputTokens: m.author !== 'user' && m.outputTokens > 0 ? m.outputTokens : undefined,
@@ -782,7 +784,8 @@ export const useChat = create<ChatState>((set, get) => {
             citations: run.citations.length ? run.citations : undefined,
             expertId: run.roleId,
             dispatch: null,
-            segmentKind: run.ephemeralDisplay?.segmentKind ?? null
+            segmentKind: run.ephemeralDisplay?.segmentKind ?? null,
+            runId
           } as ChatMessage
         }))
       let merged = mapped

@@ -51,6 +51,11 @@ export interface ChatMessage {
   expertId?: string | null
   dispatch?: string[] | null
   segmentKind?: string | null // closure-loop: 'verifier' = an independent Gate B reviewer step → renders a "· Verifier" identity badge (live + across reload)
+  // The agent run this message belongs to — the TURN identity for chain-less messages (canMerge's run
+  // boundary: a wake/resume run renders as its own turn, never smeared into the previous reply). Live
+  // turns stamp the streamId, reload stamps the persisted run_id — both unique per run, compared only
+  // for equality within one rendered list.
+  runId?: string | null
   inputTokens?: number // CURRENT context size for THIS turn (count_tokens) — per-message so collab experts each show their own; drives the composer "/ window" meter, NOT the settlement total
   cacheReadTokens?: number // cache-read share of inputTokens for THIS turn (persisted via MessageDto) — drives the finalized "(+N cached)" note after the live overlay clears + across reloads
   outputTokens?: number // real output tokens for THIS turn (upstream usage) — live ↓ readout fallback while streaming; NOT summed or shown after the turn ends (no settled summary — see chat-segment.tsx)
