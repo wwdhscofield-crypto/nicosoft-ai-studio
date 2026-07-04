@@ -55,6 +55,7 @@ final class Server {
         case "ui_tree": return try uiTree(request.params)
         case "frontmost_window": return try frontmostWindow()
         case "list_apps": return try listApps()
+        case "list_windows": return try listWindows(request.params)
         case "perform_action": return try performAction(request.params)
         case "set_active": return try setActive(request.params)
         case "start_capture": return try startCapture(request.params)
@@ -153,12 +154,17 @@ final class Server {
             throw CUAError.unavailable("no frontmost application")
         }
 
-        let snapshot = AccessibilityTree.snapshot(pid: pid)
+        // Scope to one window (explicit `window` index from list_windows, else the focused/main window)
+        // so a multi-window app doesn't flatten every window's elements into one ambiguous list.
+        let windowIndex = params?["window"]?.intValue
+        let snapshot = AccessibilityTree.snapshot(pid: pid, windowIndex: windowIndex)
         let token = registry.update(snapshot)
         return .object([
             "token": .int(token),
             "pid": .int(Int(pid)),
             "count": .int(snapshot.elements.count),
+            "window": snapshot.windowIndex.map { JSONValue.int($0) } ?? .null,
+            "windowTitle": snapshot.windowTitle.map(JSONValue.string) ?? .null,
             "elements": try JSONValue.from(snapshot.elements),
         ])
     }
@@ -168,6 +174,24 @@ final class Server {
             throw CUAError.unavailable("no frontmost application")
         }
         return try JSONValue.from(AccessibilityTree.frontmostWindow(app: app))
+    }
+
+    private func listWindows(_ params: JSONValue?) throws -> JSONValue {
+        try requireAccessibility()
+        let pid: pid_t
+        if let requested = params?["pid"]?.intValue {
+            pid = pid_t(requested)
+        } else if let front = NSWorkspace.shared.frontmostApplication {
+            pid = front.processIdentifier
+        } else {
+            throw CUAError.unavailable("no frontmost application")
+        }
+        let windows = AccessibilityTree.listWindows(pid: pid)
+        return .object([
+            "pid": .int(Int(pid)),
+            "count": .int(windows.count),
+            "windows": try JSONValue.from(windows),
+        ])
     }
 
     private func listApps() throws -> JSONValue {
@@ -262,8 +286,35 @@ final class Server {
 
     private func performType(_ action: ActionParams) -> JSONValue {
         let text = action.text ?? ""
+        // Targeted type (index/elementID given): focus the element first and VERIFY it took focus before
+        // pasting — this is what makes text land in the RIGHT field in apps whose custom views don't take
+        // keyboard focus from a synthesized click. If focus won't take, set the value directly via AX.
+        if let element = resolveElement(action) {
+            AXCore.setFocused(element) // AX focus first (cleanest — no click)
+            usleep(40_000)
+            if !AXCore.isFocused(element), let frame = AXCore.frame(element) {
+                InputSynthesizer.click(at: frame.center, button: .left, clickCount: 1) // fallback: click to focus
+                usleep(80_000)
+            }
+            // ⌘V lands where the OS keyboard focus is = the FRONTMOST app's focused field. So a paste is
+            // reliable ONLY when the target is focused AND its app is frontmost; otherwise it would leak
+            // into whatever app is actually in front. When that isn't the case (a background window/app),
+            // write the value directly via AX — frontmost-independent, and it doesn't reorder windows, so
+            // multi-window routing stays stable. Paste stays the default for the normal frontmost case
+            // (real key events trigger the app's input handling).
+            if AXCore.isFocused(element), elementAppIsFrontmost(element) {
+                InputSynthesizer.typeText(text)
+                return .object(["ok": .bool(true), "method": .string("paste"), "focused": .bool(true), "length": .int(text.count)])
+            }
+            if AXCore.setStringValue(element, text) {
+                return .object(["ok": .bool(true), "method": .string("axvalue"), "focused": .bool(AXCore.isFocused(element)), "length": .int(text.count)])
+            }
+            InputSynthesizer.typeText(text) // element rejects AX set-value and isn't frontmost — best effort
+            return .object(["ok": .bool(true), "method": .string("paste-unverified"), "focused": .bool(false), "length": .int(text.count)])
+        }
+        // Untargeted: paste into whatever currently holds focus (the existing behavior).
         InputSynthesizer.typeText(text)
-        return .object(["ok": .bool(true), "length": .int(text.count)])
+        return .object(["ok": .bool(true), "method": .string("paste"), "length": .int(text.count)])
     }
 
     private func performKey(_ action: ActionParams) throws -> JSONValue {
@@ -321,6 +372,13 @@ final class Server {
         if let index = action.index { return registry.handle(atIndex: index) }
         if let id = action.elementID { return registry.handle(withIdentifier: id) }
         return nil
+    }
+
+    /// Whether the element's owning application is the OS-frontmost app — the one a ⌘V paste would reach.
+    private func elementAppIsFrontmost(_ element: AXUIElement) -> Bool {
+        var pid: pid_t = 0
+        guard AXUIElementGetPid(element, &pid) == .success else { return false }
+        return NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
     }
 
     private func display(for action: ActionParams) -> DisplayInfo {

@@ -21,7 +21,7 @@ import {
 } from '../../services/computer-use'
 import type { ImageBlock, TextBlock, ToolResultBlock } from '../types'
 
-const READ_ACTIONS = new Set(['screenshot', 'ui_tree', 'frontmost_window', 'list_apps', 'wait', 'start_capture', 'next_capture', 'stop_capture'])
+const READ_ACTIONS = new Set(['screenshot', 'ui_tree', 'list_windows', 'frontmost_window', 'list_apps', 'wait', 'start_capture', 'next_capture', 'stop_capture'])
 // Vision models are fed at most ~1568px on the long edge; anything larger is pure upload waste.
 const MAX_IMAGE_LONG_EDGE = 1568
 
@@ -29,10 +29,10 @@ const coordinatePair = z.array(z.number()).min(2).max(2)
 
 const inputSchema = z.object({
   action: z
-    .enum(['screenshot', 'start_capture', 'next_capture', 'stop_capture', 'click', 'type', 'key', 'scroll', 'move', 'drag', 'wait', 'secondary', 'ui_tree', 'frontmost_window', 'list_apps'])
+    .enum(['screenshot', 'start_capture', 'next_capture', 'stop_capture', 'click', 'type', 'key', 'scroll', 'move', 'drag', 'wait', 'secondary', 'ui_tree', 'list_windows', 'frontmost_window', 'list_apps'])
     .describe('what to do on the Mac'),
   coordinate: coordinatePair.optional().describe('click/move/scroll target [x, y] in pixels of the LATEST screenshot'),
-  index: z.number().int().optional().describe('click/secondary: element index from the latest ui_tree — preferred over coordinate (layout-robust)'),
+  index: z.number().int().optional().describe('click/type/secondary: element index from the latest ui_tree. For click it targets that element (layout-robust, preferred over coordinate); for type it focus-targets that field (verifies focus, falls back to AX set-value) so text lands in the right place'),
   button: z.enum(['left', 'right', 'middle']).optional().describe('click/drag: mouse button (default left)'),
   clickCount: z.number().int().min(1).max(3).optional().describe('click: 2 = double-click, 3 = triple-click'),
   text: z.string().optional().describe('type: literal text to insert — any language/emoji, IME-independent'),
@@ -44,7 +44,8 @@ const inputSchema = z.object({
   end: coordinatePair.optional().describe('drag: end [x, y] in screenshot pixels'),
   duration: z.number().optional().describe('wait: seconds to pause (max 30)'),
   actionName: z.string().optional().describe('secondary: the accessibility action to invoke, from the element\'s actions list (e.g. "AXShowMenu")'),
-  pid: z.number().int().optional().describe('ui_tree: target app pid from list_apps (default: frontmost app)'),
+  pid: z.number().int().optional().describe('ui_tree/list_windows: target app pid from list_apps (default: frontmost app)'),
+  window: z.number().int().optional().describe('ui_tree: which window to read (index from list_windows) — default is the app\'s focused/main window. Use this for multi-window apps so you read the right window'),
   display: z.number().int().optional().describe('screenshot/start_capture: display index (default: main display)'),
   fps: z.number().int().min(1).max(60).optional().describe('start_capture: frames per second to capture (default 10)'),
   after: z.number().int().optional().describe('next_capture: block until a frame NEWER than this frameIndex arrives (pass the last frameIndex you saw to wait for the next change; omit for the latest frame right now)'),
@@ -189,13 +190,14 @@ export const computerUseTool = buildTool<typeof inputSchema, Out>({
     'and multi-app workflows.\n\n' +
     'SEE the screen (pick the right tool for the situation):\n' +
     '• `screenshot` — one still frame of the whole display. Your default for a static screen: look, act, look again.\n' +
-    '• `ui_tree` — the frontmost app\'s interactive elements as an indexed list (role, label, value, frame, actions). ' +
-    'Read this before clicking so you can target by `index` (layout-robust) instead of guessing pixels. Pass `pid` (from `list_apps`) to read an app that is NOT frontmost.\n' +
+    '• `ui_tree` — the interactive elements of ONE window as an indexed list (role, label, value, frame, actions). ' +
+    'Read this before clicking so you can target by `index` (layout-robust) instead of guessing pixels. It is scoped to the app\'s focused/main window by default; pass `pid` (from `list_apps`) to read an app that is NOT frontmost.\n' +
+    '• `list_windows` — for a MULTI-WINDOW app (chat apps that pop chats into separate windows, browsers, editors), list its windows (index, title, which is focused/main). Then read a specific one with `ui_tree(window=<index>)`. This is essential when several windows overlap: it stops you from targeting the wrong window\'s controls or a window hidden behind another.\n' +
     '• `frontmost_window` — which app/window is in front. `list_apps` — every running app + its pid.\n' +
     '• STREAMING for things that MOVE or take time — `start_capture` opens a warm, continuous capture; `next_capture` returns the latest frame and, if you pass `after=<the last frameIndex>`, BLOCKS until the picture actually changes (so you watch an animation, a progress bar, a video, a spinner, a live download, a page loading, a game, or any state you\'re waiting on — one call per meaningful change instead of hammering screenshot); `stop_capture` ends it. Use streaming whenever you need to observe change over time or wait for something to finish; it is far better than a screenshot loop for that. Always `stop_capture` when done watching.\n\n' +
     'ACT (targets are [x, y] pixels of the LATEST image you received, OR a ui_tree `index`):\n' +
     '• `click` (by `index` — preferred — or `coordinate`; `button`, `clickCount` for double/triple), `move`, `drag` (`start`→`end`), `scroll` (`direction`, `amount`).\n' +
-    '• `type` inserts literal text in ANY language / emoji, input-method-independent. `key` presses xdotool-style combos ("Return", "super+a", "ctrl+Tab", "Escape", "super+space"). `secondary` invokes a named accessibility action from an element\'s `actions` list (e.g. "AXShowMenu"). `wait` pauses.\n\n' +
+    '• `type` inserts literal text in ANY language / emoji, input-method-independent. To type into a SPECIFIC field, pass its ui_tree `index`: it focuses that exact field and verifies focus before inserting (falling back to setting the value directly), so text can\'t leak into the wrong box — strongly preferred over clicking then typing blind, especially in apps where a click doesn\'t reliably move focus. `key` presses xdotool-style combos ("Return", "super+a", "ctrl+Tab", "Escape", "super+space"). `secondary` invokes a named accessibility action from an element\'s `actions` list (e.g. "AXShowMenu"). `wait` pauses.\n\n' +
     'DECIDE for yourself which tool fits — a still screenshot for a static screen, ui_tree for precise clicking, or streaming to watch something change. Chain them freely to accomplish the goal.\n\n' +
     'SAFETY: actions land on the user\'s REAL desktop and an on-screen banner tells them so. Verify with a fresh capture between steps, take the frontmost window into account (don\'t type into the wrong app), and ask the user before anything destructive or hard to reverse — sending a message, deleting, submitting a form, a purchase, or closing unsaved work.',
   isReadOnly: (input) => READ_ACTIONS.has(input.action),
@@ -220,13 +222,29 @@ export const computerUseTool = buildTool<typeof inputSchema, Out>({
         return { data: { kind: 'text', text: 'Streaming stopped.' } }
       }
       case 'ui_tree': {
-        const tree = await callComputerUse<{ token: number; pid: number; count: number; elements: HelperElement[] }>(
+        const p: Record<string, unknown> = {}
+        if (input.pid !== undefined) p.pid = input.pid
+        if (input.window !== undefined) p.window = input.window
+        const tree = await callComputerUse<{ token: number; pid: number; count: number; window: number | null; windowTitle: string | null; elements: HelperElement[] }>(
           'ui_tree',
-          input.pid !== undefined ? { pid: input.pid } : {},
+          p,
           { timeoutMs: 15_000, signal: ctx.signal },
         )
         const body = formatUiTree(tree.elements, mapping?.pointToImage ?? 1)
-        return { data: { kind: 'text', text: `pid ${tree.pid} — ${tree.count} interactive elements (frames in screenshot coordinates):\n${body}` } }
+        const win = tree.window !== null ? `window #${tree.window}${tree.windowTitle ? ` "${tree.windowTitle}"` : ''}` : 'whole app'
+        return { data: { kind: 'text', text: `pid ${tree.pid} — ${tree.count} interactive elements in ${win} (frames in screenshot coordinates):\n${body}` } }
+      }
+      case 'list_windows': {
+        const res = await callComputerUse<{ pid: number; count: number; windows: { index: number; title: string | null; frame: HelperElementFrame | null; main: boolean; focused: boolean; minimized: boolean }[] }>(
+          'list_windows',
+          input.pid !== undefined ? { pid: input.pid } : {},
+          { timeoutMs: 5_000, signal: ctx.signal },
+        )
+        const lines = res.windows.map((w) => {
+          const tags = [w.focused ? 'focused' : null, w.main ? 'main' : null, w.minimized ? 'minimized' : null].filter(Boolean).join(', ')
+          return `#${w.index} "${w.title ?? ''}"${tags ? ` [${tags}]` : ''}`
+        })
+        return { data: { kind: 'text', text: `pid ${res.pid} — ${res.count} window(s):\n${lines.join('\n') || '(none)'}\nRead one with ui_tree(window=<index>).` } }
       }
       case 'frontmost_window': {
         const win = await callComputerUse<Record<string, unknown>>('frontmost_window', {}, { timeoutMs: 5_000, signal: ctx.signal })

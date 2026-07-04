@@ -28,6 +28,10 @@ enum AXAttr {
     static let focusedWindow = "AXFocusedWindow"
     static let mainWindow = "AXMainWindow"
     static let windows = "AXWindows"
+    static let focusedUIElement = "AXFocusedUIElement"
+    static let minimized = "AXMinimized"
+    static let main = "AXMain"
+    static let menuBar = "AXMenuBar"
 }
 
 enum AXAction {
@@ -92,6 +96,43 @@ enum AXCore {
 
     static func setValue(_ element: AXUIElement, _ name: String, _ value: CFTypeRef) -> Bool {
         AXUIElementSetAttributeValue(element, name as CFString, value) == .success
+    }
+
+    /// Read an attribute whose value is itself an `AXUIElement` (e.g. AXFocusedWindow,
+    /// AXMainWindow, AXFocusedUIElement, AXMenuBar).
+    static func elementAttribute(_ element: AXUIElement, _ name: String) -> AXUIElement? {
+        guard let value = attribute(element, name), CFGetTypeID(value) == AXUIElementGetTypeID() else {
+            return nil
+        }
+        return (value as! AXUIElement)
+    }
+
+    /// The application's windows (AXWindows), in front-to-back order.
+    static func windows(_ appElement: AXUIElement) -> [AXUIElement] {
+        guard let value = attribute(appElement, AXAttr.windows) else { return [] }
+        return (value as? [AXUIElement]) ?? []
+    }
+
+    /// Programmatically move keyboard focus to an element (AXFocused = true). More reliable than a
+    /// synthesized click for focusing text inputs in apps whose custom views don't take first-responder
+    /// on a click. Returns whether the set succeeded (not whether focus was actually taken — verify with
+    /// `isFocused`).
+    @discardableResult
+    static func setFocused(_ element: AXUIElement) -> Bool {
+        setValue(element, AXAttr.focused, kCFBooleanTrue)
+    }
+
+    /// Whether this element currently holds keyboard focus.
+    static func isFocused(_ element: AXUIElement) -> Bool {
+        boolAttribute(element, AXAttr.focused) == true
+    }
+
+    /// Set an element's text value directly via AX (no keyboard). The focus-independent fallback for
+    /// inserting text when a click/AXFocused doesn't take. Replaces the field's contents; not all
+    /// elements are settable (returns false when the element rejects it).
+    @discardableResult
+    static func setStringValue(_ element: AXUIElement, _ text: String) -> Bool {
+        setValue(element, AXAttr.value, text as CFString)
     }
 
     /// Frame in global points, or nil if either position or size is unavailable.

@@ -5,10 +5,13 @@ import Foundation
 
 /// One accessibility snapshot: the model-facing element list plus the live
 /// element handles at matching indices, so `perform_action index=<n>` can
-/// resolve back to an `AXUIElement`.
+/// resolve back to an `AXUIElement`. `windowIndex`/`windowTitle` name the window
+/// the tree was scoped to (nil when it fell back to the whole app).
 struct AXSnapshot {
     let elements: [ReadableElement]
     let handles: [AXUIElement]
+    let windowIndex: Int?
+    let windowTitle: String?
 }
 
 /// Focused-window metadata for `frontmost_window`.
@@ -18,6 +21,19 @@ struct FrontmostWindow: Encodable {
     let pid: Int32
     let title: String?
     let frame: ElementFrame?
+}
+
+/// One window of an application, for `list_windows`. `index` addresses it in
+/// `ui_tree(window:)`; `focused` marks the app's key window, `main` its main
+/// window — targeting the right one is what keeps a multi-window app (e.g. a
+/// chat app with pop-out windows) from collapsing into one ambiguous element list.
+struct WindowInfo: Encodable {
+    let index: Int
+    let title: String?
+    let frame: ElementFrame?
+    let main: Bool
+    let focused: Bool
+    let minimized: Bool
 }
 
 /// Walks an application's accessibility hierarchy and projects the actionable
@@ -41,9 +57,12 @@ enum AccessibilityTree {
     private static let maxDepth = 45
     private static let maxNodes = 2_500
 
-    /// Snapshot the given process's accessibility tree. Requires the
-    /// Accessibility grant; without it the app element yields no children.
-    static func snapshot(pid: pid_t) -> AXSnapshot {
+    /// Snapshot the given process's accessibility tree, scoped to ONE window +
+    /// the menu bar. `windowIndex` (from `list_windows`) picks the window;
+    /// nil = the app's focused/main window. Scoping is what keeps a multi-window
+    /// app from flattening every window's elements into one ambiguous list.
+    /// Requires the Accessibility grant; without it the app element yields no children.
+    static func snapshot(pid: pid_t, windowIndex: Int? = nil) -> AXSnapshot {
         let appElement = AXUIElementCreateApplication(pid)
         var elements: [ReadableElement] = []
         var handles: [AXUIElement] = []
@@ -91,10 +110,51 @@ enum AccessibilityTree {
             }
         }
 
-        for child in AXCore.children(appElement) {
-            walk(child, depth: 0)
+        let resolved = resolveRoots(appElement: appElement, windowIndex: windowIndex)
+        for root in resolved.roots {
+            walk(root, depth: 0)
         }
-        return AXSnapshot(elements: elements, handles: handles)
+        return AXSnapshot(elements: elements, handles: handles, windowIndex: resolved.index, windowTitle: resolved.title)
+    }
+
+    /// Pick the roots to walk: the target window (explicit index, else the
+    /// focused/main window) plus the menu bar. Falls back to every app child
+    /// only when no window resolves at all, preserving the old whole-app tree.
+    private static func resolveRoots(appElement: AXUIElement, windowIndex: Int?) -> (roots: [AXUIElement], index: Int?, title: String?) {
+        let windows = AXCore.windows(appElement)
+        var target: AXUIElement?
+        var resolvedIndex: Int?
+        if let windowIndex, windowIndex >= 0, windowIndex < windows.count {
+            target = windows[windowIndex]
+            resolvedIndex = windowIndex
+        }
+        if target == nil,
+           let focused = AXCore.elementAttribute(appElement, AXAttr.focusedWindow)
+            ?? AXCore.elementAttribute(appElement, AXAttr.mainWindow) {
+            target = focused
+            resolvedIndex = windows.firstIndex { CFEqual($0, focused) }
+        }
+        let title = target.flatMap { AXCore.stringAttribute($0, AXAttr.title) }
+        var roots: [AXUIElement] = []
+        if let target { roots.append(target) }
+        if let menuBar = AXCore.elementAttribute(appElement, AXAttr.menuBar) { roots.append(menuBar) }
+        return roots.isEmpty ? (AXCore.children(appElement), nil, nil) : (roots, resolvedIndex, title)
+    }
+
+    /// Every window of the running process, front-to-back, for `list_windows`.
+    static func listWindows(pid: pid_t) -> [WindowInfo] {
+        let appElement = AXUIElementCreateApplication(pid)
+        let windows = AXCore.windows(appElement)
+        let focused = AXCore.elementAttribute(appElement, AXAttr.focusedWindow)
+        return windows.enumerated().map { index, window in
+            WindowInfo(
+                index: index,
+                title: AXCore.stringAttribute(window, AXAttr.title),
+                frame: AXCore.frame(window),
+                main: AXCore.boolAttribute(window, AXAttr.main) == true,
+                focused: focused.map { CFEqual($0, window) } ?? false,
+                minimized: AXCore.boolAttribute(window, AXAttr.minimized) == true)
+        }
     }
 
     /// Metadata about the focused window of a running application.
