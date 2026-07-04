@@ -1,6 +1,6 @@
 // swift-tools-version:5.9
 //
-// nsai-cua — NicoSoft Computer Use helper.
+// NsComputerUseHelper — NicoSoft Computer Use helper.
 //
 // A standalone, non-sandboxed macOS agent that exposes screen capture, input
 // synthesis, and the accessibility tree over a local unix-domain socket using
@@ -15,14 +15,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "nsai-cua",
+    name: "NsComputerUseHelper",
     platforms: [
         .macOS(.v14) // SCScreenshotManager.captureImage requires macOS 14+.
     ],
     targets: [
         .executableTarget(
-            name: "nsai-cua",
-            path: "Sources/nsai-cua"
+            name: "NsComputerUseHelper",
+            path: "Sources/NsComputerUseHelper"
             // System frameworks (ScreenCaptureKit, AppKit, ApplicationServices,
             // CoreGraphics, ImageIO) autolink from their `import` statements on
             // Apple platforms; no explicit linkerSettings are required.

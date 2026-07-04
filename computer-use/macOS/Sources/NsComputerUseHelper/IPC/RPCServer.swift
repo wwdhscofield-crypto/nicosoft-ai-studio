@@ -15,7 +15,7 @@ final class RPCServer {
     private let listener: UnixSocketListener
     private let router: Router
     private let connectionQueue = DispatchQueue(
-        label: "dev.nicosoft.aistudio.cua.conn", attributes: .concurrent)
+        label: "dev.nicosoft.cuh.conn", attributes: .concurrent)
 
     init(listener: UnixSocketListener, router: @escaping Router) {
         self.listener = listener

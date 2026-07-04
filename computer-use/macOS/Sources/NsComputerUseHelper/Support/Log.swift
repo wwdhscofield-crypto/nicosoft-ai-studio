@@ -17,7 +17,7 @@ enum Log {
     /// Set from the `NSAI_CUA_DEBUG` environment variable at launch.
     static var verbose = ProcessInfo.processInfo.environment["NSAI_CUA_DEBUG"] != nil
 
-    private static let queue = DispatchQueue(label: "dev.nicosoft.aistudio.cua.log")
+    private static let queue = DispatchQueue(label: "dev.nicosoft.cuh.log")
     private static let formatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm:ss.SSS"
@@ -34,7 +34,7 @@ enum Log {
     static func error(_ message: @autoclosure () -> String) { emit(.error, message()) }
 
     private static func emit(_ level: Level, _ message: String) {
-        let line = "\(formatter.string(from: Date())) [\(level.rawValue)] nsai-cua: \(message)\n"
+        let line = "\(formatter.string(from: Date())) [\(level.rawValue)] \(Version.name): \(message)\n"
         queue.async {
             FileHandle.standardError.write(Data(line.utf8))
         }

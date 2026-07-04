@@ -17,7 +17,7 @@ final class UnixSocketListener {
 
     private var listenFD: Int32 = -1
     private var running = false
-    private let acceptQueue = DispatchQueue(label: "dev.nicosoft.aistudio.cua.accept")
+    private let acceptQueue = DispatchQueue(label: "dev.nicosoft.cuh.accept")
 
     init(path: String) {
         self.path = path

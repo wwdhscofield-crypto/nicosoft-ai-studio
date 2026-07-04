@@ -4,7 +4,7 @@ import Foundation
 
 // MARK: - Entry point
 //
-// nsai-cua runs as a long-lived accessory application: it needs an AppKit run
+// The helper runs as a long-lived accessory application: it needs an AppKit run
 // loop on the main thread for the overlay window and the Esc monitor, while the
 // JSON-RPC server accepts connections on its own background queue.
 
