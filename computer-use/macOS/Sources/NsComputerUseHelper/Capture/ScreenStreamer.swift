@@ -136,6 +136,11 @@ final class ScreenStreamer: NSObject, SCStreamOutput, SCStreamDelegate {
         guard let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) else { return }
 
         condition.lock()
+        // Drop frames delivered after stop: SCStream can hand us one more buffer between takeRunningStream()
+        // clearing state and stopCapture() completing; without this guard that late frame repopulates
+        // latestImage and next_capture keeps returning a stale frame after stop_capture. Both this callback
+        // and the stop path take `condition`, so the isRunning check here is authoritative.
+        guard isRunning else { condition.unlock(); return }
         latestImage = cgImage
         frameIndex += 1
         condition.broadcast()
