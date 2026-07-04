@@ -1,0 +1,3 @@
+# Reserved for the future Windows computer-use port (UIAutomation + SendInput).
+# Kept as a placeholder so the platform layout (computer-use/macOS, computer-use/windows)
+# is visible in the repo. See docs/computer-use-replication-research.md §6 (P3).
