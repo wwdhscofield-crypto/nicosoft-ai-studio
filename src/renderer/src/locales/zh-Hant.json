@@ -26,6 +26,8 @@
   "settings.font.custom": "自訂…",
   "settings.font.customPh": "字體名稱",
   "settings.font.preview": "預覽",
+  "settings.font.reset": "預設設定",
+  "settings.font.resetBtn": "恢復預設",
   "settings.general.title": "一般",
   "settings.general.desc": "外觀和語言。",
   "settings.privacy.title": "隱私",

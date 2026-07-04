@@ -26,6 +26,8 @@
   "settings.font.custom": "カスタム…",
   "settings.font.customPh": "フォント名",
   "settings.font.preview": "プレビュー",
+  "settings.font.reset": "デフォルト設定",
+  "settings.font.resetBtn": "デフォルトに戻す",
   "settings.general.title": "一般",
   "settings.general.desc": "外観と言語の設定を行います。",
   "settings.privacy.title": "プライバシー",

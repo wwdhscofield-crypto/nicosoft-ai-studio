@@ -26,6 +26,8 @@
   "settings.font.custom": "Custom…",
   "settings.font.customPh": "Font family name",
   "settings.font.preview": "Preview",
+  "settings.font.reset": "Defaults",
+  "settings.font.resetBtn": "Reset to defaults",
   "settings.general.title": "General",
   "settings.general.desc": "Appearance and language.",
   "settings.privacy.title": "Privacy",

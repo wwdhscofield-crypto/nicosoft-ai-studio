@@ -65,6 +65,7 @@ const applyAll = (p: AppearancePrefs): void => {
 
 interface AppearanceState extends AppearancePrefs {
   setPrefs: (patch: Partial<AppearancePrefs>) => void
+  reset: () => void // back to DEFAULTS in one step (Settings › General "reset to defaults" row)
 }
 
 export const useAppearance = create<AppearanceState>((set, get) => ({
@@ -80,7 +81,12 @@ export const useAppearance = create<AppearanceState>((set, get) => ({
     applyAll(next)
     set(next)
   },
+  reset: () => get().setPrefs({ ...DEFAULTS }),
 }))
+
+// True when every knob sits at its default — drives the reset row's disabled state.
+export const isDefaultAppearance = (p: AppearancePrefs): boolean =>
+  p.uiZoom === DEFAULTS.uiZoom && p.chatFontSize === DEFAULTS.chatFontSize && !p.sansFont && !p.monoFont
 
 // Startup (main.tsx, beside initTheme): re-apply the persisted prefs — zoom is per-webContents state
 // that does NOT survive a reload, and the inline CSS variables live on the document we just got.

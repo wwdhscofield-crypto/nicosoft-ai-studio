@@ -26,6 +26,8 @@
   "settings.font.custom": "사용자 지정…",
   "settings.font.customPh": "글꼴 이름",
   "settings.font.preview": "미리보기",
+  "settings.font.reset": "기본 설정",
+  "settings.font.resetBtn": "기본값으로 재설정",
   "settings.general.title": "일반",
   "settings.general.desc": "화면 설정과 언어를 관리합니다.",
   "settings.privacy.title": "개인정보 보호",

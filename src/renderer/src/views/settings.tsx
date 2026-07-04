@@ -21,7 +21,7 @@ import { toast } from '@/stores/toast'
 import { useTheme, type ThemePref } from '@/stores/theme'
 import { useUpdate } from '@/stores/update'
 import { useT, useLocale, LOCALE_OPTIONS, type LocalePref } from '@/stores/locale'
-import { useAppearance, UI_ZOOMS, CHAT_SIZES } from '@/stores/appearance'
+import { useAppearance, isDefaultAppearance, UI_ZOOMS, CHAT_SIZES } from '@/stores/appearance'
 
 // Friendly version display (doc 56 §7.1): a long nightly string like "1.0.1-nightly.20260619223550" shows as
 // "Nightly · 2026-06-19" with the full string in the tooltip; a stable version shows verbatim.
@@ -136,8 +136,9 @@ function FontRow({ labelKey, value, onPick }: { labelKey: string; value: string;
 }
 
 function AppearanceRows(): ReactElement {
-  const { uiZoom, chatFontSize, sansFont, monoFont, setPrefs } = useAppearance()
+  const { uiZoom, chatFontSize, sansFont, monoFont, setPrefs, reset } = useAppearance()
   const t = useT()
+  const atDefaults = isDefaultAppearance({ uiZoom, chatFontSize, sansFont, monoFont })
   return (
     <>
       <div className="set-row">
@@ -167,6 +168,12 @@ function AppearanceRows(): ReactElement {
         <div className="set-font-preview" style={{ fontSize: 'var(--chat-font-size, 14px)' }}>
           Aa 字体样例 The quick brown fox 0123 · <code>{'mono { } =>'}</code>
         </div>
+      </div>
+      <div className="set-row">
+        <span className="set-row-label">{t('settings.font.reset')}</span>
+        <button className="btn ghost sm set-font-reset" style={{ marginLeft: 'auto' }} disabled={atDefaults} onClick={reset}>
+          {t('settings.font.resetBtn')}
+        </button>
       </div>
     </>
   )
