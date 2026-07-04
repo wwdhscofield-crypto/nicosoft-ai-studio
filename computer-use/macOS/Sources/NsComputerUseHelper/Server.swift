@@ -18,6 +18,9 @@ final class Server {
     /// recently screenshotted, so the model's coordinates match what it saw.
     private var activeDisplay: DisplayInfo = Displays.main()
 
+    /// Warm streaming capture session (see start_capture / next_capture).
+    private let streamer = ScreenStreamer()
+
     private var rpc: RPCServer?
 
     init(socketPath: String) {
@@ -54,6 +57,9 @@ final class Server {
         case "list_apps": return try listApps()
         case "perform_action": return try performAction(request.params)
         case "set_active": return try setActive(request.params)
+        case "start_capture": return try startCapture(request.params)
+        case "next_capture": return try nextCapture(request.params)
+        case "stop_capture": return try stopCapture()
         default: throw CUAError.methodNotFound(request.method)
         }
     }
@@ -85,6 +91,55 @@ final class Server {
             "scale": .double(Double(shot.scale)),
             "displayID": .int(Int(shot.displayID)),
         ])
+    }
+
+    // MARK: - Streaming capture
+
+    /// Begin a warm capture session so `next_capture` can return frames without
+    /// paying the per-call setup cost of a single screenshot.
+    private func startCapture(_ params: JSONValue?) throws -> JSONValue {
+        let display = Displays.resolve(index: params?["display"]?.intValue)
+        activeDisplay = display
+        let fps = params?["fps"]?.intValue ?? 10
+        try runBlocking { try await self.streamer.start(display: display, fps: fps) }
+        return .object([
+            "ok": .bool(true),
+            "fps": .int(fps),
+            "width": .int(display.pixelWidth),
+            "height": .int(display.pixelHeight),
+            "scale": .double(Double(display.scale)),
+            "displayID": .int(Int(display.id)),
+        ])
+    }
+
+    /// Return the latest captured frame, optionally long-polling until a frame
+    /// newer than `after` arrives (default timeout 1 s). Frames default to JPEG
+    /// for streaming efficiency; pass `format:"png"` for lossless.
+    private func nextCapture(_ params: JSONValue?) throws -> JSONValue {
+        let after = params?["after"]?.intValue ?? -1
+        let timeoutMs = params?["timeoutMs"]?.intValue ?? 1000
+        guard let frame = streamer.waitForFrame(after: after, timeoutMs: timeoutMs) else {
+            throw CUAError.unavailable("no frame available (call start_capture first, or timed out)")
+        }
+        let format = params?["format"]?.stringValue ?? "jpeg"
+        let quality = params?["quality"]?.doubleValue ?? 0.7
+        guard let encoded = ImageEncoder.encode(frame.image, format: format, quality: quality) else {
+            throw CUAError.internalError("frame encoding failed")
+        }
+        return .object([
+            "frameIndex": .int(frame.index),
+            "base64": .string(encoded.data.base64EncodedString()),
+            "format": .string(encoded.format),
+            "mime": .string(encoded.mime),
+            "width": .int(frame.image.width),
+            "height": .int(frame.image.height),
+            "scale": .double(Double(activeDisplay.scale)),
+        ])
+    }
+
+    private func stopCapture() throws -> JSONValue {
+        try runBlocking { await self.streamer.stop() }
+        return .object(["ok": .bool(true)])
     }
 
     private func uiTree(_ params: JSONValue?) throws -> JSONValue {
