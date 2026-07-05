@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <objbase.h>
 
+#include <cmath>
 #include <cstdio>
 #include <stdexcept>
 #include <thread>
@@ -98,9 +99,13 @@ Server::Server() : pipeName_(resolvePipeName()) {
       throw std::runtime_error("background element has no writable value pattern (cannot type safely)");
     }
 
-    int x = p.value("x", 0);
-    int y = p.value("y", 0);
-    // Element-index targeting for click/move/etc: resolve to the element's center.
+    // Coordinate contract: the Studio tool (and the macOS helper) send `coordinate: [x, y]` in
+    // screenshot pixels — NOT scalar x/y. Element index still wins when present (element center).
+    int x = 0, y = 0;
+    if (p.contains("coordinate") && p["coordinate"].is_array() && p["coordinate"].size() >= 2) {
+      x = p["coordinate"][0].get<int>();
+      y = p["coordinate"][1].get<int>();
+    }
     if (p.contains("index") && p["index"].is_number_integer()) {
       int cx = 0, cy = 0;
       if (!uia::elementCenter(p["index"].get<int>(), cx, cy))
@@ -109,7 +114,8 @@ Server::Server() : pipeName_(resolvePipeName()) {
       y = cy;
     }
     if (action == "click") {
-      input::click(x, y, p.value("button", std::string("left")), p.value("count", 1));
+      // Tool sends `clickCount` (2 = double, 3 = triple), not `count`.
+      input::click(x, y, p.value("button", std::string("left")), p.value("clickCount", 1));
     } else if (action == "move") {
       input::moveMouse(x, y);
     } else if (action == "type" || action == "type_text") {
@@ -118,12 +124,36 @@ Server::Server() : pipeName_(resolvePipeName()) {
       const std::string key = p.value("key", std::string());
       if (!input::pressKey(key)) throw std::runtime_error("unknown key: " + key);
     } else if (action == "scroll") {
-      input::scroll(x, y, p.value("dx", 0), p.value("dy", 0));
+      // Tool sends `direction` + `amount` (lines), not dx/dy. Map to wheel deltas exactly like the
+      // macOS ScrollDirection.deltas (Actions.swift): "down" reveals content below → negative dy
+      // (Windows MOUSEEVENTF_WHEEL: positive = away from user = up, so the signs line up).
+      const std::string dir = p.value("direction", std::string("down"));
+      const int mag = static_cast<int>(std::lround(p.value("amount", 3.0)));
+      int dx = 0, dy = 0;
+      if (dir == "up") dy = mag;
+      else if (dir == "down") dy = -mag;
+      else if (dir == "left") dx = mag;
+      else if (dir == "right") dx = -mag;
+      else dy = -mag;  // default: down
+      input::scroll(x, y, dx, dy);
     } else if (action == "drag") {
-      input::drag(x, y, p.value("toX", x), p.value("toY", y),
-                  p.value("button", std::string("left")));
+      // Tool sends `start: [x, y]` + `end: [x, y]` (screenshot pixels), not x/y/toX/toY.
+      int sx = x, sy = y, ex = x, ey = y;
+      if (p.contains("start") && p["start"].is_array() && p["start"].size() >= 2) {
+        sx = p["start"][0].get<int>();
+        sy = p["start"][1].get<int>();
+      }
+      if (p.contains("end") && p["end"].is_array() && p["end"].size() >= 2) {
+        ex = p["end"][0].get<int>();
+        ey = p["end"][1].get<int>();
+      }
+      input::drag(sx, sy, ex, ey, p.value("button", std::string("left")));
     } else if (action == "wait") {
-      Sleep(static_cast<DWORD>(p.value("ms", 100)));
+      // Tool sends `duration` in SECONDS (macOS: action.duration), clamped to 30, not `ms`.
+      double secs = p.value("duration", 0.5);
+      if (secs < 0) secs = 0;
+      if (secs > 30) secs = 30;
+      Sleep(static_cast<DWORD>(secs * 1000.0));
     } else {
       throw std::runtime_error("unknown action: " + action);
     }
@@ -140,8 +170,12 @@ Server::Server() : pipeName_(resolvePipeName()) {
 
   // Permissions (no TCC on Windows) + warm screen streaming.
   rpc_.on("permission_status", [](const json&) -> json { return perms::status(); });
-  rpc_.on("start_capture", [](const json&) -> json {
-    return json{{"ok", true}, {"frameIndex", stream::start()}};
+  rpc_.on("start_capture", [](const json& p) -> json {
+    // The Studio tool reads back `fps` (the macOS helper returns it too). Windows streaming is
+    // change-driven (a frame is produced when the screen changes, not on a fixed clock), so fps is
+    // echoed as the caller's requested cap rather than a hard frame rate.
+    const int fps = p.value("fps", 10);
+    return json{{"ok", true}, {"fps", fps}, {"frameIndex", stream::start()}};
   });
   rpc_.on("next_capture", [](const json& p) -> json {
     long long after = p.value("after", (long long)0);
@@ -149,7 +183,14 @@ Server::Server() : pipeName_(resolvePipeName()) {
     if (!stream::nextFrame(after, 10000, f))
       throw std::runtime_error("no new frame (streaming stopped or 10s timeout)");
     std::string png = encodePngBase64(f.bgra.data(), f.width, f.height, f.rowPitch);
-    return json{{"pngBase64", png}, {"width", f.width}, {"height", f.height}, {"frameIndex", f.index}};
+    // Field names mirror the macOS helper's next_capture (Server.swift): the Studio tool reads
+    // `base64` (NOT `pngBase64` — that's the screenshot verb's field), plus `mime` and `scale`.
+    return json{{"base64", png},
+                {"mime", "image/png"},
+                {"width", f.width},
+                {"height", f.height},
+                {"scale", 1.0},
+                {"frameIndex", f.index}};
   });
   rpc_.on("stop_capture", [](const json&) -> json {
     stream::stop();

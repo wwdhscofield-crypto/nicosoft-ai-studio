@@ -205,6 +205,7 @@ async function ensureHelper(launchIfNeeded: boolean): Promise<HelperClient> {
   if (client.connected()) return client
   try {
     await client.connect()
+    syncActiveBanner() // a run may already be active — its first action raced ahead of this connect
     return client
   } catch {
     /* not running (or stale endpoint) — maybe launch below */
@@ -217,6 +218,7 @@ async function ensureHelper(launchIfNeeded: boolean): Promise<HelperClient> {
     await delay(200)
     try {
       await client.connect()
+      syncActiveBanner() // banner missed at mark time (helper was cold) — raise it now it's up
       return client
     } catch {
       /* keep polling */
@@ -346,6 +348,14 @@ const activeRuns = new Set<string>()
 export function markComputerUseActive(runId: string | undefined): void {
   activeRuns.add(runId ?? 'default')
   if (!client.connected()) return
+  void client.call('set_active', { active: true, label: platform.overlayLabel }, { timeoutMs: 1_500 }).catch(() => undefined)
+}
+
+// A connection just came up (ensureHelper). If a run is already active — its first action raced ahead
+// of the socket, so markComputerUseActive found no connection and skipped set_active — raise the banner
+// now, so the overlay reflects the live run from its very FIRST action on a cold start, not the second.
+function syncActiveBanner(): void {
+  if (activeRuns.size === 0 || !client.connected()) return
   void client.call('set_active', { active: true, label: platform.overlayLabel }, { timeoutMs: 1_500 }).catch(() => undefined)
 }
 
