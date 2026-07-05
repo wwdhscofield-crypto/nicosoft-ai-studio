@@ -34,11 +34,14 @@ add_executable(NsComputerUseHelper
   src/ipc/RpcServer.cpp
   src/ipc/NamedPipeListener.cpp
   src/capture/ScreenCapture.cpp
+  src/capture/ScreenStreamer.cpp
   src/capture/ImageEncoder.cpp
   src/input/InputSynthesizer.cpp
   src/input/KeyCodes.cpp
   src/accessibility/ElementRegistry.cpp
   src/accessibility/UiaTree.cpp
+  src/overlay/Overlay.cpp
+  src/permissions/Permissions.cpp
 )
 
 target_include_directories(NsComputerUseHelper PRIVATE src)
@@ -50,6 +53,7 @@ target_link_libraries(NsComputerUseHelper PRIVATE
   windowscodecs # WIC PNG encode
   ole32        # CoCreateInstance / CreateStreamOnHGlobal / CoInitializeEx
   runtimeobject # WinRT activation (RoGetActivationFactory) for C++/WinRT
+  gdiplus      # GDI+ for the overlay banner (per-pixel alpha: 50% bg, opaque text)
 )
 
 target_compile_definitions(NsComputerUseHelper PRIVATE

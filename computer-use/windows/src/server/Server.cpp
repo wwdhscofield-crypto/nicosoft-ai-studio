@@ -5,11 +5,15 @@
 
 #include <cstdio>
 #include <stdexcept>
+#include <thread>
 
 #include "accessibility/UiaTree.h"
 #include "capture/ImageEncoder.h"
 #include "capture/ScreenCapture.h"
+#include "capture/ScreenStreamer.h"
 #include "input/InputSynthesizer.h"
+#include "overlay/Overlay.h"
+#include "permissions/Permissions.h"
 #include "support/Version.h"
 
 namespace nicosoft {
@@ -134,6 +138,30 @@ Server::Server() : pipeName_(resolvePipeName()) {
   rpc_.on("list_apps", [](const json&) -> json { return uia::listApps(); });
   rpc_.on("frontmost_window", [](const json&) -> json { return uia::frontmostWindow(); });
 
+  // Permissions (no TCC on Windows) + warm screen streaming.
+  rpc_.on("permission_status", [](const json&) -> json { return perms::status(); });
+  rpc_.on("start_capture", [](const json&) -> json {
+    return json{{"ok", true}, {"frameIndex", stream::start()}};
+  });
+  rpc_.on("next_capture", [](const json& p) -> json {
+    long long after = p.value("after", (long long)0);
+    stream::Frame f;
+    if (!stream::nextFrame(after, 10000, f))
+      throw std::runtime_error("no new frame (streaming stopped or 10s timeout)");
+    std::string png = encodePngBase64(f.bgra.data(), f.width, f.height, f.rowPitch);
+    return json{{"pngBase64", png}, {"width", f.width}, {"height", f.height}, {"frameIndex", f.index}};
+  });
+  rpc_.on("stop_capture", [](const json&) -> json {
+    stream::stop();
+    return json{{"ok", true}};
+  });
+
+  // Overlay banner — Studio raises/lowers it via set_active as runs start/finish.
+  rpc_.on("set_active", [](const json& p) -> json {
+    Overlay::instance().setActive(p.value("active", false));
+    return json{{"ok", true}};
+  });
+
   listener_ = std::make_unique<NamedPipeListener>(
       pipeName_, [this](const std::string& line) { return rpc_.handleLine(line); });
 }
@@ -141,9 +169,23 @@ Server::Server() : pipeName_(resolvePipeName()) {
 void Server::run() {
   std::printf("%s %s ready \xE2\x80\x94 pipe %ls\n", kName, kVersion, pipeName_.c_str());
   std::fflush(stdout);
-  listener_->run();  // blocks on the accept loop
+
+  // The overlay window and the global Esc hook need a message loop on this
+  // thread, so the pipe accept loop moves to a background thread and the main
+  // thread pumps messages.
+  Overlay::instance().init();
+  std::thread([this] { listener_->run(); }).detach();
+
+  MSG msg;
+  while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+    TranslateMessage(&msg);
+    DispatchMessageW(&msg);
+  }
 }
 
-Server::~Server() { CoUninitialize(); }
+Server::~Server() {
+  stream::stop();
+  CoUninitialize();
+}
 
 }  // namespace nicosoft
