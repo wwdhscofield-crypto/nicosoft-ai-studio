@@ -1,4 +1,4 @@
-// Merged "all experts" view = the eight built-in roles (from STUDIO_DATA) + every user-defined
+// Merged "all experts" view = the nine built-in roles (from STUDIO_DATA) + every user-defined
 // custom role (from useCustomRoles). Hides the prototype-era 'ci' mock since real customs now come
 // from the DB. EXPERT_BY_ID lookups need to consult both sources — built-ins are stable, customs
 // shift as the user creates/deletes them.
