@@ -241,7 +241,7 @@ function EventDetailModal({ ev, onClose }: { ev: LaneEvent; onClose: () => void 
     <div className="overlay" onMouseDown={onClose}>
       <div className="dialog ev-detail" onMouseDown={(e) => e.stopPropagation()}>
         <div className="dialog-head">
-          <span className="dh-title"><Ico size={15} /> {ev.toolName}</span>
+          <span className="dh-title"><Ico size={15} />{ev.toolName}</span>
           {ev.createdAt ? <span className="ev-detail-ts">{fmtClock(ev.createdAt)}</span> : null}
           <button className="icon-btn" onClick={onClose}><Icons.x size={16} /></button>
         </div>
