@@ -11,6 +11,7 @@ import { STUDIO_DATA } from '@/data/studio-data'
 import { Avatar, Segmented, Switch } from '@/components/primitives'
 import { Icons } from '@/components/icons'
 import { Dropdown } from '@/views/profile'
+import { ConfirmDialog } from '@/components/dialogs/confirm-dialog'
 
 import { toast } from '@/stores/toast'
 import { useT } from '@/stores/locale'
@@ -412,6 +413,7 @@ function ScheduledEditor({
     }
   }
 
+  const [confirmDel, setConfirmDel] = useState(false)
   const del = async (): Promise<void> => {
     try {
       if (task) await window.api.scheduled.remove(task.id)
@@ -432,11 +434,21 @@ function ScheduledEditor({
           {task ? 'Edit task' : 'New task'}
         </span>
         {task && (
-          <button className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={del} title="Delete task">
+          <button className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={() => setConfirmDel(true)} title="Delete task">
             <Icons.trash size={15} /> Delete
           </button>
         )}
       </div>
+      {confirmDel && task && (
+        <ConfirmDialog
+          title={t('scheduled.deleteTitle')}
+          body={t('scheduled.deleteBody', { name: task.name })}
+          confirmLabel={t('scheduled.deleteAction')}
+          danger
+          onConfirm={() => void del()}
+          onClose={() => setConfirmDel(false)}
+        />
+      )}
       <div className="sched-body">
         <div className="sched-inner editor">
           <div className="pf-field">

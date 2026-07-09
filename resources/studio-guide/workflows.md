@@ -4,7 +4,7 @@ A workflow is a saved multi-expert procedure: a small script that pins which exp
 
 ## Create and edit
 
-- "New workflow" opens the editor; "Import" loads an exported workflow file (row menu → Export writes one).
+- "New workflow" opens the editor; "Import" loads an exported workflow file (row menu → Export writes one). The row menu also edits, duplicates and deletes a workflow — deleting asks for confirmation (the script and run history go with it).
 - The editor shows a **form** (Name, Description, Params) and the **script** side by side — they stay in sync in both directions as you type.
 - **Params** (⇄ `meta.params`) define the run form: name, type (string / number / boolean / folder), optional default.
 - The script body reads the picked values through the **`args`** global — a param named `url` is `args.url` (there is no `params` variable at run time). `args.runAt` always carries the fire time as an ISO string.

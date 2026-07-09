@@ -13,6 +13,7 @@ import type { ReactElement } from 'react'
 import { Icons } from '@/components/icons'
 import { Avatar, Switch } from '@/components/primitives'
 import { Modal } from '@/components/modal'
+import { ConfirmDialog } from '@/components/dialogs/confirm-dialog'
 import { RowMenu } from '@/views/extensions'
 import { useAllExperts } from '@/lib/all-experts'
 import { roleRunsAgentLoop } from '@/stores/chat'
@@ -289,6 +290,7 @@ function WorkflowList({
   const expertName = (id: string): string => byId[id]?.name ?? id
   const [importPreview, setImportPreview] = useState<{ script: string; lint: LintDto } | null>(null)
   const [runForm, setRunForm] = useState<WorkflowDto | null>(null)
+  const [toDelete, setToDelete] = useState<WorkflowDto | null>(null)
   const [autoActivate, setAutoActivate] = useState(false)
   useEffect(() => {
     void window.api.settings.get<boolean>(AUTO_ACTIVATE_KEY).then((v) => { if (v !== null) setAutoActivate(v) })
@@ -341,7 +343,8 @@ function WorkflowList({
       .then((path) => { if (path) toast.success(`exported ${w.name}.nsw`) })
       .catch(() => toast.error('export failed'))
   }
-  const onDelete = (w: WorkflowDto): void => {
+  // Delete goes through a confirm first (RowMenu → setToDelete) — the script + run history are gone for good.
+  const doDelete = (w: WorkflowDto): void => {
     window.api.workflows
       .remove(w.id)
       .then(() => { reload(); toast.success('workflow deleted') })
@@ -438,7 +441,7 @@ function WorkflowList({
                           { label: 'Edit', onClick: () => onEdit(w.id) },
                           { label: 'Duplicate', onClick: () => onDuplicate(w) },
                           { label: 'Export', onClick: () => onExport(w) },
-                          { label: 'Delete', danger: true, onClick: () => onDelete(w) },
+                          { label: 'Delete', danger: true, onClick: () => setToDelete(w) },
                         ]}
                       />
                     </div>
@@ -462,6 +465,16 @@ function WorkflowList({
           workflow={runForm}
           onClose={() => setRunForm(null)}
           onRun={(params) => { const w = runForm; setRunForm(null); startRun(w, params) }}
+        />
+      )}
+      {toDelete && (
+        <ConfirmDialog
+          title={t('workflows.deleteTitle')}
+          body={t('workflows.deleteBody', { name: toDelete.name })}
+          confirmLabel={t('workflows.deleteAction')}
+          danger
+          onConfirm={() => doDelete(toDelete)}
+          onClose={() => setToDelete(null)}
         />
       )}
     </div>

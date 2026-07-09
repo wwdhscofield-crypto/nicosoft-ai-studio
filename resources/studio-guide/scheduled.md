@@ -17,7 +17,7 @@ Background automation. A **scheduled task** fires on a trigger and runs a chain 
 | Workflow | Run an enabled workflow (with parameter values) |
 | Command | Run a shell command or a program directly — no expert, no model, no tokens |
 
-Tasks can be enabled/disabled, edited and deleted from their row. When a task fires, the work lands as conversation turns from the expert that ran it.
+Tasks can be enabled/disabled, edited and deleted from their row (deleting asks for confirmation — the task's run history goes with it). When a task fires, the work lands as conversation turns from the expert that ran it.
 
 ### Command steps
 
