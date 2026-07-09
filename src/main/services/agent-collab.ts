@@ -4,7 +4,7 @@
 // persistence stays with the caller (coordinator-collab).
 
 import { createWriteStream } from 'node:fs'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, realpath } from 'node:fs/promises'
 import { dataDir } from '../db/connection'
 import { ulid } from '../db/id'
 import { join } from 'node:path'
@@ -215,6 +215,17 @@ export async function runCollabSession(
   // interleave whole lines, never fragments.
   const sessionDir = join(dataDir(), 'sessions', convId)
   await mkdir(sessionDir, { recursive: true })
+  // A cwd-less collaboration (the user picked no folder for the conversation) falls back to the
+  // conversation's shared scratch workspace — the SAME guard the solo loop has (agent-dispatch's
+  // runAgentLoop): without it the experts' Bash/file tools resolve relative paths against the app's
+  // process cwd (live 2026-07-09: a collab Write landed hello.txt in the REPO ROOT). One shared
+  // workspace, not per-expert — collaborators share their working dir by design.
+  if (experts.some((x) => !x.cwd)) {
+    const scratch = join(sessionDir, 'workspace')
+    await mkdir(scratch, { recursive: true })
+    const normalized = await realpath(scratch).catch(() => scratch)
+    for (const x of experts) if (!x.cwd) x.cwd = normalized
+  }
   const transcript = createWriteStream(join(sessionDir, 'transcript.jsonl'), { flags: 'a' })
   transcript.on('error', () => {}) // a failed write (disk full / perms) must not crash the main process
   const log = (obj: Record<string, unknown>): void => void transcript.write(JSON.stringify({ ...obj, ts: Date.now() }) + '\n')

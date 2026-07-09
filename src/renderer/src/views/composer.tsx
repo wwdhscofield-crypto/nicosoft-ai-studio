@@ -17,7 +17,7 @@ import { GitStatusChip } from '@/components/git-status-chip'
 import { resolveConvCwd } from '@/lib/resolve-cwd'
 import { useWorkspace } from '@/stores/workspace'
 import { useMemoryCloud } from '@/stores/memory-cloud'
-import { useChat, roleHasAgent, roleHasImageGen } from '@/stores/chat'
+import { useChat, roleHasAgent, roleHasImageGen, roleRunsAgentLoop } from '@/stores/chat'
 import { useRoleBinding, type RoleBindingControls } from '@/lib/use-role-binding'
 import type { EndpointDto } from '@/lib/api'
 import { fileToImage, imagesFromClipboard, type ImageAttachment } from '@/lib/image'
@@ -210,7 +210,11 @@ export function Composer({
       thinking,
       text,
       images: images?.length ? images : undefined,
-      cwd: agent ? effectiveCwd : undefined,
+      // cwd gates on the CAPABILITY predicate (roleRunsAgentLoop), not the routing one (roleHasAgent):
+      // Danny's coordinator.run consumes the conversation's cwd too — every dispatched / collab expert
+      // operates in it. Gating on roleHasAgent silently dropped the folder for coordinator conversations
+      // (live 2026-07-09: the collab ran cwd-less and wrote into the app's process cwd).
+      cwd: roleRunsAgentLoop(expert.id) ? effectiveCwd : undefined,
       contextWindow: agent ? b.contextLength || undefined : undefined,
       permissionMode: agent ? mode : undefined,
       imageModel: roleHasImageGen(expert.id) ? b.imageModel : undefined
@@ -472,11 +476,11 @@ export function Composer({
             </span>
           </div>
         ) : null}
-        {/* Folder picker on every chat — per-role cwd (cwdByExpert). For dispatchable agent roles it's
-            the working dir + restricted-read boundary; for Danny it scopes his read-only direct kit
-            (coordinator.run reads cwdByExpert). Every built-in role has an agent loop today. The git
-            chip beside it shows the CC-style working ± + Commit/Push handoff button — only for roles
-            whose kit can actually run git (Danny's read-only direct kit can't). */}
+        {/* Folder picker on every chat — the CONVERSATION's cwd. For dispatchable agent roles it's the
+            working dir + restricted-read boundary; for Danny it rides coordinator.run as the dir every
+            dispatched / collab expert operates in (and scopes his read-only direct kit). The git chip
+            beside it shows the CC-style working ± + Commit/Push handoff button — only for roles whose
+            kit can actually run git (Danny's read-only direct kit can't). */}
         <div className="cmp-path-row">
           <PathBar cwd={effectiveCwd} onPick={(dir) => setCwd(dir)} />
           {agent ? <GitStatusChip cwd={gitCwd} disabled={!ready || streaming || compacting} onAction={sendGitPreset} /> : null}
