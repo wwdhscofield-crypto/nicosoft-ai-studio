@@ -534,6 +534,7 @@ function ProjectDetail({
   const [goalExpanded, setGoalExpanded] = useState(false)
   const [eventDetail, setEventDetail] = useState<LaneEvent | null>(null)
   const [running, setRunning] = useState(false)
+  const [streamId, setStreamId] = useState('') // lifted from send()'s closure so the dock Stop button can abort the run
   const [draft, setDraft] = useState('')
   const [services, setServices] = useState<{ name: string; port: number | null; status: string }[]>([])
 
@@ -580,10 +581,11 @@ function ProjectDetail({
     if (!convId || !prompt || running) return
     setDraft('')
     setRunning(true)
-    let streamId = ''
+    let sid = '' // the listeners filter on the closure value; the state copy is for the Stop button
     try {
       await window.api.conversations.append(convId, { author: 'user', content: prompt })
-      ;({ streamId } = await window.api.coordinator.run({ convId, prompt, cwd: project.cwd ?? null }))
+      ;({ streamId: sid } = await window.api.coordinator.run({ convId, prompt, cwd: project.cwd ?? null }))
+      setStreamId(sid)
     } catch (e) {
       // The run never started — unstick the dock instead of leaving `running` true forever.
       setRunning(false)
@@ -592,22 +594,28 @@ function ProjectDetail({
     }
     // BOTH terminal events must settle the dock: a run ending in coordinator:error never fires onDone —
     // listening to done alone leaked a listener per failed run and left the dock disabled until reopen.
+    // A Stop lands here too: the abort rejects the run, coordinator:error carries the reason.
     const settle = (): void => {
       offDone()
       offErr()
       setRunning(false)
+      setStreamId('')
     }
     const offDone = window.api.coordinator.onDone(async (d) => {
-      if (d.streamId !== streamId) return
+      if (d.streamId !== sid) return
       settle()
       const msgs = await window.api.conversations.messages(convId)
       setCoordinatorReply([...msgs].reverse().find((m) => m.author !== 'user')?.content ?? '')
     })
     const offErr = window.api.coordinator.onError((d) => {
-      if (d.streamId !== streamId) return
+      if (d.streamId !== sid) return
       settle()
       setCoordinatorReply(`⚠ ${d.message}`)
     })
+  }
+
+  const stopRun = (): void => {
+    if (streamId) void window.api.coordinator.stop(streamId)
   }
 
   const resolve = async (id: string, ok: boolean): Promise<void> => {
@@ -759,9 +767,15 @@ function ProjectDetail({
             placeholder={convId ? `Reply to ${STUDIO_DATA.EXPERT_BY_ID.coordinator?.name ?? 'the coordinator'}, or send the team a new instruction…` : 'No conversation linked to this project yet'}
             disabled={!convId || running}
           />
-          <button className="wb-dock-send" onClick={() => void send()} disabled={!convId || running || !draft.trim()}>
-            <Icons.arrowUp size={16} />
-          </button>
+          {running ? (
+            <button className="cmp-stop" onClick={stopRun} disabled={!streamId} title={t('conv.stop')}>
+              <span className="stop-sq" /> {t('conv.stop')}
+            </button>
+          ) : (
+            <button className="wb-dock-send" onClick={() => void send()} disabled={!convId || !draft.trim()}>
+              <Icons.arrowUp size={16} />
+            </button>
+          )}
         </div>
       </div>
       {eventDetail && <EventDetailModal ev={eventDetail} onClose={() => setEventDetail(null)} />}

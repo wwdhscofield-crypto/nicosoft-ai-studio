@@ -10,6 +10,7 @@ A project is a multi-expert collaboration with a goal, an optional working folde
 ## While it runs
 
 - The project card shows the phase chip, a progress bar and the avatars of the experts involved.
+- The dock at the bottom of a project sends the team a new instruction; while a run is in flight the send button becomes **Stop** — one click aborts the run.
 - Plans can pause for your decision: "Plan ready for review" → **Approve & run** or **Revise**; approve/reject actions are also available from the project surface.
 - The Overview page's Activity tab shows live, currently-streaming work including collaborations.
 
