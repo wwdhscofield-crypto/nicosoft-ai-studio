@@ -42,11 +42,11 @@ The "Running monitors" section lists active watchers: what they watch, "every {i
 
 Experts can manage all of this themselves — ask in plain language:
 
-- `schedule_create` / `schedule_list` / `schedule_delete` — recurring tasks ("every weekday at 9:00 run my report workflow and email me the summary" — Joan is the natural pick).
+- `schedule_create` / `schedule_list` / `schedule_delete` — recurring tasks ("every weekday at 9:00 run my report workflow and email me the summary" — Joan is the natural pick). This can include a **Command** step, so an expert can schedule a script or program for you ("back up my project folder every night at 2am").
 - `schedule_wakeup` — a one-off self wake-up ("check the build again in 20 minutes").
 - `monitor_start` / `monitor_stop` — watchers ("watch this file and tell me when it changes").
 
-You'll see these as tool cards in the conversation, and the created items appear in the Scheduled view.
+You'll see these as tool cards in the conversation, and the created items appear in the Scheduled view. When an expert schedules a **command**, its exact command line is echoed back in the tool card (so you can see precisely what will run unattended), and the task's row in the Scheduled view is tagged "by \<expert\>" — a command runs with your full permissions and isn't confined to the working directory, so review it. You can also run any task on demand from the composer with `/schedule <id|name>`.
 
 ## Notes
 

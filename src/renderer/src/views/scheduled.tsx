@@ -302,6 +302,14 @@ function ScheduledList({
                   <div className="sched-name-line">
                     <span className="sched-name">{t.name}</span>
                     <span className="sched-trigger">{triggerLabel(t)}</span>
+                    {/* D4 visibility: an agent-created task shows who scheduled it, so a task that runs
+                        commands unattended is never anonymous. Either provenance field (role or conversation)
+                        marks it agent-created; a hand-created task carries neither. */}
+                    {t.creatorRoleId || t.creatorConvId ? (
+                      <span className="sched-creator" title="Scheduled by an assistant">
+                        by {t.creatorRoleId ? (STUDIO_DATA.EXPERT_BY_ID[t.creatorRoleId]?.name ?? t.creatorRoleId) : 'an assistant'}
+                      </span>
+                    ) : null}
                   </div>
                   <div className="sched-chain">
                     {t.steps.map((s, i) => (

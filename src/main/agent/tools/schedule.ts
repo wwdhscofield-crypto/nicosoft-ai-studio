@@ -43,15 +43,15 @@ export const scheduleCreateTool = buildTool({
       .array(
         z.object({
           kind: z
-            .enum(['expert', 'tool', 'email', 'project', 'workflow'])
+            .enum(['expert', 'tool', 'email', 'project', 'workflow', 'command'])
             .describe(
-              'expert = run a role; tool = use an MCP tool; email = send via an email MCP (or draft if none connected); project = create/advance a Project; workflow = run an existing SAVED workflow (by name — this schedules it, it does not define one)'
+              'expert = run a role; tool = use an MCP tool; email = send via an email MCP (or draft if none connected); project = create/advance a Project; workflow = run an existing SAVED workflow (by name — this schedules it, it does not define one); command = run a shell command or a program DIRECTLY (no role, no model, no tokens)'
             ),
           prompt: z
             .string()
             .optional()
             .describe(
-              "What this step does — required for every kind EXCEPT workflow (the saved script is the instruction). Each step also receives the previous step's output, so later steps build on earlier ones."
+              "What this step does — required for every kind EXCEPT workflow and command (those have their own fields). Each step also receives the previous step's output, so later steps build on earlier ones."
             ),
           role: z
             .string()
@@ -63,6 +63,17 @@ export const scheduleCreateTool = buildTool({
           projectId: z.string().optional().describe('project (advance): the target project id'),
           workflow: z.string().optional().describe('workflow: the saved workflow by its EXACT name (must be enabled — drafts cannot be scheduled)'),
           params: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional().describe('workflow: run parameters (omitted params use their defaults)'),
+          // command fields — the command is NOT confined to the working directory and runs with the user's
+          // full permissions. Always tell the user the exact command you are scheduling before you call this.
+          mode: z.enum(['shell', 'program']).optional().describe('command: "shell" (default) runs `command` in a login shell; "program" runs `program` + `args` with NO shell'),
+          command: z.string().optional().describe('command (shell mode): the command line to run'),
+          program: z.string().optional().describe('command (program mode): absolute path of the executable'),
+          args: z.array(z.string()).optional().describe('command (program mode): arguments, passed verbatim'),
+          shell: z.enum(['auto', 'zsh', 'bash', 'sh', 'powershell', 'cmd']).optional().describe('command (shell mode): which shell; default "auto" = the login shell (cmd on Windows)'),
+          working_dir: z.string().optional().describe('command: working directory override; defaults to the task cwd'),
+          timeout_sec: z.number().optional().describe('command: kill the process tree after this many seconds (default 600)'),
+          on_failure: z.enum(['stop', 'continue']).optional().describe('command: on a non-zero exit, "stop" (default) aborts the chain or "continue" carries on'),
+          env: z.record(z.string(), z.string()).optional().describe('command: extra environment variables (never put secrets here)'),
         })
       )
       .min(1)
@@ -88,9 +99,13 @@ export const scheduleCreateTool = buildTool({
     'inside "cwd" (full permission there), and its output is piped into the next step — so one task can hand ' +
     'work across roles. A "workflow" step runs an existing SAVED workflow by name (enabled only — never a ' +
     'draft; the run is checked again at fire time) and pipes its return text onward — use it when the user ' +
-    'wants a saved workflow on a schedule. Keep it session-only (durable:false) unless the user wants it to ' +
-    'survive restarts. Email/send is NOT built in: a step that should email must go through an email MCP ' +
-    'tool or leave a draft. Use for "remind me / run X every / at <time> do Y / run <workflow> every morning".',
+    'wants a saved workflow on a schedule. A "command" step runs a shell command or a program DIRECTLY with ' +
+    'no role and no tokens — use it for scripts, backups, syncs. A command runs UNATTENDED with the user\'s ' +
+    'full permissions and is NOT confined to the working directory, so ALWAYS state the exact command you ' +
+    'are scheduling to the user in your reply, and only schedule commands that came from the user or that ' +
+    'they would clearly expect. Keep it session-only (durable:false) unless the user wants it to survive ' +
+    'restarts. Email/send is NOT built in: a step that should email must go through an email MCP tool or ' +
+    'leave a draft. Use for "remind me / run X every / at <time> do Y / run <workflow> every morning".',
   isReadOnly: () => false,
   isConcurrencySafe: () => false,
   async call(input, ctx) {
@@ -110,6 +125,27 @@ export const scheduleCreateTool = buildTool({
           }
           workflowService.preflightRun(w.id, s.params ?? {}) // throws with the concrete reason → the task is refused
           return { kind: s.kind, prompt: '', workflowId: w.id, workflowParams: s.params }
+        }
+        if (s.kind === 'command') {
+          // Infer the mode from which field the agent populated when it omitted `mode` (setting `program`
+          // without `mode` clearly means program mode) — otherwise a program step would hit a misleading
+          // "needs command" error. An explicit `mode` always wins.
+          const mode = s.mode ?? (s.program?.trim() ? 'program' : 'shell')
+          if (mode === 'shell' && !s.command?.trim()) throw new Error('a shell command step needs "command"')
+          if (mode === 'program' && !s.program?.trim()) throw new Error('a program command step needs "program" (the executable path)')
+          return {
+            kind: s.kind,
+            prompt: '',
+            mode,
+            command: s.command,
+            program: s.program,
+            args: s.args,
+            shell: s.shell,
+            stepCwd: s.working_dir,
+            timeoutSec: s.timeout_sec,
+            onFailure: s.on_failure,
+            env: s.env,
+          }
         }
         if (!s.prompt) throw new Error(`a ${s.kind} step needs a prompt`)
         return {
@@ -138,11 +174,25 @@ export const scheduleCreateTool = buildTool({
       Date.now()
     )
     const chain = task.steps.map(stepLabel).join(' → ')
+    // D4 visibility: echo any command step VERBATIM in the receipt so the exact command the task will run
+    // unattended is on the record (the user sees it in the tool result) — a raw command isn't confined to
+    // the cwd and runs with full permissions.
+    const commandEcho = task.steps
+      .map((s, i) =>
+        s.kind === 'command'
+          ? `  step ${i + 1} command (${(s.mode ?? 'shell') === 'program' ? 'program' : 'shell'}): ${
+              (s.mode ?? 'shell') === 'program' ? [s.program ?? '', ...(s.args ?? [])].join(' ') : (s.command ?? '')
+            }`
+          : null
+      )
+      .filter(Boolean)
+      .join('\n')
     return {
       data:
         `Scheduled "${task.name}" (${task.id}) — next run ${new Date(task.nextRunAt).toLocaleString()} ` +
         `(${task.recurring ? `recurring ${task.cron}` : 'one-shot'}${task.durable ? ', durable' : ', session-only'}). ` +
-        `Steps: ${chain}.`,
+        `Steps: ${chain}.` +
+        (commandEcho ? `\nCommands (run unattended with your full permissions, NOT confined to the working dir):\n${commandEcho}` : ''),
     }
   },
   mapResult: stringResult,

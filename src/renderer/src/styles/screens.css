@@ -257,6 +257,8 @@
 .cmd-desc { color: var(--text-3); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* workflow entries: right-aligned params preview (prototype Screen 4 `.m-cmd .params`) */
 .cmd-params { margin-left: auto; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; color: var(--text-4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; flex-shrink: 0; }
+/* scheduled task creator badge (D4): "by <role>" on an agent-created task */
+.sched-creator { font-size: 11px; color: var(--text-accent, var(--text-3)); background: var(--bg-accent, var(--bg-2)); border-radius: 5px; padding: 1px 7px; white-space: nowrap; }
 /* transient /workflow · /schedule help + list block: local, not persisted, never sent to the model */
 .cmd-output { position: relative; margin: 0 0 6px; padding: 8px 26px 8px 11px; background: var(--bg-2); border: 1px solid var(--border-1); border-radius: var(--r-md); max-height: 200px; overflow-y: auto; }
 .cmd-output-line { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; color: var(--text-2); line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
