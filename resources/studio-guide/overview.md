@@ -35,6 +35,7 @@ The Overview's Activity tab tracks **assignments**: work items the team received
 - **Done today** — what finished today, with its outcome (✓ done · ✗ failed · ■ stopped) and when. On a quiet day it shows the most recent finished items instead (tagged "recent").
 - **Collaboration projects** — open (non-archived) projects with their step progress, as before.
 - Assignments are created and closed automatically — nothing to manage. Stopping a run (or deleting its project mid-run) marks the item stopped, honestly, never "done".
+- The **Assignments** tab keeps the permanent list — every work item ever, grouped by date (Today / Yesterday / earlier) and filterable by role, project and status. "View all →" on the Done section jumps there.
 
 ## Finding your way around
 

@@ -100,7 +100,7 @@ const CONTINUE_RE = /^(继续|接着(来|做|改|干)?|go on|continue|keep going
 const QUESTION_RE =
   /(什么|为什么|怎么|如何|哪个|哪些|是不是|能不能|可不可以|行不行|好不好|吗\s*[??]?\s*$|[??]\s*$)|^(what|why|how|when|where|who|which|is|are|am|was|were|do|does|did|can|could|would|should|will|explain|tell me|what's|who's)\b/i
 const WORK_RE =
-  /(修复|修一下|修个|修掉|修好|排查|解决|实现|添加|新增|加个|加一个|加上|改成|改掉|改一下|重构|优化|部署|上线|升级|迁移|集成|接入|删除|删掉|去掉|写个|写一个|写好|做个|做一个|生成一个|搭个|搭建|处理一下|处理这|清理|补上|补齐|帮我(修|改|加|写|做|删|查|建|部署|处理|清理))|\b(fix|implement|add|build|create|refactor|deploy|migrate|integrate|remove|delete|rename|update|upgrade|write|make|set\s?up|debug|resolve|handle|patch|install|configure|optimize|clean\s?up)\b/i
+  /(修复|修一下|修个|修掉|修好|排查|解决|实现|添加|新增|加个|加一个|加上|改成|改掉|改一下|重构|优化|部署|上线|升级|迁移|集成|接入|删除|删掉|去掉|写个|写一个|写好|做个|做一个|生成一个|搭个|搭建|处理一下|处理这|清理|补上|补齐|帮我(修|改|加|写|做|删|查|建|部署|处理|清理))|\b(fix|implement|add|append|build|create|refactor|deploy|migrate|integrate|remove|delete|rename|update|upgrade|write|make|set\s?up|debug|resolve|handle|patch|install|configure|optimize|clean\s?up)\b/i
 
 export function classifyHeuristic(message: string, prevTitle?: string | null): WorkClassification {
   const text = message.trim()

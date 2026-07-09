@@ -279,11 +279,13 @@ function TeamReady({ onOpenExpert }: { onOpenExpert: (id: string) => void }): Re
 function ActivityTimeline({
   onOpenExpert,
   onOpenConv,
-  onOpenProject
+  onOpenProject,
+  onViewAll
 }: {
   onOpenExpert: (id: string) => void
   onOpenConv: (convId: string) => void
   onOpenProject: (id: string) => void
+  onViewAll: () => void
 }): ReactElement {
   const t = useT()
   const active = useAssignments((s) => s.active)
@@ -352,6 +354,7 @@ function ActivityTimeline({
               <span>{t('overview.doneToday')}</span>
               {recentFallback && <span className="asg-recent-tag">{t('overview.recent')}</span>}
               <span className="tl-count">{doneList.length}</span>
+              <button className="asg-viewall" onClick={onViewAll}>{t('overview.viewAll')} →</button>
             </div>
             <div className="tl-list">
               {doneList.map((b) => (
@@ -374,6 +377,121 @@ function ActivityTimeline({
         <div className="tl-foot">
           <span>{t('overview.foot')}</span>
         </div>
+      </div>
+    </div>
+  )
+}
+
+/* — The permanent ledger (third tab): every assignment ever, grouped by START date, filterable by role /
+   project / status. Batch-level filtering — a batch matches when any of its rows does (that's the item
+   the user perceives); live batches render as cards, settled ones as done rows. — */
+function AssignmentsPage({ onOpenConv, onOpenProject }: { onOpenConv: (convId: string) => void; onOpenProject: (id: string) => void }): ReactElement {
+  const t = useT()
+  const [rows, setRows] = useState<AssignmentDto[]>([])
+  const [projects, setProjects] = useState<ProjectDto[]>([])
+  const [roleFilter, setRoleFilter] = useState('all')
+  const [projFilter, setProjFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [now, setNow] = useState(() => Date.now())
+  // The tab owns its full-history fetch (the app-lifetime store only keeps the Overview's bounded views);
+  // effect-scoped subscription so a closed tab stops refetching.
+  useEffect(() => {
+    const refetch = (): void => {
+      void window.api.assignments.list({}).then(setRows)
+    }
+    refetch()
+    return window.api.assignments.onChanged(refetch)
+  }, [])
+  useEffect(() => {
+    const refetch = (): void => {
+      void window.api.project.list().then(setProjects)
+    }
+    refetch()
+    return window.api.project.onUpdated(refetch)
+  }, [])
+
+  const batches = groupBatches(rows).sort((a, b) => b.startedAt - a.startedAt)
+  const visible = batches.filter(
+    (b) =>
+      (roleFilter === 'all' || b.rows.some((r) => r.roleId === roleFilter)) &&
+      (projFilter === 'all' || b.projectId === projFilter) &&
+      (statusFilter === 'all' || (statusFilter === 'in_progress' ? b.live : !b.live && batchGlyph(b) === statusFilter))
+  )
+  const anyLive = visible.some((b) => b.live)
+  useEffect(() => {
+    if (!anyLive) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [anyLive])
+
+  // Filter option sets come from the data itself — only roles/projects that actually own assignments.
+  const roleIds = [...new Set(rows.map((r) => r.roleId))]
+  const projIds = [...new Set(rows.map((r) => r.projectId).filter((x): x is string => !!x))]
+  const projTitle = (id: string | null): string | null => (id ? (projects.find((p) => p.id === id)?.title ?? null) : null)
+
+  // Date groups by START day (a work item belongs to the day it was handed over), newest day first.
+  const dayStart = startOfToday()
+  const dayLabel = (ms: number): string => {
+    if (ms >= dayStart) return t('overview.today')
+    if (ms >= dayStart - 86_400_000) return t('overview.yesterday')
+    return new Date(ms).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' })
+  }
+  const groups: { label: string; items: AssignmentBatch[] }[] = []
+  for (const b of visible) {
+    const label = dayLabel(b.startedAt)
+    const last = groups[groups.length - 1]
+    if (last && last.label === label) last.items.push(b)
+    else groups.push({ label, items: [b] })
+  }
+
+  return (
+    <div className="timeline-wrap">
+      <div className="tl-scroll">
+        <div className="asg-filters">
+          <select className="asg-filter-sel" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
+            <option value="all">{t('overview.filter.allRoles')}</option>
+            {roleIds.map((id) => (
+              <option key={id} value={id}>{expertMeta(id).name}</option>
+            ))}
+          </select>
+          <select className="asg-filter-sel" value={projFilter} onChange={(e) => setProjFilter(e.target.value)}>
+            <option value="all">{t('overview.filter.allProjects')}</option>
+            {projIds.map((id) => (
+              <option key={id} value={id}>{projTitle(id) ?? id}</option>
+            ))}
+          </select>
+          <select className="asg-filter-sel" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <option value="all">{t('overview.filter.allStatuses')}</option>
+            <option value="in_progress">{t('overview.status.in_progress')}</option>
+            <option value="done">{t('overview.status.done')}</option>
+            <option value="failed">{t('overview.status.failed')}</option>
+            <option value="stopped">{t('overview.status.stopped')}</option>
+          </select>
+        </div>
+
+        {groups.length === 0 ? (
+          <div className="tl-empty">
+            <div className="tl-empty-line">{t('overview.empty')}</div>
+          </div>
+        ) : (
+          groups.map((g) => (
+            <div className="tl-group" key={g.label}>
+              <div className="tl-group-head">
+                <span>{g.label}</span>
+                <span className="tl-count">{g.items.length}</span>
+              </div>
+              <div className="tl-list">
+                {g.items.map((b) =>
+                  b.live ? (
+                    <AssignmentCard key={b.batchId} batch={b} now={now} projectTitle={projTitle(b.projectId)} onOpenConv={onOpenConv} onOpenProject={onOpenProject} />
+                  ) : (
+                    <DoneBatchRow key={b.batchId} batch={b} projectTitle={projTitle(b.projectId)} onOpenConv={onOpenConv} onOpenProject={onOpenProject} />
+                  )
+                )}
+              </div>
+            </div>
+          ))
+        )}
       </div>
     </div>
   )
@@ -448,20 +566,34 @@ export function StudioHome({
   onOpenProject: (id: string) => void
   onNewRole: () => void
 }): ReactElement {
+  const t = useT()
   const [tab, setTab] = useState('activity')
   return (
     <div className="main-col">
       <div className="conv-header">
         <span className="conv-title">Overview</span>
-        <Segmented className="studio-tabs" options={[{ v: 'activity', l: 'Activity' }, { v: 'stats', l: 'Stats' }]} value={tab} onChange={(v) => setTab(v as 'activity' | 'stats')} />
+        <Segmented
+          className="studio-tabs"
+          options={[
+            { v: 'activity', l: t('overview.tab.activity') },
+            { v: 'assignments', l: t('overview.tab.assignments') },
+            { v: 'stats', l: t('overview.tab.stats') }
+          ]}
+          value={tab}
+          onChange={setTab}
+        />
         <span className="conv-sub" style={{ marginLeft: 'auto' }}>
-          {tab === 'activity' ? 'live work · right now' : 'local analytics · today'}
+          {tab === 'activity' ? 'live work · right now' : tab === 'assignments' ? 'work items · all time' : 'local analytics · today'}
         </span>
       </div>
       {tab === 'activity' ? (
         <div className="studio-body">
-          <ActivityTimeline onOpenExpert={onOpenExpert} onOpenConv={onOpenConv} onOpenProject={onOpenProject} />
+          <ActivityTimeline onOpenExpert={onOpenExpert} onOpenConv={onOpenConv} onOpenProject={onOpenProject} onViewAll={() => setTab('assignments')} />
           <StudioStats />
+        </div>
+      ) : tab === 'assignments' ? (
+        <div className="studio-body">
+          <AssignmentsPage onOpenConv={onOpenConv} onOpenProject={onOpenProject} />
         </div>
       ) : (
         <StatsPage />
