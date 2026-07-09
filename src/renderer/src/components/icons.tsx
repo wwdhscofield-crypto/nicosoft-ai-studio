@@ -416,14 +416,11 @@ export const Icons = {
     </Icon>
   ),
   workflow: (p) => (
-    // five nodes on a pentagon ring (user-requested 5-corner shape); edges trimmed to the circle borders
+    // lucide "workflow": two step blocks joined by an elbow connector — stays legible at the 13px chip size
     <Icon {...p}>
-      <circle cx="12" cy="4.6" r="2" />
-      <circle cx="19.8" cy="10.3" r="2" />
-      <circle cx="16.8" cy="19.4" r="2" />
-      <circle cx="7.2" cy="19.4" r="2" />
-      <circle cx="4.2" cy="10.3" r="2" />
-      <path d="M13.6 5.8 18.2 9.1M19.2 12.2 17.4 17.5M14.8 19.4H9.2M6.6 17.5 4.8 12.2M5.8 9.1 10.4 5.8" />
+      <rect x="3" y="3" width="8" height="8" rx="2" />
+      <path d="M7 11v4a2 2 0 0 0 2 2h4" />
+      <rect x="13" y="13" width="8" height="8" rx="2" />
     </Icon>
   ),
   kanban: (p) => (
