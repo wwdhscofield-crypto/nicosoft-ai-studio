@@ -1,8 +1,8 @@
-import { ipcMain } from 'electron'
+import { BrowserWindow, ipcMain } from 'electron'
 import { pickDirectory } from './dialogs'
 import * as projectService from '../services/project.service'
 import * as gitService from '../services/workspace/git'
-import type { ProjectCreateInput, ProjectPhase, ProjectTaskInput, ProjectTaskStatus, ProjectTestStatus } from './contracts'
+import type { ProjectCreateInput, ProjectPhase, ProjectTaskInput, ProjectTaskStatus, ProjectTestStatus, ProjectUpdateInput } from './contracts'
 
 // Project picker + git branch list / switch for Engineer's path selector (a chip row), plus
 // the Project CRUD boundary (Coordinator 2.0 — doc 19 §1). Every handler is thin: parse args, call the
@@ -19,6 +19,13 @@ export function registerProjectHandlers(): void {
   ipcMain.handle('project:list', () => projectService.list())
   ipcMain.handle('project:get', (_e, id: string) => projectService.get(id))
   ipcMain.handle('project:create', (_e, input: ProjectCreateInput) => projectService.create(input))
+  ipcMain.handle('project:update', (_e, id: string, input: ProjectUpdateInput) => {
+    const dto = projectService.update(id, input)
+    // metadata changed outside a collab run → broadcast so an open Workbench/list refetches (same
+    // event the engine uses for its agent-free project steps)
+    if (dto) for (const w of BrowserWindow.getAllWindows()) w.webContents.send('project:updated', { streamId: '', projectId: id })
+    return dto
+  })
   ipcMain.handle('project:remove', (_e, id: string) => projectService.remove(id))
   ipcMain.handle('project:phase', (_e, id: string, phase: ProjectPhase) => projectService.setPhase(id, phase))
   ipcMain.handle('project:task:add', (_e, projectId: string, input: ProjectTaskInput) => projectService.addTask(projectId, input))

@@ -14,10 +14,10 @@ A project is a multi-expert collaboration with a goal, an optional working folde
 - Plans can pause for your decision: "Plan ready for review" → **Approve & run** or **Revise**; approve/reject actions are also available from the project surface.
 - The Overview page's Activity tab shows live, currently-streaming work including collaborations.
 
-## Delete
+## Edit & delete
 
-- From the list: hover a project card → "…" menu → Delete. From inside a project: the Delete button in the header.
-- A confirm dialog explains what goes: the plan, tests and timeline are removed permanently. Linked conversations are kept — they only lose their project link.
+- **Edit** (header button inside a project): change the title, goal or working folder. Changing the folder only affects future instructions — files the team already created stay where they are.
+- **Delete**: hover a project card → "…" menu → Delete, or the Delete button in the header. A confirm dialog explains what goes: the plan, tests and timeline are removed permanently. Linked conversations are kept — they only lose their project link.
 
 ## Automation
 

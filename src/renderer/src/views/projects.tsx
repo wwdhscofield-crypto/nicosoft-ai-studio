@@ -132,13 +132,24 @@ function ProjectsList({
   )
 }
 
-/* — New Project dialog: a folder + a goal; the name is optional (blank → generated from the goal). — */
-function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }): ReactElement {
+/* — New Project dialog: a folder + a goal; the name is optional (blank → generated from the goal).
+     Doubles as the Workbench Edit dialog when `project` is set — same fields, project.update on save. — */
+function NewProjectDialog({
+  project = null,
+  onClose,
+  onCreated
+}: {
+  project?: ProjectDto | null // edit mode when set
+  onClose: () => void
+  onCreated: (id: string) => void
+}): ReactElement {
   const t = useT()
-  const [name, setName] = useState('')
-  const [goal, setGoal] = useState('')
-  const [cwd, setCwd] = useState('')
+  const isEdit = project !== null
+  const [name, setName] = useState(project?.title ?? '')
+  const [goal, setGoal] = useState(project?.goal ?? '')
+  const [cwd, setCwd] = useState(project?.cwd ?? '')
   const [busy, setBusy] = useState(false)
+  const cwdChanged = isEdit && cwd.trim() !== (project.cwd ?? '')
 
   const pick = async (): Promise<void> => {
     const dir = await window.api.project.pick()
@@ -148,15 +159,26 @@ function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; onCreat
     if (busy) return
     setBusy(true)
     try {
-      const p = await window.api.project.create({
-        title: name.trim(),
-        goal: goal.trim() || null,
-        cwd: cwd.trim() || null
-      })
-      toast.success(t('projects.created'))
-      onCreated(p.id)
+      if (isEdit) {
+        const updated = await window.api.project.update(project.id, {
+          title: name.trim(),
+          goal: goal.trim() || null,
+          cwd: cwd.trim() || null
+        })
+        if (!updated) throw new Error('project gone')
+        toast.success(t('projects.updated'))
+        onCreated(project.id)
+      } else {
+        const p = await window.api.project.create({
+          title: name.trim(),
+          goal: goal.trim() || null,
+          cwd: cwd.trim() || null
+        })
+        toast.success(t('projects.created'))
+        onCreated(p.id)
+      }
     } catch {
-      toast.error(t('projects.createFailed'))
+      toast.error(t(isEdit ? 'projects.updateFailed' : 'projects.createFailed'))
     } finally {
       setBusy(false)
     }
@@ -164,7 +186,7 @@ function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; onCreat
 
   return (
     <Modal
-      title="New Project"
+      title={isEdit ? 'Edit project' : 'New Project'}
       onClose={onClose}
       className="wide"
       foot={
@@ -173,7 +195,7 @@ function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; onCreat
             Cancel
           </button>
           <button className="btn primary" onClick={create} disabled={busy || (!goal.trim() && !name.trim())}>
-            {busy ? 'Creating…' : 'Create project'}
+            {busy ? (isEdit ? 'Saving…' : 'Creating…') : isEdit ? 'Save changes' : 'Create project'}
           </button>
         </>
       }
@@ -186,6 +208,11 @@ function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; onCreat
             <Icons.folder size={16} />
           </button>
         </div>
+        {cwdChanged && (
+          <div className="wf-warn">
+            ⚠ <span>Changing the folder only affects <b>future</b> instructions — files the team already created stay where they are.</span>
+          </div>
+        )}
       </div>
       <div>
         <label className="field-label">
@@ -499,11 +526,13 @@ function ProjectDetail({
   project,
   onBack,
   onOpenExpert,
+  onEdit,
   onDelete
 }: {
   project: ProjectDto
   onBack: () => void
   onOpenExpert: (id: string) => void
+  onEdit: () => void
   onDelete: () => void
 }): ReactElement {
   const t = useT()
@@ -639,7 +668,10 @@ function ProjectDetail({
           {project.title}
         </span>
         <PhaseChip phase={project.phase} />
-        <button className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={onDelete} title={t('projects.deleteAction')}>
+        <button className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={onEdit} title={t('projects.editAction')}>
+          <Icons.edit size={15} /> {t('projects.editAction')}
+        </button>
+        <button className="btn ghost sm" onClick={onDelete} title={t('projects.deleteAction')}>
           <Icons.trash size={15} /> {t('projects.deleteAction')}
         </button>
       </div>
@@ -796,6 +828,7 @@ export function ProjectsView({
   const [projects, setProjects] = useState<ProjectDto[]>([])
   const [detail, setDetail] = useState<ProjectDto | null>(null)
   const [newOpen, setNewOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
   const [toDelete, setToDelete] = useState<ProjectDto | null>(null)
 
   const reload = useCallback(async (): Promise<void> => {
@@ -859,7 +892,17 @@ export function ProjectsView({
   if (activeProject && detail) {
     return (
       <>
-        <ProjectDetail project={detail} onBack={() => onSelect(null)} onOpenExpert={onOpenExpert} onDelete={() => setToDelete(detail)} />
+        <ProjectDetail
+          project={detail}
+          onBack={() => onSelect(null)}
+          onOpenExpert={onOpenExpert}
+          onEdit={() => setEditOpen(true)}
+          onDelete={() => setToDelete(detail)}
+        />
+        {editOpen && (
+          // save closes the dialog; the handler's project:updated broadcast refreshes list + detail
+          <NewProjectDialog project={detail} onClose={() => setEditOpen(false)} onCreated={() => setEditOpen(false)} />
+        )}
         {confirmDialog}
       </>
     )

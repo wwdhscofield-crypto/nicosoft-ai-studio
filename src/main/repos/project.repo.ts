@@ -71,6 +71,14 @@ export function updateProjectPhase(id: string, phase: ProjectPhase): void {
   getDb().prepare('UPDATE projects SET phase = ?, updated_at = ? WHERE id = ?').run(phase, new Date().toISOString(), id)
 }
 
+// Full-set metadata update (title/goal/cwd) — the service resolves patch semantics; this always writes
+// all three (one static statement beats per-field dynamic SQL at this size).
+export function updateProject(id: string, patch: { title: string; goal: string | null; cwd: string | null }): void {
+  getDb()
+    .prepare('UPDATE projects SET title = ?, goal = ?, cwd = ?, updated_at = ? WHERE id = ?')
+    .run(patch.title, patch.goal, patch.cwd, new Date().toISOString(), id)
+}
+
 // Bump updated_at without changing anything else — call when a child task/test mutates so the project
 // list (ordered by updated_at) floats active projects to the top.
 export function touchProject(id: string): void {

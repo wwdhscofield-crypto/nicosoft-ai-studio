@@ -1283,6 +1283,13 @@ export interface ProjectCreateInput {
   goal?: string | null
   cwd?: string | null
 }
+// Patch semantics: undefined keeps the current value, null clears a nullable field. A blank title is
+// ignored (a project's title never becomes empty — update doesn't re-run the name generator).
+export interface ProjectUpdateInput {
+  title?: string
+  goal?: string | null
+  cwd?: string | null
+}
 export interface ProjectTaskInput {
   title: string
   assigneeRoleId?: string | null
