@@ -28,6 +28,9 @@ export interface CollabEvent {
   roleId: string // the acting expert (sender for send/assign, waiter for wait, runner for turn/done)
   to?: string // target roleId for send/assign
   text?: string // message body for send/assign
+  // 'done' only: the loop ERROR-exited (dropped from the session) rather than finishing — 'done' fires on
+  // BOTH paths (the common exit tail), so a consumer settling per-expert state (assignments) needs the truth.
+  errored?: boolean
 }
 
 // What the consult tools call — injected into AgentContext.collab, bound per-expert (self is fixed).
@@ -270,6 +273,7 @@ export class CollabSession {
     const handle = this.buildHandle(e.spec.roleId)
     let nudged = false // already gave a one-shot "your wait timed out" turn since this expert's last real input?
     let todoNudges = 0 // 批H (P2) + B4: count of dangling-todo hand-off reminders given (bounded re-fire, cap MAX_TODO_NUDGES)
+    let errored = false // the loop error-exited (catch below) — rides the 'done' event so consumers settle honestly
     try {
       while (!signal.aborted) {
         // 1. Inject unread mail as a single user turn so the expert sees who said what (and the conversation
@@ -361,6 +365,7 @@ export class CollabSession {
       // session reaches quiescence on the rest and synthesizes the survivors (parallel/council already
       // tolerate per-branch failures the same way). A real abort (chat.stop / renderer-gone) surfaces as a
       // thrown abort too — it exits identically, and every expert's loop unwinds via the shared signal.
+      errored = true
       if (!signal.aborted) {
         const msg = err instanceof Error ? err.message : String(err)
         console.warn(`[collab] expert "${e.spec.roleId}" turn failed — dropping it from the session, continuing with the others:`, msg)
@@ -399,7 +404,7 @@ export class CollabSession {
     // Mark this expert parked + drained so the quiescence sweep doesn't keep waiting on it. A peer parked in
     // wait() on a reply from this expert resolves via the global quiescence check (all parked → end), so a
     // mid-collaboration failure can't wedge the session.
-    this.onEvent({ kind: 'done', roleId: e.spec.roleId })
+    this.onEvent({ kind: 'done', roleId: e.spec.roleId, ...(errored ? { errored } : {}) })
     this.settle()
   }
 

@@ -3,6 +3,7 @@ import { join } from 'path'
 import { existsSync, renameSync, readFileSync, writeFileSync } from 'node:fs'
 import { getDb } from './db/connection'
 import * as settingsService from './services/settings.service'
+import { sweepOrphans as sweepOrphanAssignments } from './services/assignment.service'
 import { registerIpc, abortAllRuns } from './ipc/register'
 import { registerMediaProtocol, MEDIA_PRIVILEGED_SCHEME } from './media/protocol'
 import { startMemoryMaintenance } from './services/memory/service'
@@ -276,6 +277,10 @@ ipcMain.handle('theme:set', (_e, pref: string) => applyThemePref(pref))
 
 app.whenReady().then(() => {
   getDb() // open SQLite + run migrations (idempotent) before any IPC handler can hit it
+  // Assignments boot sweep: nothing can be live yet, so any in_progress row is a crash/force-quit orphan —
+  // settle it as stopped (honest; never a fake done) before the first window can read the ledger.
+  const orphaned = sweepOrphanAssignments()
+  if (orphaned > 0) console.log(`[assignments] boot sweep: ${orphaned} orphaned in_progress → stopped`)
   applyThemePref(settingsService.get<string>('theme')) // set nativeTheme from the persisted pref before the window is created
   // The Preview webview presents as an ORDINARY Chromium browser, not the studio's product UA: external sites
   // gate / bot-detect on non-browser UAs, and Claude Code's own preview runs in real Chromium and never

@@ -11,13 +11,14 @@ import * as rolesService from '../roles.service'
 import * as agentService from '../agent-collab'
 import * as convService from '../conversation.service'
 import * as collabProject from '../collab-project.service'
+import * as assignmentService from '../assignment.service'
 import { forwardLlmEvent } from '../agent-dispatch'
 import { resolveDepth } from '../../llm/thinking'
 import { protocolFamily } from '@shared/thinking'
 import { isContentBlock } from '../../agent/types'
 import { LlmError } from '../../llm/types'
 import { coordinatorApproval } from './approvals'
-import type { CoordinatorCallbacks, CoordinatorRunInput } from './types'
+import type { AssignmentBatchPlan, CoordinatorCallbacks, CoordinatorRunInput } from './types'
 import type { AgentResult } from '../../agent/loop'
 
 export async function runCollaboration(
@@ -27,6 +28,7 @@ export async function runCollaboration(
   cb: CoordinatorCallbacks,
   signal: AbortSignal,
   project?: collabProject.CollabProject,
+  assignments?: AssignmentBatchPlan,
 ): Promise<{ outputs: { role: string; text: string; reason: AgentResult['reason'] }[]; reasons: AgentResult['reason'][] }> {
   const experts: agentService.CollabExpertInput[] = []
   const models = new Map<string, string>()
@@ -44,6 +46,19 @@ export async function runCollaboration(
     if (!protocol) continue
     models.set(roleId, binding.model)
     cb.onStepStart(roleId, fullChain, binding.model)
+    // Assignments (docs/assignments-design.md §2a): this expert is now genuinely part of the build (binding +
+    // protocol checks passed) — open its own row. A skipped role (no binding / gemini) never opens one, so
+    // nothing lingers for the orchestrator's batch backstop to mop up on a clean run.
+    if (assignments) {
+      assignmentService.open({
+        convId: input.convId,
+        batchId: assignments.batchId,
+        batchTitle: assignments.batchTitle,
+        title: assignments.titleFor(roleId),
+        roleId,
+        origin: assignments.origin,
+      })
+    }
     experts.push({
       roleId,
       initialPrompt: input.prompt,
@@ -66,6 +81,12 @@ export async function runCollaboration(
       // phase 5c: a collab event that moves task state (turn/done) refetches an open ProjectDetail so lanes
       // change in real time. send/assign/wait/wake don't move tasks → no push (consult arrows in phase 5c-B).
       if (project && collabProject.applyCollabEvent(project, e)) cb.onProjectUpdated?.(project.projectId)
+      // Assignments: an expert finishing its WHOLE loop ('done') settles its own row live — teammates still
+      // building stay in_progress. The event fires on BOTH exit paths, so honor its errored flag; on a user
+      // abort skip entirely — the orchestrator's batch backstop settles the leftovers as 'stopped'.
+      if (assignments && e.kind === 'done' && !signal.aborted) {
+        assignmentService.closeRoleInBatch(input.convId, assignments.batchId, e.roleId, e.errored ? 'failed' : 'done')
+      }
     },
     // phase 5c-C3: forward the collaboration's live dev services to the project workbench.
     onServices: (services) => {

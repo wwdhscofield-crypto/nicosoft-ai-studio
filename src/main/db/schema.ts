@@ -379,4 +379,28 @@ CREATE TABLE IF NOT EXISTS workspace_task_history (
   FOREIGN KEY (conversation_id) REFERENCES conversations (id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_wth_conv ON workspace_task_history (conversation_id, created_at);
+
+-- Assignments (docs/assignments-design.md): ONE row per "接活" — a role receiving hands-on work (build /
+-- fix / change / handle), as opposed to plain chat/Q&A. System-created at the working role's run entry
+-- (never an agent tool), auto-closed when that run settles, permanent history. batch groups one dispatch
+-- (a Danny collaborate = N experts = N rows sharing batch_id; a solo run = a single-row batch).
+-- conv_id carries NO FK on purpose — cleanup runs in conversation.service.remove (messages-style cascade
+-- would also need PRAGMA-safe ordering); project_id is a SNAPSHOT of conv.projectId at creation and is
+-- nulled on project delete (history outlives the project, 批1 unlink discipline).
+CREATE TABLE IF NOT EXISTS assignments (
+  id          TEXT PRIMARY KEY,
+  batch_id    TEXT NOT NULL,              -- one dispatch = one batch (solo: single-row batch)
+  batch_title TEXT NOT NULL,              -- overall work title (router taskTitle / solo classifier title)
+  title       TEXT NOT NULL,              -- this role's own slice
+  conv_id     TEXT NOT NULL,
+  project_id  TEXT,                       -- conv.projectId snapshot at creation; nulled when the project dies
+  origin      TEXT NOT NULL,              -- danny | solo | dock
+  role_id     TEXT NOT NULL,              -- the working role (owner)
+  status      TEXT NOT NULL,              -- in_progress | done | failed | stopped
+  run_ids     TEXT NOT NULL DEFAULT '[]', -- JSON string[]; a "continue" follow-up reopens + appends
+  started_at  TEXT NOT NULL,
+  ended_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_assignments_conv ON assignments (conv_id);
+CREATE INDEX IF NOT EXISTS idx_assignments_started ON assignments (started_at DESC);
 `

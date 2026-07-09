@@ -19,6 +19,13 @@ interface RouteBase {
   // Project memory (§4): the concise project-shape summary Danny synthesized during the routing investigation.
   // Present only on a routeAsAgent decision; route() persists it (project-map.service.remember) keyed by cwd.
   projectMap?: string
+  // Assignments (docs/assignments-design.md §2a): the router judges — in the SAME routing call — whether this
+  // turn is hands-on WORK ("接活": build/fix/change/handle) vs plain Q&A/chat. isWork=true on a non-direct
+  // decision makes each dispatched role open its own assignment; taskTitle names the overall job (user's
+  // language) and roleTitles carries each role's slice (validated: keys normalized name → roleId).
+  isWork?: boolean
+  taskTitle?: string
+  roleTitles?: Record<string, string>
 }
 
 // Discriminated on `mode`, so the dispatch branches narrow to the fields their constructor guaranteed
@@ -41,6 +48,19 @@ export interface CoordinatorRunInput {
   // Per-role permission mode (the renderer's modeByExpert). A dispatched / collab expert honors
   // modeByRole[roleId] (bypass = full auto, skipping coordinator self-approval); unset → 'default'.
   modeByRole?: Record<string, PermissionMode>
+  // Assignments: 'dock' when the Workbench dock composer sent this turn (projects.tsx) — its work rows are
+  // labeled dock instead of danny. Absent = a normal chat turn.
+  origin?: 'dock'
+}
+
+// Assignments (docs/assignments-design.md): the per-dispatch batch the orchestrator (service.run) hands to a
+// mode executor — each dispatched role opens its OWN row from this plan when its step/loop starts. Null plan
+// (direct / workflow / isWork=false) = the turn creates nothing.
+export interface AssignmentBatchPlan {
+  batchId: string
+  batchTitle: string
+  origin: 'danny' | 'dock'
+  titleFor: (roleId: string) => string
 }
 
 export interface CoordinatorCallbacks {

@@ -18,6 +18,7 @@ import { resolveDepth } from '../../llm/thinking'
 import type { ChatMessage } from '../../llm/types'
 import { COORDINATOR_ROUTER_PROMPT, COORDINATOR_INVESTIGATION_PROMPT, DISPATCHABLE_ROLE_IDS, displayName, roleIdFromName } from '../../agent/roles/prompts'
 import { COORDINATOR_INVESTIGATION_TOOLS } from '../agent-tools'
+import { classifyHeuristic } from '../assignment-classify'
 import { buildTool, type Tool } from '../../agent/tool'
 import { runRoleStep } from './step'
 import * as projectMap from '../memory/project-map'
@@ -55,7 +56,12 @@ export async function route(userInput: string, history: convRepo.MessageRow[], c
   if (mention) {
     const id = roleIdFromName(mention[1]) // accepts the display name (@Flynn) or the raw id (@engineer)
     if (enabled.includes(id as (typeof enabled)[number])) {
-      return { mode: 'single', role: id, reason: 'explicit @mention', needsPlan: isNonTrivialTask(userInput) }
+      // Assignments: the 0-LLM fast path has no router judgment, so work-vs-chat falls to the SAME
+      // conservative heuristic the solo fallback uses ("@Flynn fix the login" is 接活 like any other) —
+      // classified on the message with the mention stripped, so the leading @name can't skew it.
+      const stripped = userInput.slice(mention[0].length).trim()
+      const w = classifyHeuristic(stripped || userInput)
+      return { mode: 'single', role: id, reason: 'explicit @mention', needsPlan: isNonTrivialTask(userInput), ...(w.isWork ? { isWork: true, taskTitle: w.title } : {}) }
     }
   }
 
@@ -117,6 +123,9 @@ function makeRouteDecisionTool(onDecision: (raw: Record<string, unknown>) => voi
       reason: z.string().optional().describe('why this team, ≤8 words'),
       needsPlan: z.boolean().optional().describe('true only for code-change work worth verifying'),
       projectMap: z.string().optional().describe("≤1200 chars: the project's SHAPE you learned (layout, surfaces, key modules) — remembered for the next task"),
+      isWork: z.boolean().optional().describe('true ONLY when the user asks for hands-on work (build/fix/change/handle something) — false for questions, explanations, opinions, chitchat'),
+      taskTitle: z.string().optional().describe("isWork only: a 3-10 word name for the job, in the user's language"),
+      roleTitles: z.record(z.string(), z.string()).optional().describe("isWork multi-expert only: each dispatched expert's own slice title, keyed by expert NAME"),
     }),
     isReadOnly: () => true,
     isConcurrencySafe: () => true,
@@ -211,6 +220,14 @@ async function routeAsAgent(
       console.warn('[coordinator] routeAsAgent produced no clean decision — keeping the tier-1 decision')
       return tier1
     }
+    // Assignments: the investigation refines the TEAM; work-vs-chat was already judged at tier-1 (investigate
+    // only fires on real build/change tasks). If Danny's submission omitted the work fields, inherit tier-1's
+    // so the escalation can't silently drop the assignment. His explicit judgment (either way) still wins.
+    if (decision.mode !== 'direct' && decision.mode !== 'workflow' && decision.isWork === undefined && tier1.isWork) {
+      decision.isWork = true
+      if (!decision.taskTitle) decision.taskTitle = tier1.taskTitle
+      if (!decision.roleTitles) decision.roleTitles = tier1.roleTitles // stale keys are harmless — titleFor falls back per role
+    }
     // PM remember (§4.4): persist the fresh shape keyed by cwd so the next task on this project starts from it.
     if (decision.projectMap) await projectMap.remember(cwd, decision.projectMap)
     console.log(`[coordinator] routeAsAgent ${JSON.stringify({ mode: decision.mode, role: (decision as { role?: string }).role, roles: (decision as { roles?: string[] }).roles, reason: decision.reason, needsPlan: decision.needsPlan })}`)
@@ -249,7 +266,7 @@ function buildInvestigationBrief(
   else if (tier1.mode === 'workflow') guess = `workflow → ${tier1.workflow.name}` // tier-1 matched a saved workflow (investigate would be false there, but keep the narrowing total)
   else guess = `${tier1.mode} → ${tier1.roles.map(displayName).join(', ')}`
   parts.push(`Your first-pass guess to confirm or refine after looking: ${guess}.`)
-  parts.push('Investigate the project shape (delegating the reading), pick the smallest team that covers the real surfaces, then SUBMIT the decision with the route_decision tool (include "projectMap"). Never print the decision as text or JSON — after the tool confirms, wrap up in one short sentence to the user.')
+  parts.push('Investigate the project shape (delegating the reading), pick the smallest team that covers the real surfaces, then SUBMIT the decision with the route_decision tool (include "projectMap"; a hands-on build/fix/change/handle request also gets "isWork": true with "taskTitle" and, for multi-expert modes, per-expert "roleTitles" — pure Q&A stays isWork false). Never print the decision as text or JSON — after the tool confirms, wrap up in one short sentence to the user.')
   return parts.join('\n\n')
 }
 
@@ -277,11 +294,11 @@ function buildRouterMessages(
   // Reinforce the JSON contract on the LAST user message — OAuth gateways (nicosoft/*, with
   // identity injection) may overwrite system prompts, so the routing instructions MUST also live in a
   // user message to survive. (Lesson from Batch 2.)
-  const reinforcer = `\n\n---\nRoute the above. Respond with ONLY a JSON object — no markdown, no explanation, no leading text. Include needsPlan true ONLY when the task asks to WRITE or CHANGE code (implement / build / fix / refactor, producing a diff worth verifying), and false for read-only work (read / summarize / analyze / explain / answer) and trivial edits, no matter how many files it touches. The intro is a hand-off announcement to the USER: who handles it and the goal, one sentence — NEVER prescribe how they should work or stage it (no "first a plan, then implement" phasing; the expert owns their own process). Format — choose the ONE mode that fits:\n{"mode":"direct","reason":"<≤8 words>","needsPlan":false}\nor {"mode":"single","role":"<name>","intro":"<one sentence to the user>","reason":"<≤8 words>","needsPlan":<boolean>,"investigate":<boolean>}\nor {"mode":"pipeline","roles":["<name>","<name>"],"intro":"<one sentence>","reason":"<≤8 words>","needsPlan":<boolean>,"investigate":<boolean>} — SEQUENTIAL hand-off ONLY: one expert FULLY finishes and its output feeds the next (e.g. translate→debug).\nor {"mode":"collaborate","roles":["<name>","<name>"],"intro":"<one sentence>","reason":"<≤8 words>","needsPlan":<boolean>,"investigate":<boolean>} — CONCURRENT build: 2-3 builder experts (e.g. ${displayName('engineer')} backend + ${displayName('frontend')} frontend) build ONE shared project at the SAME TIME, coordinating live as they need each other's work.\nor {"mode":"parallel","roles":["<name>","<name>"],...} / {"mode":"council","roles":["<name>","<name>"],...} — independent takes / a debate on a QUESTION, not a build.${
+  const reinforcer = `\n\n---\nRoute the above. Respond with ONLY a JSON object — no markdown, no explanation, no leading text. Include needsPlan true ONLY when the task asks to WRITE or CHANGE code (implement / build / fix / refactor, producing a diff worth verifying), and false for read-only work (read / summarize / analyze / explain / answer) and trivial edits, no matter how many files it touches. The intro is a hand-off announcement to the USER: who handles it and the goal, one sentence — NEVER prescribe how they should work or stage it (no "first a plan, then implement" phasing; the expert owns their own process). Format — choose the ONE mode that fits:\n{"mode":"direct","reason":"<≤8 words>","needsPlan":false}\nor {"mode":"single","role":"<name>","intro":"<one sentence to the user>","reason":"<≤8 words>","needsPlan":<boolean>,"investigate":<boolean>,"isWork":<boolean>,"taskTitle":"<job name>"}\nor {"mode":"pipeline","roles":["<name>","<name>"],"intro":"<one sentence>","reason":"<≤8 words>","needsPlan":<boolean>,"investigate":<boolean>,"isWork":<boolean>,"taskTitle":"<job name>","roleTitles":{"<name>":"<their slice>"}} — SEQUENTIAL hand-off ONLY: one expert FULLY finishes and its output feeds the next (e.g. translate→debug).\nor {"mode":"collaborate","roles":["<name>","<name>"],"intro":"<one sentence>","reason":"<≤8 words>","needsPlan":<boolean>,"investigate":<boolean>,"isWork":<boolean>,"taskTitle":"<job name>","roleTitles":{"<name>":"<their slice>"}} — CONCURRENT build: 2-3 builder experts (e.g. ${displayName('engineer')} backend + ${displayName('frontend')} frontend) build ONE shared project at the SAME TIME, coordinating live as they need each other's work.\nor {"mode":"parallel","roles":["<name>","<name>"],...} / {"mode":"council","roles":["<name>","<name>"],...} — independent takes / a debate on a QUESTION, not a build.${
     workflows.length
       ? `\nor {"mode":"workflow","workflow":"<exact saved workflow name>","params":{"<param>":<value>},"intro":"<one sentence>","reason":"<≤8 words>"} — the request clearly matches a SAVED WORKFLOW from the listing: run that pinned procedure instead of assembling a team (fill params from the request; omitted params use defaults).`
       : ''
-  }\nPick the SMALLEST team that genuinely covers the task's real surfaces — one builder when a single domain covers it; add a second (pipeline / collaborate) only for a genuine second surface. Do NOT default to the biggest mode: over-sending wastes tokens and the team just sheds the extra expert. For any real build/change on an existing project (a folder that already holds real code), give your best-guess team and set "investigate": true — even when one specialist looks obvious — so a closer look at the current code aligns the change to how the project works and confirms the minimal team; set it false for chitchat, read-only work, a trivial edit, or a brand-new empty target. Use "collaborate" (never "pipeline") for CONCURRENT construction of one project; "pipeline" is only a genuine linear hand-off.`
+  }\nSet "isWork" true ONLY when the user asks for hands-on WORK — building / fixing / changing / creating / configuring / handling something real (code or not); false for pure questions, explanations, analysis, opinions, or chitchat (a read-only ask is NOT work; broader than needsPlan, which is code-change only). With isWork true, include "taskTitle" (a concise 3-10 word job name, in the user's language) and — for multi-expert modes — "roleTitles" (each expert's own slice, keyed by their name).\nPick the SMALLEST team that genuinely covers the task's real surfaces — one builder when a single domain covers it; add a second (pipeline / collaborate) only for a genuine second surface. Do NOT default to the biggest mode: over-sending wastes tokens and the team just sheds the extra expert. For any real build/change on an existing project (a folder that already holds real code), give your best-guess team and set "investigate": true — even when one specialist looks obvious — so a closer look at the current code aligns the change to how the project works and confirms the minimal team; set it false for chitchat, read-only work, a trivial edit, or a brand-new empty target. Use "collaborate" (never "pipeline") for CONCURRENT construction of one project; "pipeline" is only a genuine linear hand-off.`
   if (lastUserInHistory >= 0 && messages[lastUserInHistory].content === userInput) {
     messages[lastUserInHistory] = { ...messages[lastUserInHistory], content: userInput + reinforcer }
   } else {

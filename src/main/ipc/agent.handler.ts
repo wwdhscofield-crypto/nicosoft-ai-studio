@@ -7,6 +7,7 @@ import { CoalescerGroup } from './stream-coalesce'
 import { PermissionBridge } from './permission-bridge'
 import { serializeAssistantBlocks, serializeToolResults } from './agent-serialize'
 import * as agentService from '../services/agent.service'
+import * as assignmentService from '../services/assignment.service'
 import { forwardLlmEvent, type RunStreamSink } from '../services/agent-dispatch'
 import * as compressionService from '../services/compression.service'
 import * as workspaceTasks from '../services/workspace/tasks'
@@ -82,6 +83,24 @@ export function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: 
   // — never two concurrent runs on one conv. The note is already wrapped in the notification shell by the bus.
   sessionBus.armDelivery(input.convId, (note) => startAgentRun(input, sender, { resumeNote: note }))
   sessionBus.markActive(input.convId)
+
+  // Assignments (docs/assignments-design.md §2b): a FRESH user-initiated solo run classifies its message at
+  // receipt — a parallel small-model call (never blocking the run) that opens this role's work row the moment
+  // it resolves isWork (a "continue" follow-up reopens the latest one instead). Not a new user ask → never
+  // classify: a solo-async RESUME (resumeNote) continues the same parked turn, and a backend-orchestrated
+  // turn (workflow launch review — extraTools) is machinery, not the user handing over work. The settle
+  // calls in then/catch await this promise, so a run that finishes before classification still closes its row.
+  const pendingAssignment: Promise<string | null> =
+    opts?.resumeNote != null || opts?.extraTools
+      ? Promise.resolve(null)
+      : assignmentService.beginSoloRun({
+          convId: input.convId,
+          roleId,
+          prompt: input.prompt,
+          runId: streamId,
+          endpointId: input.endpointId,
+          model: input.model,
+        })
 
   // Open this run's segment — same lifecycle every dispatched step announces (dispatch:null + no segmentKind
   // = a plain, non-dispatched run of this role). LAZY, fired just before the FIRST stream event: startAgentRun
@@ -187,12 +206,16 @@ export function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: 
         lanes.flushAll()
         send('coordinator:step:done', { streamId, roleId, text: r.text, inputTokens: r.contextTokens, outputTokens: r.outputTokens, sentTokens: r.sentTokens })
         send('coordinator:done', { streamId, inputTokens: r.contextTokens, outputTokens: r.outputTokens, reason: r.reason })
+        // Assignments: the run settled — close this run's row (if classification opened/reopened one) with
+        // the run's own terminal. Awaits the bounded classifier, so a fast run can't leak an orphan.
+        void assignmentService.settleSoloRun(pendingAssignment, assignmentService.statusForRunReason(r.reason))
       })
       .catch((err: unknown) => {
         const code = err instanceof LlmError ? err.code : 'unknown'
         const message = err instanceof Error ? err.message : String(err)
         lanes.flushAll()
         send('coordinator:error', { streamId, code, message })
+        void assignmentService.settleSoloRun(pendingAssignment, controller.signal.aborted ? 'stopped' : 'failed')
       })
       .finally(() => {
         lanes.flushAll() // belt-and-suspenders: no armed timer may outlive the stream

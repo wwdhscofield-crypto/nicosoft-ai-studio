@@ -20,7 +20,9 @@ import * as convRepo from '../../repos/conversation.repo'
 import * as memoryService from '../memory/service'
 import * as rolesService from '../roles.service'
 import * as collabProject from '../collab-project.service'
+import * as assignmentService from '../assignment.service'
 import * as compressionService from '../compression.service'
+import { ulid } from '../../db/id'
 import { chatOnce, endpointWithKey } from '../llm-once'
 import { resolveDepth } from '../../llm/thinking'
 import { LlmError, type ChatMessage } from '../../llm/types'
@@ -43,7 +45,7 @@ import {
   buildParallelSynthesisInput,
   buildSynthesisInput
 } from './prompts'
-import type { CoordinatorCallbacks, CoordinatorRunInput } from './types'
+import type { AssignmentBatchPlan, CoordinatorCallbacks, CoordinatorRunInput, RouteDecision } from './types'
 import type { AgentResult } from '../../agent/loop'
 
 // Re-exported for the IPC boundary + any future consumer — the contracts live in coordinator-types.
@@ -174,6 +176,20 @@ async function dannyReviewWorkflow(
   }
 }
 
+// Assignments (docs/assignments-design.md): one dispatch of hands-on WORK = one batch; each dispatched role
+// opens its OWN row when its step/loop starts and settles it when that step settles. The router judged isWork
+// inside the routing call itself (§2a) — direct / workflow turns and plain Q&A dispatches plan nothing.
+function planAssignments(decision: RouteDecision, input: CoordinatorRunInput): AssignmentBatchPlan | null {
+  if (decision.mode === 'direct' || decision.mode === 'workflow' || !decision.isWork) return null
+  const batchTitle = decision.taskTitle ?? (input.prompt.trim().replace(/\s+/g, ' ').slice(0, 120) || 'Task')
+  return {
+    batchId: ulid(),
+    batchTitle,
+    origin: input.origin === 'dock' ? 'dock' : 'danny',
+    titleFor: (roleId) => decision.roleTitles?.[roleId] ?? batchTitle,
+  }
+}
+
 // Top-level entrypoint. Always called from coordinator.handler; the user turn is already persisted by the
 // renderer (chat-path style — see chat store `send`). Throws on configuration errors so the handler
 // turns them into a single `coordinator:error` event.
@@ -193,9 +209,22 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
 
   const gateEnabled = routeNeedsPlan(input.prompt, decision)
 
+  // Assignments: the work batch for this dispatch (null = not work). Dispatched roles open their own rows
+  // at their step/loop start below; the finally after the pipeline is the BACKSTOP — anything still
+  // in_progress when the turn ends (a throw, an abort, council's round loop) settles with the turn's honest
+  // terminal status. Per-role closes always run first, so the backstop touches only genuine leftovers.
+  const work = planAssignments(decision, input)
+  const openAssignment = (roleId: string): string | null =>
+    work
+      ? assignmentService.open({ convId: input.convId, batchId: work.batchId, batchTitle: work.batchTitle, title: work.titleFor(roleId), roleId, origin: work.origin }).id
+      : null
+
   // The dispatch/synthesis pipeline runs to completion here and yields the turn's token totals. We capture
   // it so the (non-blocking) Gate C hook below can fire AFTER synthesis is emitted, on every return path.
-  const result = await (async (): Promise<{ inputTokens: number; outputTokens: number; reason: AgentResult['reason'] }> => {
+  let turnOk = false
+  let result!: { inputTokens: number; outputTokens: number; reason: AgentResult['reason'] }
+  try {
+  result = await (async (): Promise<{ inputTokens: number; outputTokens: number; reason: AgentResult['reason'] }> => {
   // Aggregate the turn's terminal reason: any step that did not cleanly complete (incomplete = upstream-truncated
   // empty turn / thrash_stop / max_turns / aborted) bubbles to the top-level coordinator:done, so the UI + the
   // dogfood verdict see a non-clean finish instead of a phantom DONE. First non-completed wins.
@@ -286,6 +315,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
     // user-attached images) so it can answer multi-turn requests with continuity.
     cb.onDispatch([decision.role], decision.reason)
     if (decision.intro) emitCoordinatorIntro(input.convId, decision.intro, cb)
+    const assignmentId = openAssignment(decision.role)
     const out = await runGatedRoleStep(decision.role, input.prompt, {
       convId: input.convId,
       roleId: decision.role,
@@ -297,6 +327,9 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
       cb,
       signal
     }, { enabled: gateEnabled, originalPrompt: input.prompt }, signal)
+    // The assignment window covers the step AND its gate loop. Delivered → the run's own terminal; an
+    // unresolved gate (verification failed, the follow-up didn't fix it) means the work did NOT land → failed.
+    if (assignmentId) assignmentService.close(assignmentId, out.gateOutcome === 'unresolved' ? 'failed' : assignmentService.statusForRunReason(out.reason))
     // Closing-voice invariant (see GateOutcome): a gated conversation must END on the verifier's own
     // report ('pass'/'fixed' — the analyst message is naturally last) or an explicit coordinator
     // verdict — NEVER on the implementer/handler's note, which reads as a normal done and hides the
@@ -374,11 +407,20 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
     cb.onDispatch(fullChain, decision.reason)
     if (decision.intro) emitCoordinatorIntro(input.convId, decision.intro, cb)
     const settled = await Promise.all(
-      decision.roles.map((roleId) =>
-        runRoleStep({ convId: input.convId, roleId, prompt: buildPanelPrompt(input.prompt, roleId), dispatch: fullChain, includeHistory: false, cwd: input.cwd || undefined, permissionMode: input.modeByRole?.[roleId], cb, signal })
-          .then((out) => { noteReason(out.reason); return { role: roleId, ...out } })
-          .catch(() => null)
-      )
+      decision.roles.map((roleId) => {
+        const assignmentId = openAssignment(roleId)
+        return runRoleStep({ convId: input.convId, roleId, prompt: buildPanelPrompt(input.prompt, roleId), dispatch: fullChain, includeHistory: false, cwd: input.cwd || undefined, permissionMode: input.modeByRole?.[roleId], cb, signal })
+          .then((out) => {
+            noteReason(out.reason)
+            if (assignmentId) assignmentService.close(assignmentId, assignmentService.statusForRunReason(out.reason))
+            return { role: roleId, ...out }
+          })
+          .catch(() => {
+            // one panelist dropping out must not sink the panel — but ITS assignment settles failed, honestly
+            if (assignmentId) assignmentService.close(assignmentId, 'failed')
+            return null
+          })
+      })
     )
     if (signal.aborted) throw new LlmError('network', 'aborted mid-parallel')
     const outputs = settled.filter((o): o is NonNullable<typeof o> => !!o && !!o.text)
@@ -417,7 +459,12 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
       const prev = positions
       const settled = await Promise.all(
         roles.map((roleId) => {
-          const prompt = seen.has(roleId) ? buildCritiquePrompt(input.prompt, prev, roleId) : buildPanelPrompt(input.prompt, roleId)
+          const fresh = !seen.has(roleId)
+          const prompt = fresh ? buildPanelPrompt(input.prompt, roleId) : buildCritiquePrompt(input.prompt, prev, roleId)
+          // A work council (rare — councils are usually opinion-gathering, isWork false) opens each expert's
+          // row on their FIRST round; there is no per-role terminal across rounds, so the turn-end batch
+          // backstop settles them with the council's overall outcome.
+          if (fresh) openAssignment(roleId)
           seen.add(roleId)
           return runRoleStep({ convId: input.convId, roleId, prompt, dispatch: fullChain, includeHistory: false, cwd: input.cwd || undefined, permissionMode: input.modeByRole?.[roleId], cb, signal })
             .then((out) => { noteReason(out.reason); return { role: roleId, text: out.text } })
@@ -466,7 +513,10 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
     // reused when the chat was opened inside one), with a task per collaborating expert + the conversation
     // linked. Each expert that produces output marks its task done; the phase advances to done when all are.
     const project = await collabProject.ensureProjectForCollab(input.convId, input.prompt, decision.roles, input.cwd)
-    const { outputs, reasons } = await runCollaboration(input, decision.roles, fullChain, cb, signal, project)
+    // Assignments open INSIDE runCollaboration (per expert, after its binding/protocol checks pass — a skipped
+    // role never opens a row) and settle per expert on its CollabEvent 'done'; ensureProjectForCollab already
+    // linked the conversation, so each row snapshots the fresh project id.
+    const { outputs, reasons } = await runCollaboration(input, decision.roles, fullChain, cb, signal, project, work ?? undefined)
     if (signal.aborted) throw new LlmError('network', 'aborted mid-collaboration')
     if (outputs.length === 0) throw new LlmError('upstream', 'collaboration produced no output')
     collabProject.completeCollabTasks(project, outputs.map((o) => o.role))
@@ -517,6 +567,7 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
     // the next role. Without the hand-off context, the next role tends to misread a prior expert's
     // output as a fresh user message and ask "what are you trying to do?" (observed in e2e).
     const stepPrompt = i === 0 ? input.prompt : buildHandoffPrompt(input.prompt, stepOutputs, roleId)
+    const assignmentId = openAssignment(roleId)
     const out = await runGatedRoleStep(roleId, stepPrompt, {
       convId: input.convId,
       roleId,
@@ -559,6 +610,9 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
       ].join('\n'), cb)
     }
     noteReason(out.reason)
+    // Delivered (incl. unverified — the work landed, only the check couldn't run) → the step's own terminal.
+    // The unresolved/empty throws above leave the row open → the batch backstop settles it failed.
+    if (assignmentId) assignmentService.close(assignmentId, assignmentService.statusForRunReason(out.reason))
     stepOutputs.push({ role: roleId, text: out.text })
     lastTokens = out.inputTokens
     lastRoleId = roleId
@@ -584,6 +638,12 @@ export async function run(input: CoordinatorRunInput, cb: CoordinatorCallbacks, 
   fireSideEffects(input.convId, lastRoleId, lastEndpointId || synth.endpointId, lastModel || synth.model, lastTokens || synth.inputTokens)
   return { inputTokens: synth.inputTokens, outputTokens: synth.outputTokens, reason: runReason }
   })()
+  turnOk = true
+  } finally {
+    // Assignments backstop: settle this turn's leftovers with the honest terminal — a user abort → stopped,
+    // a throw → failed, a clean finish → done (covers council + any branch without a natural per-role close).
+    if (work) assignmentService.closeBatch(input.convId, work.batchId, signal.aborted ? 'stopped' : turnOk ? 'done' : 'failed')
+  }
 
   // Gate C: non-blocking e2e verification (Block 2). Synthesis is already emitted and `result` holds this
   // turn's token totals. If the user explicitly asked for e2e, FIRE-AND-FORGET a verification task onto the

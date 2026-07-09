@@ -14,7 +14,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dataDir } from '../db/connection'
 import { join } from 'node:path'
 import { ulid } from '../db/id'
-import { buildToolsParam } from '../agent/loop'
+import { buildToolsParam, type AgentResult } from '../agent/loop'
 import type { ServerToolSchema } from '../agent/types'
 import { parseTranscript } from './transcript-parse'
 import { lspTool } from '../agent/tools/lsp'
@@ -59,7 +59,7 @@ export async function run(
   // backend-orchestrated turns (e.g. the /workflow launch review submits its decision through one). Main-
   // process callers only (a Tool can't cross IPC); never persisted, gone next turn.
   opts?: { resumeNote?: string; extraTools?: Tool[] },
-): Promise<{ reason: string; turns: number; convId: string; runId: string; text: string; promptTokens: number; contextTokens: number; outputTokens: number; sentTokens: number }> {
+): Promise<{ reason: AgentResult['reason']; turns: number; convId: string; runId: string; text: string; promptTokens: number; contextTokens: number; outputTokens: number; sentTokens: number }> {
   const ep = endpointRepo.getById(input.endpointId)
   if (!ep) throw new LlmError('bad_request', 'endpoint not found')
   // The agent loop speaks Anthropic Messages (/v1/messages), OpenAI Responses (/v1/responses), or Gemini

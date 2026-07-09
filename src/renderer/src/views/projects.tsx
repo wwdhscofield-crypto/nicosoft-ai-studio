@@ -639,7 +639,7 @@ function ProjectDetail({
     let sid = '' // the listeners filter on the closure value; the state copy is for the Stop button
     try {
       await window.api.conversations.append(convId, { author: 'user', content: prompt })
-      ;({ streamId: sid } = await window.api.coordinator.run({ convId, prompt, cwd: project.cwd ?? null }))
+      ;({ streamId: sid } = await window.api.coordinator.run({ convId, prompt, cwd: project.cwd ?? null, origin: 'dock' }))
       setStreamId(sid)
     } catch (e) {
       // The run never started — unstick the dock instead of leaving `running` true forever.

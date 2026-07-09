@@ -2,6 +2,7 @@ import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { dataDir } from '../db/connection'
 import * as convRepo from '../repos/conversation.repo'
+import * as assignmentService from './assignment.service'
 import * as titleService from './title.service'
 import * as workspaceTasks from './workspace/tasks'
 import { disposeSoloAsync } from './solo-async'
@@ -132,6 +133,7 @@ export async function generateTitle(input: ConversationTitleInput): Promise<stri
 
 export function remove(convId: string): void {
   convRepo.remove(convId)
+  assignmentService.removeByConversation(convId) // assignments carry no FK on conv_id — cascade here (docs/assignments-design.md §6)
   workspaceTasks.dropLive(convId) // workspace_task_history rows cascade via FK; the in-memory live phase doesn't
   monitorService.disposeForConv(convId) // stop any Monitor watcher armed under this conv (clears its keepalive too)
   selfRhythmService.disposeForConv(convId) // cancel any pending self-wakeup timer for this conv

@@ -51,8 +51,10 @@ export function workflowListingBlock(workflows: RoutableWorkflow[]): string {
 // Validate one already-parsed decision OBJECT (role-name resolution, enabled/agent-role checks, field
 // normalization). The ONE validation core shared by the route_decision TOOL submission (routeAsAgent) and
 // the text-JSON parse below — never two copies of the role rules.
+const ASSIGNMENT_TITLE_MAX = 120 // clamp for taskTitle / roleTitles values (assignment ledger columns)
+
 export function decisionFromObject(
-  obj: { mode?: string; role?: unknown; roles?: unknown; workflow?: unknown; params?: unknown; reason?: unknown; intro?: unknown; needsPlan?: unknown; investigate?: unknown; projectMap?: unknown },
+  obj: { mode?: string; role?: unknown; roles?: unknown; workflow?: unknown; params?: unknown; reason?: unknown; intro?: unknown; needsPlan?: unknown; investigate?: unknown; projectMap?: unknown; isWork?: unknown; taskTitle?: unknown; roleTitles?: unknown },
   enabled: readonly string[],
   workflows: RoutableWorkflow[] = []
 ): RouteDecision | null {
@@ -63,7 +65,26 @@ export function decisionFromObject(
   // routeAsAgent emits for project memory. Both optional — present only on the decisions that carry them.
   const investigate = obj.investigate === true ? true : undefined
   const projectMap = typeof obj.projectMap === 'string' && obj.projectMap.trim() ? obj.projectMap.trim().slice(0, PROJECT_MAP_MAX_CHARS) : undefined
-  const extra = { ...(investigate ? { investigate } : {}), ...(projectMap ? { projectMap } : {}) }
+  // Assignments (docs/assignments-design.md §2a): the same routing call also judged work-vs-chat. isWork only
+  // sticks when explicitly true; roleTitles keys arrive as expert NAMES (the router's vocabulary) and are
+  // normalized to role ids here — the ONE validation core, shared by the tool submission and the text parse.
+  const isWork = obj.isWork === true ? true : undefined
+  const taskTitle = typeof obj.taskTitle === 'string' && obj.taskTitle.trim() ? obj.taskTitle.trim().slice(0, ASSIGNMENT_TITLE_MAX) : undefined
+  let roleTitles: Record<string, string> | undefined
+  if (obj.roleTitles && typeof obj.roleTitles === 'object' && !Array.isArray(obj.roleTitles)) {
+    const mapped: Record<string, string> = {}
+    for (const [name, v] of Object.entries(obj.roleTitles as Record<string, unknown>)) {
+      if (typeof v === 'string' && v.trim()) mapped[roleIdFromName(name)] = v.trim().slice(0, ASSIGNMENT_TITLE_MAX)
+    }
+    if (Object.keys(mapped).length) roleTitles = mapped
+  }
+  const extra = {
+    ...(investigate ? { investigate } : {}),
+    ...(projectMap ? { projectMap } : {}),
+    ...(isWork ? { isWork } : {}),
+    ...(taskTitle ? { taskTitle } : {}),
+    ...(roleTitles ? { roleTitles } : {}),
+  }
   if (obj.mode === 'direct') {
     // direct is chitchat/self-answer — never a build to investigate — but routeAsAgent may return it WITH a
     // learned projectMap, so carry the map (not investigate).

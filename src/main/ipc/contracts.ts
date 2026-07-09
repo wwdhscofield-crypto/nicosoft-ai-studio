@@ -487,6 +487,16 @@ export interface CoordinatorRunInputDto {
   // Per-role permission mode (the renderer's modeByExpert). A dispatched / collab expert honors
   // modeByRole[roleId] (bypass = full auto); unset → 'default'.
   modeByRole?: Record<string, AgentPermissionMode>
+  // Assignments (docs/assignments-design.md): 'dock' when the Workbench dock composer sent this turn —
+  // work rows created by it are labeled dock instead of danny. Absent = a normal chat turn.
+  origin?: 'dock'
+}
+// Assignments (docs/assignments-design.md §5): any open/reopen/close in the main process broadcasts this to
+// ALL windows; the renderer store refetches its lists (rows are small — refetch beats incremental patching).
+// batchId '' = a conv-wide settle (closeInFlightByConv) rather than one batch.
+export interface AssignmentChangedEvent {
+  convId: string
+  batchId: string
 }
 // Fired once per turn, after the route decision, before any text streams. `chain` lists the steps
 // the badge should render. Length 1 for single mode (no badge needed); for a pipeline = `[...experts,
