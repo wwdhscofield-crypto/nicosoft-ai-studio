@@ -14,6 +14,7 @@
 // non-waking send so the conversation is forced to converge instead of ping-ponging forever.
 
 import type { AgentMessage } from './types'
+import type { InjectionOutcome } from './session-bus'
 
 export interface CollabMessage {
   from: string // sender roleId (internal routing)
@@ -89,7 +90,18 @@ interface ExpertRunner {
   // that must NOT be quiesced away (settle T2). pendingResults: completion text to inject on the next run (T1) —
   // a SEPARATE queue from mailbox, since a handle result has no peer "from" and must not be formatted as mail.
   pendingHandles: Set<string>
-  pendingResults: string[]
+  pendingResults: PendingNote[]
+  // Waiters of notes ALREADY folded into the turn currently running (drained from pendingResults) — settled
+  // right after that runTurn returns, so an external injector (the scheduler) can await "my note's turn ended".
+  inFlightNotes: Array<(o: InjectionOutcome) => void>
+}
+
+// One queued injection for an expert's next turn. `settled` (external injections only — async-handle results
+// carry none) resolves the injector's awaitable once the consuming turn finishes ('settled') or the note can
+// no longer run ('dropped': cut short by abort, error-exited with no live peer to reroute to).
+interface PendingNote {
+  text: string
+  settled?: (o: InjectionOutcome) => void
 }
 
 const DEFAULT_WAIT_MS = 120_000
@@ -166,6 +178,7 @@ export class CollabSession {
         pairCount: new Map(),
         pendingHandles: new Set(),
         pendingResults: [],
+        inFlightNotes: [],
       })
     }
   }
@@ -194,7 +207,7 @@ export class CollabSession {
       awaitHandles: (inflightIds, settledResults) => {
         const me = this.experts.get(self)!
         for (const id of inflightIds) me.pendingHandles.add(id)
-        if (settledResults.length) me.pendingResults.push(...settledResults)
+        if (settledResults.length) me.pendingResults.push(...settledResults.map((text) => ({ text })))
         me.waitRequested = true // park after this turn; pendingHandles makes it an INDEFINITE park (runExpert), woken by notifyHandleComplete
         this.onEvent({ kind: 'wait', roleId: self })
         return `Waiting on ${inflightIds.length} async op(s) — your turn will end and resume when they complete (or a peer messages you).`
@@ -299,6 +312,10 @@ export class CollabSession {
           this.onEvent({ kind: 'turn', roleId: e.spec.roleId })
           e.messages = await e.spec.runTurn(e.messages, handle, signal)
           ran = true
+          // The turn that consumed the drained external notes just finished — settle their injectors' waiters
+          // (the scheduler awaits this to keep a live chain's steps ordered). An abort cut the turn short, so
+          // its notes did NOT run to completion → 'dropped'.
+          for (const settle of e.inFlightNotes.splice(0)) settle(signal.aborted ? 'dropped' : 'settled')
           if (signal.aborted) break
           if (e.mailbox.length) continue // mail arrived mid-turn → process it immediately
         }
@@ -325,7 +342,7 @@ export class CollabSession {
         // pendingHandles + queued pendingResults while we were still running), inject now instead of arming a timed
         // park with nothing left to wait for — that 120s timer was a resume-latency bug. (fix)
         if (e.pendingResults.length) {
-          pushUserText(e, e.pendingResults.splice(0).join('\n\n'))
+          this.drainPendingResults(e)
           e.waitRequested = false
           nudged = false
           continue
@@ -342,7 +359,7 @@ export class CollabSession {
         // T1: an awaited async handle (or batch) completed → inject its result(s) as a user turn and run. Real
         // input, so reset the one-shot timeout-nudge budget (same as fresh mail).
         if (e.pendingResults.length) {
-          pushUserText(e, e.pendingResults.splice(0).join('\n\n'))
+          this.drainPendingResults(e)
           nudged = false
           continue
         }
@@ -372,10 +389,14 @@ export class CollabSession {
       }
     }
     e.exited = true // the loop is gone — injectExternal must not route a note here (it can never drain again)
+    // Notes whose consuming turn THREW (or that were drained but never ran because the loop exited first) did
+    // not run to completion — settle their waiters 'dropped' so an awaiting scheduler chain fails honestly.
+    for (const settle of e.inFlightNotes.splice(0)) settle('dropped')
     // If the loop ERROR-exited with notes still queued (an inject landed while it was running, then the turn threw
     // before its pre-park drain), reroute them to a surviving live expert — `exited` is already set so they can't
-    // route back here. No live peer → injectExternal drops them (documented terminal loss), never a dead queue.
-    if (e.pendingResults.length) for (const note of e.pendingResults.splice(0)) this.injectExternal(note)
+    // route back here (waiters ride along with the entry). No live peer → routeNote settles them 'dropped'
+    // (documented terminal loss), never a dead queue.
+    if (e.pendingResults.length) for (const entry of e.pendingResults.splice(0)) this.routeNote(entry)
     // L2 (coordinator dispatch §5.2): if the expert that just exited was the elected review driver (e.g. it
     // handed its minor share to a teammate at alignment and left — the §5.1 collapse), reassign the driver to a
     // remaining LIVE owner. Never leave the team driverless: the ONE consolidated studio_lens review is refused
@@ -394,7 +415,7 @@ export class CollabSession {
         // would send "done" and park, and the ONE consolidated review would be silently skipped. Worse, if the heir
         // already finished and parked, the variable change reaches no one. injectExternal NOTIFIES the heir that it
         // is now the driver AND wakes it if parked, so it actually drives — honouring §5.2 "never leave driverless".
-        this.injectExternal(
+        void this.injectExternal(
           `${e.spec.name} has left the collaboration and was the team's Studio Lens driver. You are now the driver: once the remaining teammates finish, you run the ONE consolidated Studio Lens review over the team's combined work before wrapping up (everyone else self-checks only their own part).`,
           heir.spec.roleId
         )
@@ -419,7 +440,7 @@ export class CollabSession {
     for (const e of this.experts.values()) {
       if (!e.pendingHandles.has(handleId)) continue
       e.pendingHandles.delete(handleId)
-      e.pendingResults.push(result)
+      e.pendingResults.push({ text: result })
       if (e.pendingHandles.size === 0 && e.status === 'parked' && e.wake) {
         e.wake('woken') // all awaited handles done → resume; runExpert's post-park check injects pendingResults
         this.onEvent({ kind: 'wake', roleId: e.spec.roleId })
@@ -442,17 +463,34 @@ export class CollabSession {
   // error/quiescence) can never drain — exclude it so a note is never pushed onto a dead queue (which, with a
   // keepalive reason holding the session open, would also wedge it waiting for a wakeup that can't come). If NO
   // expert is live the event is dropped (a documented terminal loss, not a wedge). (Multi-target routing is a follow-up.)
-  injectExternal(note: string, roleId?: string): void {
+  injectExternal(note: string, roleId?: string): Promise<InjectionOutcome> {
+    // The returned promise settles when the consuming turn ENDS ('settled') or the note can no longer run
+    // ('dropped') — resolved via the entry's rider through drain → inFlightNotes → post-runTurn settle.
+    return new Promise<InjectionOutcome>((resolve) => this.routeNote({ text: note, settled: resolve }, roleId))
+  }
+
+  private routeNote(entry: PendingNote, roleId?: string): void {
     const isLive = (x: ExpertRunner): boolean => !x.exited
     const byRole = roleId ? this.experts.get(roleId) : undefined
     const target = byRole && isLive(byRole) ? byRole : [...this.experts.values()].find(isLive)
-    if (!target) return // no live expert to receive it — don't push onto a dead queue
-    target.pendingResults.push(note)
+    if (!target) {
+      entry.settled?.('dropped') // no live expert to receive it — don't push onto a dead queue
+      return
+    }
+    target.pendingResults.push(entry)
     // A parked expert must be woken to drain it; a running one will hit its own pre-park check and splice it.
     if (target.status === 'parked' && target.wake) {
       target.wake('woken') // resume; runExpert's post-park check injects pendingResults as a user turn
       this.onEvent({ kind: 'wake', roleId: target.spec.roleId })
     }
+  }
+
+  // Fold every queued note into ONE user turn and move their waiters to inFlightNotes — settled right after
+  // the turn that consumes them returns (runExpert). Shared by the pre-park and post-park drain points.
+  private drainPendingResults(e: ExpertRunner): void {
+    const drained = e.pendingResults.splice(0)
+    pushUserText(e, drained.map((n) => n.text).join('\n\n'))
+    for (const n of drained) if (n.settled) e.inFlightNotes.push(n.settled)
   }
 
   // Re-evaluate quiescence on demand — called by the session bus when the last keepalive reason is removed, so

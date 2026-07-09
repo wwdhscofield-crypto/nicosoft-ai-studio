@@ -24,6 +24,13 @@ import type { AgentContext } from './context'
 
 export type InjectionPriority = 'next' | 'later'
 
+// Terminal state of one injection, reported back to the injector (inject()'s returned promise):
+//   'settled' — the note was delivered AND the turn/run that consumed it finished (success or in-run error;
+//               the session surfaces its own errors in-conversation). The scheduler keys step ORDER off this.
+//   'dropped' — the note never ran to completion: the session was disposed/torn down with it still queued,
+//               no live expert could receive it, or the consuming turn was cut short by an abort.
+export type InjectionOutcome = 'settled' | 'dropped'
+
 export interface SessionInjection {
   // The event body in the model's words (NOT yet wrapped — the bus wraps it). Keep it self-contained: what
   // changed / fired and what the model should do, since it lands as a fresh turn with no surrounding context.
@@ -39,11 +46,15 @@ export interface SessionInjection {
 
 // (note, roleId?) — note is the FULLY WRAPPED text to deliver; roleId is the collab routing target (ignored
 // by solo). Solo: start a fresh resumed run with note as the resume seed. Collab: wake/queue into the expert.
-type DeliverFn = (note: string, roleId?: string) => void
+// The returned promise (when one is returned) settles when the delivering turn/run FINISHES — that is what
+// makes inject() awaitable, which the scheduler needs to keep a live chain's steps in order (engine.runChain).
+// A void return (legacy/fire-and-forget closure) settles the injection immediately on delivery.
+type DeliverFn = (note: string, roleId?: string) => void | Promise<InjectionOutcome | void>
 
 interface QueuedInjection {
   note: string // already wrapped in the notification shell
   roleId?: string
+  settled: (outcome: InjectionOutcome) => void // resolves inject()'s returned promise (exactly once — Promise semantics)
 }
 
 interface SessionState {
@@ -85,13 +96,17 @@ class SessionBus {
 
   // Push a message into a session and try to deliver it. The body is wrapped here (once) so every entry point
   // — Monitor, hooks, scheduler, self-rhythm, async-op completion — gets the identical notification shell.
-  inject(convId: string, injection: SessionInjection): void {
+  // Returns a promise settling with the injection's terminal outcome (see InjectionOutcome). It never rejects,
+  // so fire-and-forget callers may simply ignore it; the scheduler awaits it to preserve chain order.
+  inject(convId: string, injection: SessionInjection): Promise<InjectionOutcome> {
     this.emitNotificationHook(convId, injection)
     const s = this.get(convId)
-    const entry: QueuedInjection = { note: wrapSystemNotification(injection.text, injection.source), roleId: injection.roleId }
-    if (injection.priority === 'next') s.queue.unshift(entry)
-    else s.queue.push(entry)
-    this.flush(convId)
+    return new Promise<InjectionOutcome>((resolve) => {
+      const entry: QueuedInjection = { note: wrapSystemNotification(injection.text, injection.source), roleId: injection.roleId, settled: resolve }
+      if (injection.priority === 'next') s.queue.unshift(entry)
+      else s.queue.push(entry)
+      this.flush(convId)
+    })
   }
 
   private emitNotificationHook(convId: string, injection: SessionInjection): void {
@@ -124,10 +139,20 @@ class SessionBus {
   armDelivery(convId: string, deliver: DeliverFn | undefined): void {
     if (deliver === undefined) {
       const s = this.sessions.get(convId)
-      if (s) s.deliver = undefined
+      if (!s) return
+      s.deliver = undefined
+      // Unarm = the session is tearing down (collab finally; solo never clears). Anything still queued can no
+      // longer reach THIS session — drop it and settle its waiters, instead of letting a stale note leak into
+      // whatever session next arms delivery on the same conv (a schedule step firing into an unrelated run).
+      this.settleQueued(s, 'dropped')
       return
     }
     this.get(convId).deliver = deliver
+  }
+
+  // Drain the queue and settle every entry's waiter with the given outcome (teardown paths).
+  private settleQueued(s: SessionState, outcome: InjectionOutcome): void {
+    for (const entry of s.queue.splice(0)) entry.settled(outcome)
   }
 
   // SOLO: a run started streaming → hold delivery until it goes idle so a completion mid-run can't spawn a
@@ -208,21 +233,35 @@ class SessionBus {
       const note = items.map((i) => i.note).join('\n\n')
       // A delivery closure must never break the injector (a Monitor tick, a hook, the scheduler): a throwing
       // solo resume / collab wake is logged and swallowed so the queue still drains and the caller stays whole.
+      // The closure's returned promise (solo: the resumed run's settle; collab: the consuming turn's end)
+      // settles every waiter in this group — a sync throw / rejected delivery settles them 'dropped'.
       try {
-        s.deliver(note, key || undefined)
+        const ret = s.deliver(note, key || undefined)
+        void Promise.resolve(ret).then(
+          (outcome) => items.forEach((i) => i.settled(outcome === 'dropped' ? 'dropped' : 'settled')),
+          (err) => {
+            console.warn(`[session-bus] delivery for conv ${convId} rejected:`, err)
+            items.forEach((i) => i.settled('dropped'))
+          },
+        )
       } catch (err) {
         console.warn(`[session-bus] delivery for conv ${convId} threw:`, err)
+        items.forEach((i) => i.settled('dropped'))
       }
     }
   }
 
   // Conv deleted: drop the session's queue + keepalive + delivery. The caller also disposes the conv-level
-  // async registry / watchers separately; this only clears the bus's own state.
+  // async registry / watchers separately; this only clears the bus's own state. Queued injections settle
+  // 'dropped' so an awaiting scheduler chain fails honestly instead of hanging on a deleted conversation.
   disposeSession(convId: string): void {
+    const s = this.sessions.get(convId)
+    if (s) this.settleQueued(s, 'dropped')
     this.sessions.delete(convId)
   }
 
   disposeAllSessions(): void {
+    for (const s of this.sessions.values()) this.settleQueued(s, 'dropped')
     this.sessions.clear()
   }
 }

@@ -36,7 +36,7 @@ export function registerWorkflowHandlers(): void {
   if (orphans > 0) console.warn(`[workflows] closed ${orphans} orphaned running run(s) from a previous session`)
   // §7.5 batch C: async-launch wake notes ride the session bus — the launching conversation's armed
   // delivery resumes its role with the note (the same machinery every self-wakeup source uses).
-  workflowNotify.bindInjector((convId, note) => sessionBus.inject(convId, { text: note.text, source: note.source, priority: 'later', roleId: note.roleId }))
+  workflowNotify.bindInjector((convId, note) => void sessionBus.inject(convId, { text: note.text, source: note.source, priority: 'later', roleId: note.roleId }))
   ipcMain.handle('workflows:list', () => workflowService.list())
   ipcMain.handle('workflows:get', (_e, id: string) => workflowService.get(id))
   ipcMain.handle('workflows:lint', (_e, script: string) => workflowService.lint(script))
@@ -115,7 +115,7 @@ export function registerWorkflowHandlers(): void {
       { resumeNote: buildLaunchNote(reviewReq), extraTools: [makeLaunchDecisionTool(reviewReq)] }
     )
     streamId = started.streamId
-    return started
+    return { streamId } // settled (a Promise) must not cross the IPC boundary — structured clone would throw
   })
   ipcMain.handle('workflows:stop', (_e, runId: string) => workflowService.stop(runId))
   ipcMain.handle('workflows:runs', (_e, workflowId: string) => workflowService.runs(workflowId))

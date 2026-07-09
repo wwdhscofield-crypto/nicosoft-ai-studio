@@ -102,7 +102,7 @@ function maybeInjectResume(convId: string, e: SoloAsyncEntry): void {
     lines.join('\n') +
     '\n\nResume from here: incorporate this result and continue the task to completion — and before you finish, do a ' +
     'final TodoWrite marking any now-completed todos done (a resumed run must not leave a finished task in_progress).'
-  sessionBus.inject(convId, { text: body, source: 'async-op', priority: 'next' })
+  void sessionBus.inject(convId, { text: body, source: 'async-op', priority: 'next' })
 }
 
 // Conv deleted: tree-kill every still-running background op for it, drop the entry, and clear the bus session.

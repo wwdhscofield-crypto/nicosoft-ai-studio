@@ -35,7 +35,7 @@ import * as convRepo from '../../repos/conversation.repo'
 import * as conversationService from '../../services/conversation.service'
 import * as workspaceTasks from '../../services/workspace/tasks'
 import * as keychain from '../../keychain/keychain'
-import { sessionBus } from '../session-bus'
+import { sessionBus, type InjectionOutcome } from '../session-bus'
 
 // Cap one timer at 6h: bounds a far-future task's delay (setTimeout overflows past ~24.8d) and re-checks
 // after system sleep / clock changes. NOT a poll — a timer exists ONLY while an enabled task is scheduled,
@@ -125,6 +125,20 @@ export interface FireOutcome {
 
 function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
+}
+
+// Await an injection's outcome, bailing out with 'aborted' the moment the task's Stop fires — the wait must
+// never outlive the chain's own abort scope. inject() never rejects, so no rejection arm is needed.
+function raceTaskAbort(outcome: Promise<InjectionOutcome>, signal: AbortSignal): Promise<InjectionOutcome | 'aborted'> {
+  if (signal.aborted) return Promise.resolve('aborted')
+  return new Promise((resolve) => {
+    const onAbort = (): void => resolve('aborted')
+    signal.addEventListener('abort', onAbort, { once: true })
+    void outcome.then((o) => {
+      signal.removeEventListener('abort', onAbort)
+      resolve(o)
+    })
+  })
 }
 
 class SchedulerEngine {
@@ -363,8 +377,11 @@ class SchedulerEngine {
     // the two never drift). Agent steps are injected with their own role + the kind's instruction framing; we
     // must NOT re-validate the step's role binding here (that gate belongs to the headless run() path that
     // actually starts a run under it — validating a role the injected note never executes as would throw a
-    // false "not bound" mid-chain). The ONE feature not preserved is sequential output-piping (an injected
-    // step can't feed the next). When the conv is NOT live, fall through to the headless chain below.
+    // false "not bound" mid-chain). An injected step with a LATER step behind it is AWAITED (inject()'s outcome
+    // promise settles when the consuming turn/run ends), so the chain's order survives injection — "analyze,
+    // THEN run the script" can't run the script first. The ONE feature still not preserved is sequential
+    // output-piping (an injected step's output can't feed the next; `prior` stays empty on the live path).
+    // When the conv is NOT live, fall through to the headless chain below.
     const live = !!task.convId && sessionBus.hasDelivery(task.convId)
     onConv(live ? task.convId! : convId)
     let prior = '' // previous step's output — piped into the next step (headless path only)
@@ -384,8 +401,26 @@ class SchedulerEngine {
       }
 
       if (live) {
-        sessionBus.inject(task.convId!, { text: agentInstruction(step), source: `schedule:${task.id}`, priority: 'later', roleId: step.roleId })
-        results.push({ kind: step.kind, label, ok: true, ms: Date.now() - t0, outputTail: 'delivered into the live session' })
+        const delivered = sessionBus.inject(task.convId!, { text: agentInstruction(step), source: `schedule:${task.id}`, priority: 'later', roleId: step.roleId })
+        if (i === task.steps.length - 1) {
+          // Nothing follows — no ordering to protect. Don't hold the engine slot for the live turn's duration;
+          // record the hand-off and settle the task run now (the session surfaces the turn's own outcome).
+          results.push({ kind: step.kind, label, ok: true, ms: Date.now() - t0, outputTail: 'delivered into the live session' })
+          continue
+        }
+        // A later step exists → WAIT for the injected step's consuming turn/run to finish, or the chain's order
+        // inverts (the next command/workflow step would run before this one). A task Stop mid-wait ends the
+        // chain (the live session keeps running its turn — Stop cancels the SCHEDULE, not the conversation).
+        const outcome = await raceTaskAbort(delivered, signal)
+        if (outcome === 'aborted') {
+          results.push({ kind: step.kind, label, ok: true, ms: Date.now() - t0, outputTail: 'delivered into the live session; stop requested before it finished' })
+          throw new ChainStopped(where)
+        }
+        if (outcome === 'dropped') {
+          results.push({ kind: step.kind, label, ok: false, ms: Date.now() - t0, outputTail: 'the live session ended before this step could run' })
+          throw new Error(`${where}: the live session ended before the injected step ran`)
+        }
+        results.push({ kind: step.kind, label, ok: true, ms: Date.now() - t0, outputTail: 'ran in the live session' })
         continue
       }
 

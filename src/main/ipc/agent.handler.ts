@@ -57,7 +57,10 @@ function sweepStream(streamId: string): void {
 // Exported for backend-orchestrated turns: the /workflow launch review (workflow.handler) drives a role
 // turn through the SAME streaming/permission machinery a user-initiated run gets, with its per-run
 // closure tool riding opts.extraTools.
-export function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: { resumeNote?: string; extraTools?: Tool[] }): { streamId: string } {
+// `settled` resolves when the run fully finishes (after the done/error wire events + idle release) — never
+// rejects. The session-bus delivery closure returns it so an injector (the scheduler's live chain) can await
+// the resumed run; the IPC boundary strips it (a Promise doesn't survive structured clone).
+export function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: { resumeNote?: string; extraTools?: Tool[] }): { streamId: string; settled: Promise<void> } {
   const streamId = ulid()
   const roleId = input.roleId ?? ENGINEER_ROLE_ID
   const { controller, send, finish } = streams.open(streamId, sender)
@@ -81,7 +84,7 @@ export function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: 
   // Monitor change, a hook, a scheduled wakeup) drives it → a fresh resumed run on a new stream. markActive
   // claims the conv so an injection DURING this run defers its delivery to the run's idle (finally → markIdle)
   // — never two concurrent runs on one conv. The note is already wrapped in the notification shell by the bus.
-  sessionBus.armDelivery(input.convId, (note) => startAgentRun(input, sender, { resumeNote: note }))
+  sessionBus.armDelivery(input.convId, (note) => startAgentRun(input, sender, { resumeNote: note }).settled)
   sessionBus.markActive(input.convId)
 
   // Assignments (docs/assignments-design.md §2b): a FRESH user-initiated solo run classifies its message at
@@ -143,7 +146,7 @@ export function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: 
       broadcastUsage(sender, input.convId, 'turn-final', usage.inputTokens, usage.outputTokens, usage.cacheReadInputTokens, usage.cacheCreationInputTokens),
   }
 
-  void agentService
+  const settled = agentService
     .run(
       input,
       {
@@ -231,11 +234,12 @@ export function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: 
         sessionBus.markIdle(input.convId)
       })
 
-  return { streamId }
+  return { streamId, settled }
 }
 
 export function registerAgentHandlers(): void {
-  ipcMain.handle('agent:run', (e, input: AgentRunInput): { streamId: string } => startAgentRun(input, e.sender))
+  // Return ONLY the streamId over IPC — `settled` is a Promise and would fail structured clone.
+  ipcMain.handle('agent:run', (e, input: AgentRunInput): { streamId: string } => ({ streamId: startAgentRun(input, e.sender).streamId }))
 
   ipcMain.handle('agent:stop', (_e, streamId: string) => {
     streams.abort(streamId)

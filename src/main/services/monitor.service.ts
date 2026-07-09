@@ -213,7 +213,7 @@ class MonitorService {
       if (opts?.reason === 'auto-stop' && opts.noticeText) {
         // Inject the notice FIRST (wakes the owner), THEN drop the keepalive — so the wakeup is queued before a
         // collaboration can quiesce on the cleared reason.
-        sessionBus.inject(w.convId, { text: opts.noticeText, source: `monitor:${id}`, priority: 'next', roleId: w.roleId })
+        void sessionBus.inject(w.convId, { text: opts.noticeText, source: `monitor:${id}`, priority: 'next', roleId: w.roleId })
       }
     } finally {
       // ALWAYS release the keepalive, even if the inject above threw — the watcher is already out of the map, so
@@ -331,7 +331,7 @@ class MonitorService {
         `current: ${truncate(sample)}`
       // 'next' (jump the queue): a detected change is a reactive event the model should act on promptly, like
       // the auto-stop notice above (mirrors the reference Monitor injection priority), not appended behind a backlog.
-      sessionBus.inject(w.convId, { text: body, source: `monitor:${w.id}`, priority: 'next', roleId: w.roleId })
+      void sessionBus.inject(w.convId, { text: body, source: `monitor:${w.id}`, priority: 'next', roleId: w.roleId })
       this.notify()
       return
     }

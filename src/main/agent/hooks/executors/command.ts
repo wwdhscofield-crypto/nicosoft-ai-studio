@@ -120,7 +120,7 @@ export async function executeCommandHook(config: CommandHookConfig, payload: Hoo
       if (background && config.asyncRewake && code === 2 && !aborted) {
         const reason = errSink.text().trim() || out.text().trim() || 'A background hook reported a blocking condition.'
         const prefix = config.rewakeMessage ? `${config.rewakeMessage}\n\n` : ''
-        sessionBus.inject(opts.convId, { text: `${prefix}${reason}`, source: 'hook:asyncRewake', priority: 'next', roleId: opts.roleId })
+        void sessionBus.inject(opts.convId, { text: `${prefix}${reason}`, source: 'hook:asyncRewake', priority: 'next', roleId: opts.roleId })
       }
       if (!settled) done(parseHookResult({ stdout: out.text(), stderr: errSink.text(), exitCode: code ?? 1, event: payload.hook_event_name, aborted }))
       else cleanup() // background path already resolved success — just release the listener/timer

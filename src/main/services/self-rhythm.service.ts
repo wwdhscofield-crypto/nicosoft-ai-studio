@@ -51,7 +51,7 @@ class SelfRhythmService {
   private fire(id: string): void {
     const w = this.wakeups.get(id)
     if (!w) return
-    sessionBus.inject(w.convId, { text: w.prompt, source: `self-rhythm:${id}`, priority: 'later', roleId: w.roleId })
+    void sessionBus.inject(w.convId, { text: w.prompt, source: `self-rhythm:${id}`, priority: 'later', roleId: w.roleId })
     if (w.recurring) {
       w.timer = nodeSetTimeout(() => this.fire(id), w.delayMs) // next tick; keepalive held until cancel/dispose
     } else {
