@@ -7,6 +7,7 @@ A workflow is a saved multi-expert procedure: a small script that pins which exp
 - "New workflow" opens the editor; "Import" loads an exported workflow file (row menu → Export writes one).
 - The editor shows a **form** (Name, Description, Params) and the **script** side by side — they stay in sync in both directions as you type.
 - **Params** (⇄ `meta.params`) define the run form: name, type (string / number / boolean / folder), optional default.
+- The script body reads the picked values through the **`args`** global — a param named `url` is `args.url` (there is no `params` variable at run time). `args.runAt` always carries the fire time as an ISO string.
 - Lint runs continuously. **Test run** (enabled once lint passes) executes without saving; **Save** persists.
 - New, imported and distilled workflows start as **drafts** — the row reads "draft — never run" with a **Review** button. Flip the row switch to enable it. Only enabled workflows can run and appear as `/workflow` commands.
 
