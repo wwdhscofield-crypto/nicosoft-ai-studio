@@ -27,7 +27,10 @@ export async function ensureProjectForCollab(
   cwd?: string | null, // the conversation's own dir — collaborators share it (per-conversation cwd)
 ): Promise<CollabProject> {
   const conv = convRepo.getById(convId)
-  if (conv?.projectId) return mapOrSeedTasks(conv.projectId, roles)
+  // A dangling project_id (the project was deleted out from under the conversation — pre-unlink data,
+  // or a delete racing this read) falls through: the collab gets a fresh project and setProjectId
+  // below self-heals the link.
+  if (conv?.projectId && projectService.exists(conv.projectId)) return mapOrSeedTasks(conv.projectId, roles)
 
   // Blank title → project.service.create generates it from the goal (small model → main model → truncate).
   const project = await projectService.create({ title: '', goal: prompt, cwd: cwd || null })
@@ -58,12 +61,26 @@ export function completeCollabTasks(project: CollabProject, completedRoles: stri
 // the caller pushes project:updated just for those (send/assign persist the consult arrows in 5c-B).
 // Idempotent: completeCollabTasks still does the final sweep + phase advance; park/resume are guarded to
 // doing↔waiting so a late park event can't revive a finished task.
+// The user can hard-delete a project while its collaboration is still running/settling. From that
+// moment the INSERT paths (tool events, consults) hit the projects FK and throw — INSERT OR IGNORE does
+// not cover foreign keys — while the UPDATE paths just match 0 rows. Recording onto a vanished project
+// is meaningless, not an error: swallow exactly that case (verified at failure time) so the live run
+// survives; any other failure still throws.
+function tolerateDeleted(projectId: string, write: () => void): boolean {
+  try {
+    write()
+    return true
+  } catch (e) {
+    if (projectService.exists(projectId)) throw e
+    return false
+  }
+}
+
 export function applyCollabEvent(project: CollabProject, e: CollabEvent): boolean {
   // consult relationships (5c-B): an expert sending/assigning to a peer → persist the from→to edge so the
   // ProjectDetail draws an arrow. roleId is the sender, e.to the recipient.
   if ((e.kind === 'send' || e.kind === 'assign') && e.to) {
-    projectService.addConsult(project.projectId, e.roleId, e.to, e.kind, e.text ?? null)
-    return true
+    return tolerateDeleted(project.projectId, () => projectService.addConsult(project.projectId, e.roleId, e.to!, e.kind, e.text ?? null))
   }
   const taskId = project.taskByRole[e.roleId]
   if (!taskId) return false
@@ -106,7 +123,7 @@ function taskTitle(roleId: string): string {
 // tool_use block id so a mid-run compaction re-issuing the same blocks doesn't double-record.
 export function recordToolEvent(project: CollabProject, roleId: string, toolName: string, input: unknown, cwd: string, srcId: string | null): void {
   const zone = classifyApproval(toolName, input, cwd).zone
-  projectService.addToolEvent(project.projectId, { roleId, srcId, toolName, target: toolTarget(toolName, input), zone })
+  tolerateDeleted(project.projectId, () => projectService.addToolEvent(project.projectId, { roleId, srcId, toolName, target: toolTarget(toolName, input), zone }))
 }
 
 // Attach an image a tool produced (computer-use screenshot / ns_generate_image) to its project tool-event row,

@@ -13,9 +13,14 @@ A project is a multi-expert collaboration with a goal, an optional working folde
 - Plans can pause for your decision: "Plan ready for review" → **Approve & run** or **Revise**; approve/reject actions are also available from the project surface.
 - The Overview page's Activity tab shows live, currently-streaming work including collaborations.
 
+## Delete
+
+- From the list: hover a project card → "…" menu → Delete. From inside a project: the Delete button in the header.
+- A confirm dialog explains what goes: the plan, tests and timeline are removed permanently. Linked conversations are kept — they only lose their project link.
+
 ## Automation
 
-A Scheduled task can include a **Project** step with action Create or Advance — useful for "kick off the weekly cleanup project every Monday".
+A Scheduled task can include a **Project** step with action Create or Advance — useful for "kick off the weekly cleanup project every Monday". An Advance step pointing at a deleted project fails with a clear reason (it never fakes success).
 
 ## Notes
 

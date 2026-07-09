@@ -367,7 +367,7 @@ export default function App(): ReactElement {
           ) : view === 'projects' ? (
             <ProjectsView
               activeProject={activeProject}
-              onSelect={(id: string | null) => setActiveProject(id)}
+              onSelect={setActiveProject} // stable setter — ProjectsView keeps it in effect deps (stale-selection fallback)
               onOpenExpert={(id: string) => selectExpert(id, activeProject)}
             />
           ) : view === 'scheduled' ? (

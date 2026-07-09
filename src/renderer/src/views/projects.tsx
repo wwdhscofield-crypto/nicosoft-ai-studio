@@ -15,6 +15,8 @@ import { STUDIO_DATA, PHASES, PHASE_INDEX } from '@/data/studio-data'
 import { toast } from '@/stores/toast'
 import { useT } from '@/stores/locale'
 import { Modal } from '@/components/modal'
+import { ConfirmDialog } from '@/components/dialogs/confirm-dialog'
+import { RowMenu } from '@/views/extensions'
 
 // DTOs derived from the IPC surface — the renderer never imports main-process modules.
 type ProjectDto = Awaited<ReturnType<typeof window.api.project.list>>[number]
@@ -80,12 +82,15 @@ function goalSummary(goal: string | null): string {
 function ProjectsList({
   projects,
   onOpen,
-  onNew
+  onNew,
+  onDelete
 }: {
   projects: ProjectDto[]
   onOpen: (id: string) => void
   onNew: () => void
+  onDelete: (p: ProjectDto) => void
 }): ReactElement {
+  const t = useT()
   return (
     <div className="main-col">
       <div className="conv-header">
@@ -107,6 +112,10 @@ function ProjectsList({
                 <div className="pc-top">
                   <span className="pc-title">{p.title}</span>
                   <PhaseChip phase={p.phase} />
+                  {/* the whole card opens the project — the menu must not */}
+                  <span className="pc-menu" onClick={(e) => e.stopPropagation()}>
+                    <RowMenu items={[{ label: t('projects.deleteAction'), danger: true, onClick: () => onDelete(p) }]} />
+                  </span>
                 </div>
                 <div className="pc-goal">{goalSummary(p.goal)}</div>
                 <div className="pc-foot">
@@ -489,11 +498,13 @@ function pendingCommand(p: PendingDto): string {
 function ProjectDetail({
   project,
   onBack,
-  onOpenExpert
+  onOpenExpert,
+  onDelete
 }: {
   project: ProjectDto
   onBack: () => void
   onOpenExpert: (id: string) => void
+  onDelete: () => void
 }): ReactElement {
   const t = useT()
   const doers = project.experts.filter((id) => id !== 'coordinator')
@@ -620,6 +631,9 @@ function ProjectDetail({
           {project.title}
         </span>
         <PhaseChip phase={project.phase} />
+        <button className="btn ghost sm" style={{ marginLeft: 'auto' }} onClick={onDelete} title={t('projects.deleteAction')}>
+          <Icons.trash size={15} /> {t('projects.deleteAction')}
+        </button>
       </div>
 
       <div className="wb-body">
@@ -764,9 +778,11 @@ export function ProjectsView({
   onSelect: (id: string | null) => void
   onOpenExpert: (id: string) => void
 }): ReactElement {
+  const t = useT()
   const [projects, setProjects] = useState<ProjectDto[]>([])
   const [detail, setDetail] = useState<ProjectDto | null>(null)
   const [newOpen, setNewOpen] = useState(false)
+  const [toDelete, setToDelete] = useState<ProjectDto | null>(null)
 
   const reload = useCallback(async (): Promise<void> => {
     setProjects(await window.api.project.list())
@@ -776,7 +792,8 @@ export function ProjectsView({
     void reload()
   }, [reload])
 
-  // Load the active project's full detail (plan + tests) whenever the selection changes.
+  // Load the active project's full detail (plan + tests) whenever the selection changes. A null get()
+  // means the persisted selection points at a deleted project — clear it so the stale id doesn't stick.
   useEffect(() => {
     if (!activeProject) {
       setDetail(null)
@@ -784,28 +801,58 @@ export function ProjectsView({
     }
     let live = true
     void window.api.project.get(activeProject).then((p) => {
-      if (live) setDetail(p)
+      if (!live) return
+      if (!p) return onSelect(null)
+      setDetail(p)
     })
     return () => {
       live = false
     }
-  }, [activeProject])
+  }, [activeProject, onSelect])
 
   // phase 5c: a live collab event changed a project (tasks doing→done, phase) — refetch the list + an
   // open detail so the workbench updates in real time.
   useEffect(() => {
     return window.api.project.onUpdated(({ projectId }) => {
       void reload()
-      if (projectId === activeProject) void window.api.project.get(projectId).then((p) => setDetail(p))
+      if (projectId === activeProject) void window.api.project.get(projectId).then((p) => (p ? setDetail(p) : onSelect(null)))
     })
-  }, [activeProject, reload])
+  }, [activeProject, reload, onSelect])
+
+  // Confirmed delete (list-card menu or Workbench header): the service unlinks the project's
+  // conversations (chats survive) and cascades the plan/tests/timeline away.
+  const doDelete = async (p: ProjectDto): Promise<void> => {
+    try {
+      await window.api.project.remove(p.id)
+      toast.success(t('projects.deleted'))
+      if (activeProject === p.id) onSelect(null)
+      void reload()
+    } catch {
+      toast.error(t('projects.deleteFailed'))
+    }
+  }
+  const confirmDialog = toDelete && (
+    <ConfirmDialog
+      title={t('projects.deleteTitle')}
+      body={t('projects.deleteBody', { title: toDelete.title })}
+      confirmLabel={t('projects.deleteAction')}
+      danger
+      onConfirm={() => void doDelete(toDelete)}
+      onClose={() => setToDelete(null)}
+    />
+  )
 
   if (activeProject && detail) {
-    return <ProjectDetail project={detail} onBack={() => onSelect(null)} onOpenExpert={onOpenExpert} />
+    return (
+      <>
+        <ProjectDetail project={detail} onBack={() => onSelect(null)} onOpenExpert={onOpenExpert} onDelete={() => setToDelete(detail)} />
+        {confirmDialog}
+      </>
+    )
   }
   return (
     <>
-      <ProjectsList projects={projects} onOpen={onSelect} onNew={() => setNewOpen(true)} />
+      <ProjectsList projects={projects} onOpen={onSelect} onNew={() => setNewOpen(true)} onDelete={setToDelete} />
       {newOpen && (
         <NewProjectDialog
           onClose={() => setNewOpen(false)}
@@ -816,6 +863,7 @@ export function ProjectsView({
           }}
         />
       )}
+      {confirmDialog}
     </>
   )
 }
