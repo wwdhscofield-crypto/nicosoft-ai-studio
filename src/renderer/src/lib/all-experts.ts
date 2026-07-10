@@ -23,7 +23,8 @@ function customToExpert(c: CustomRoleDto): Expert {
     personality: 'User-defined',
     model: null,
     family: null,
-    custom: true
+    custom: true,
+    agent: c.agent
   }
 }
 

@@ -71,7 +71,7 @@ export default function App(): ReactElement {
   // who (the old behavior hard-jumped to generalist). Opened by the sidebar's new-conversation button.
   const [rolePicker, setRolePicker] = useState(false)
   // null = closed, {} = create mode, {initialRole} = edit mode for an existing custom role.
-  const [roleDialog, setRoleDialog] = useState<null | { initialRole?: { id: string; name: string; color: string | null; systemPrompt: string | null; greeting: string | null; tools: string[] } }>(null)
+  const [roleDialog, setRoleDialog] = useState<null | { initialRole?: { id: string; name: string; color: string | null; systemPrompt: string | null; greeting: string | null; tools: string[]; agent: boolean } }>(null)
   const [drawerOpen, setDrawerOpen] = useState<boolean>(persisted.drawerOpen || false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(persisted.sidebarCollapsed || false)
   const [activeProject, setActiveProject] = useState<string | null>(persisted.activeProject || null)

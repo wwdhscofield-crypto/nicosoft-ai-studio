@@ -7,7 +7,8 @@
    ============================================================ */
 import { Fragment, useCallback, useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
-import { STUDIO_DATA } from '@/data/studio-data'
+import { useAllExperts } from '@/lib/all-experts'
+import { roleHasAgent } from '@/stores/chat'
 import { Avatar, Segmented, Switch } from '@/components/primitives'
 import { Icons } from '@/components/icons'
 import { Dropdown } from '@/views/profile'
@@ -198,9 +199,10 @@ function MonitorsSection({ monitors, onStop }: { monitors: MonitorDto[]; onStop:
 }
 
 function StepChip({ step }: { step: StepDto }): ReactElement {
-  const { EXPERT_BY_ID } = STUDIO_DATA
+  // useAllExperts (not STUDIO_DATA): a custom-role executor renders name + avatar, not its raw ulid.
+  const { byId } = useAllExperts()
   if (step.kind === 'expert') {
-    const e = step.roleId ? EXPERT_BY_ID[step.roleId] : undefined
+    const e = step.roleId ? byId[step.roleId] : undefined
     return e ? (
       <span className="step-chip">
         <Avatar expert={e} size={18} /> {e.name}
@@ -279,6 +281,7 @@ function ScheduledList({
   onStopMonitor: (id: string) => void
   onOpenConversation?: (id: string) => void
 }): ReactElement {
+  const { byId } = useAllExperts() // creator badge: custom creators render by name, not raw ulid
   return (
     <div className="main-col">
       <div className="conv-header">
@@ -308,7 +311,7 @@ function ScheduledList({
                         marks it agent-created; a hand-created task carries neither. */}
                     {t.creatorRoleId || t.creatorConvId ? (
                       <span className="sched-creator" title="Scheduled by an assistant">
-                        by {t.creatorRoleId ? (STUDIO_DATA.EXPERT_BY_ID[t.creatorRoleId]?.name ?? t.creatorRoleId) : 'an assistant'}
+                        by {t.creatorRoleId ? (byId[t.creatorRoleId]?.name ?? t.creatorRoleId) : 'an assistant'}
                       </span>
                     ) : null}
                   </div>
@@ -353,7 +356,7 @@ function ScheduledEditor({
   onSaved: () => void
 }): ReactElement {
   const t = useT()
-  const { EXPERTS } = STUDIO_DATA
+  const { byId } = useAllExperts()
   const [name, setName] = useState(task ? task.name : 'New scheduled task')
   const [tf, setTf] = useState<TriggerForm>(() => formFromTask(task))
   const [cwd, setCwd] = useState(task?.cwd ?? '')
@@ -361,7 +364,10 @@ function ScheduledEditor({
     task ? task.steps : [{ kind: 'expert', roleId: 'analyst', prompt: "Analyze last week's metrics." }]
   )
   const [saving, setSaving] = useState(false)
-  const expertOpts = EXPERTS.filter((e) => !e.unconfigured).map((e) => ({ v: e.id, l: e.name }))
+  // Step executors must RUN THE AGENT LOOP (the engine validates this at fire time): the built-in agent
+  // roles + agent-enabled custom roles. Chat-only personas and Danny (router, not a step executor —
+  // engine's DEFAULT_EXECUTOR is Joan) are out; roleHasAgent is exactly that set.
+  const expertOpts = Object.values(byId).filter((e) => !e.unconfigured && roleHasAgent(e.id)).map((e) => ({ v: e.id, l: e.name }))
   const [projects, setProjects] = useState<{ v: string; l: string }[]>([]) // for the project-step "advance" picker
   useEffect(() => {
     void window.api.project.list().then((ps) => setProjects(ps.map((p) => ({ v: p.id, l: p.title }))))

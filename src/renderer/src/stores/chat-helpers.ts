@@ -2,25 +2,30 @@
 // state. chat.ts re-exports the role predicates so consumers keep importing them from '@/stores/chat'.
 import type { ChatMessage, ToolCall } from './chat-types'
 import { AGENT_ROLE_IDS as AGENT_ROLES } from '@shared/roles'
+import { useCustomRoles } from './custom-roles'
 
 // Roles whose replies run through the agent loop (tools) — in EVERY mode: a solo direct chat and a
 // coordinator-dispatched step both run the same full tool-using loop and stream over the same
 // coordinator:* wire (the drain unification); only pure custom/chat personas take the text-only chat path.
-// AGENT_ROLES = @shared/roles.AGENT_ROLE_IDS (imported above) — was a literal hand-synced with main's copy.
+// AGENT_ROLES = @shared/roles.AGENT_ROLE_IDS — the BUILT-IN agent constant; membership is now the
+// PREDICATE built-ins ∪ custom roles with Agent on (custom-agent-roles §5), read live from the custom-
+// roles store (mirrors main's rolesService.runsAgentLoop). Store not yet loaded ⇒ customs count as
+// chat-only — the same answer the pre-load renderer always gave.
 // Roles that generate images (the ns_generate_image tool is in their kit). A UI predicate only: it drives
 // the composer's image-model picker + passing imageModel to the run. Execution always goes through the
 // agent loop (these roles are in AGENT_ROLES); the tool itself is gated server-side by the Tools setting.
 const IMAGE_GEN_ROLES = new Set(['designer'])
 const COORDINATOR_ID = 'coordinator'
-export const roleHasAgent = (expertId: string): boolean => AGENT_ROLES.has(expertId)
+const isCustomAgent = (expertId: string): boolean => useCustomRoles.getState().list.some((r) => r.id === expertId && r.agent)
+export const roleHasAgent = (expertId: string): boolean => AGENT_ROLES.has(expertId) || isCustomAgent(expertId)
 export const roleHasImageGen = (expertId: string): boolean => IMAGE_GEN_ROLES.has(expertId)
 export const roleIsCoordinator = (expertId: string): boolean => expertId === COORDINATOR_ID
 // CAPABILITY predicate (distinct from roleHasAgent, which keys the agent:run-vs-chat:send ROUTING):
 // does this role's turn run an agent loop at all? The coordinator routes through coordinator:run, not
 // agent:run — but its DIRECT/investigation turns are a real agent loop too (read-only kit + Skill/MCP
 // injection), so capability UI (scope pickers, "no agent" badges) must count it. Every built-in role
-// has an agent loop today; only pure custom/chat personas don't.
-export const roleRunsAgentLoop = (expertId: string): boolean => AGENT_ROLES.has(expertId) || expertId === COORDINATOR_ID
+// has an agent loop today; custom roles follow their Agent switch.
+export const roleRunsAgentLoop = (expertId: string): boolean => roleHasAgent(expertId) || expertId === COORDINATOR_ID
 
 export const uid = (): string => globalThis.crypto.randomUUID()
 

@@ -14,6 +14,7 @@ export interface Expert {
   family: Family
   coordinator?: boolean
   custom?: boolean
+  agent?: boolean // custom roles only: Agent capability on (badge + capability UI); built-ins use the predicate
   unconfigured?: boolean
 }
 

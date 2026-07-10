@@ -18,7 +18,7 @@ Nine built-in experts. Every one of them is a full agent: it works in turns, cal
 | Turing | Analyst | Data analysis — stats & charts |
 | Joan | Scheduler | Email & scheduling |
 
-You can add custom roles ("New Role" in the sidebar) with their own system prompt, model and tools.
+You can add custom roles ("New Role" in the sidebar) with their own system prompt, model and greeting. A custom role is a chat persona by default. Switch on **Agent capability** in its editor to make it a real agent under its own persona: it gains a working-folder picker, an "agent" badge, and a tool kit you pick by capability group — Read files / Write & edit files / Web access / Run code / Scheduled tasks are on by default; Shell commands (runs real commands in the working folder — enable deliberately), Generate images, Export PDF and Sub-agents are opt-in. Write & edit implies Read. An agent-enabled custom role can also be a scheduled-task step executor. It needs a model that supports tool use.
 
 ## Ways to work
 
@@ -39,7 +39,7 @@ The Overview's Activity tab tracks **assignments**: work items the team received
 
 ## Finding your way around
 
-- **Sidebar**: Overview (assignments + stats), Projects, Scheduled, Extensions, Workflows, Roles (the team), and conversation History (Pinned / Today / Yesterday / Earlier / Archived).
+- **Sidebar**: Overview (assignments + stats), Projects, Workflows, Scheduled, Extensions, Roles (the team), and conversation History (Pinned / Today / Yesterday / Earlier / Archived).
 - **Topbar**: the Workspace button opens the right-hand drawer (Tasks / Files / Diff / Terminal / Preview); the gear opens Settings.
 - **⌘K** opens a global palette to search conversations, roles and actions.
 

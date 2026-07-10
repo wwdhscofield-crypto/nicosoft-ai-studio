@@ -186,7 +186,7 @@ function RoleRow({
         : <span className="lead-caret" />}
       <span className="role-av" onClick={onProfile} title={t('sidebar.openProfileTitle')}><Avatar expert={expert} size={26} /></span>
       <div className="role-meta" onClick={onChat} title={t('sidebar.startConversationTitle')}>
-        <span className="role-name">{expert.name}{expert.coordinator && <span className="primary-tag">{t('sidebar.primary')}</span>}</span>
+        <span className="role-name">{expert.name}{expert.coordinator && <span className="primary-tag">{t('sidebar.primary')}</span>}{expert.custom && expert.agent && <span className="primary-tag">{t('sidebar.agent')}</span>}</span>
         <span className="role-sub">{expert.specialty}</span>
       </div>
       {active && <span className="active-dot" />}

@@ -16,7 +16,6 @@ import { scan, parseFull, NSW_VERSION } from './scanner'
 import { analyze } from './analyze'
 import { parseScript } from '../script/executor'
 import * as settingsService from '../settings.service'
-import { AGENT_ROLE_IDS } from '@shared/roles'
 import { normalizeMemoryName as normalizeSlug } from '../memory/agent-memory'
 import type { WorkflowRow } from '../../repos/workflow.repo'
 import type { WorkflowRunRow } from '../../repos/workflow-run.repo'
@@ -37,13 +36,14 @@ type Ast = Node & { [k: string]: unknown }
 
 // Roles a workflow step may target: the agent-loop set (all built-ins except the coordinator — a step IS
 // already dispatched work, so the dispatcher persona is not a step executor), enabled and endpoint-bound.
-// Custom roles don't run the agent loop today (renderer roleRunsAgentLoop parity) — they lint as unknown.
+// runsAgentLoop = built-ins ∪ agent-enabled custom roles (custom-agent-roles §5) — an Agent-on custom
+// role with a binding is a valid step target; chat-only personas still lint as unknown.
 function validStepRoles(): Set<string> {
   const disabled = new Set(rolesService.listStates().filter((s) => !s.enabled).map((s) => s.roleId))
   const out = new Set<string>()
   for (const b of rolesService.listBindings()) {
     if (!b.endpointId || !b.model) continue
-    if (!AGENT_ROLE_IDS.has(b.roleId)) continue
+    if (!rolesService.runsAgentLoop(b.roleId)) continue
     if (disabled.has(b.roleId)) continue
     out.add(b.roleId)
   }

@@ -13,6 +13,9 @@ import type { MemoryLayer, MemoryType, MemorySource, MemoryRow } from '../../rep
 
 // Role ids a distilled workflow's steps may name — inlined into the gate-lesson instruction so the small
 // model never guesses (an invalid role is DISCARDED by the distill gate, and it has no in-loop retry).
+// Deliberately the BUILT-IN agent set only: custom-role ids are opaque ulids a small model would only
+// mangle. Lint (workflow validStepRoles) accepts agent-enabled customs at runtime; this list just steers
+// what the distiller GENERATES — conservative on purpose.
 const WORKFLOW_ROLE_IDS = [...AGENT_ROLE_IDS].map((r) => `'${r}'`).join(', ')
 
 // Memory extraction. A small/fast model (within the conversation's own endpoint) pulls durable

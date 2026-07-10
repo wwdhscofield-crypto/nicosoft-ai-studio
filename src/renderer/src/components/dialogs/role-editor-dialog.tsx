@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
 import { Icons } from '@/components/icons'
-import { Avatar, SelectMenu } from '@/components/primitives'
+import { Avatar, SelectMenu, Switch } from '@/components/primitives'
 import { Modal } from '@/components/modal'
 import { useCustomRoles } from '@/stores/custom-roles'
 import { toast } from '@/stores/toast'
@@ -15,7 +15,10 @@ const ROLE_SWATCHES = [
   'var(--exp-editor)', 'var(--exp-analyst)', 'var(--exp-scheduler)', 'var(--accent)',
   'var(--text-3)',
 ]
-const ROLE_TOOLS = ['Web search', 'Code execution', 'Image generation', 'File reading']
+// Capability groups for the Agent kit — keys mirror main's CUSTOM_AGENT_TOOL_GROUPS (custom-agent-roles
+// §4); the checked keys are what custom_roles.tools stores. Order = display order (defaults first).
+const AGENT_GROUPS = ['read', 'write', 'web', 'code', 'schedule', 'bash', 'image', 'pdf', 'task'] as const
+const DEFAULT_AGENT_GROUPS: readonly string[] = ['read', 'write', 'web', 'code', 'schedule']
 
 // EndpointDto.availableModels carries ModelInfo (slug + contextLength). Resolve to the wire-format
 // slug — this is what gets stored in role_bindings.model and sent to the LLM adapter.
@@ -32,23 +35,32 @@ export function RoleEditorDialog({
   initialRole
 }: {
   onClose: () => void
-  initialRole?: { id: string; name: string; color: string | null; systemPrompt: string | null; greeting: string | null; tools: string[] }
+  initialRole?: { id: string; name: string; color: string | null; systemPrompt: string | null; greeting: string | null; tools: string[]; agent: boolean }
 }): ReactElement {
   const tr = useT()
   const isEdit = !!initialRole
-  const toolLabels: Record<string, string> = {
-    'Web search': tr('roleEditor.toolWebSearch'),
-    'Code execution': tr('roleEditor.toolCodeExecution'),
-    'Image generation': tr('roleEditor.toolImageGeneration'),
-    'File reading': tr('roleEditor.toolFileReading')
+  const groupLabels: Record<string, string> = {
+    read: tr('roleEditor.groupRead'),
+    write: tr('roleEditor.groupWrite'),
+    web: tr('roleEditor.groupWeb'),
+    code: tr('roleEditor.groupCode'),
+    schedule: tr('roleEditor.groupSchedule'),
+    bash: tr('roleEditor.groupBash'),
+    image: tr('roleEditor.groupImage'),
+    pdf: tr('roleEditor.groupPdf'),
+    task: tr('roleEditor.groupTask')
   }
   const [name, setName] = useState(initialRole?.name ?? '')
   const [color, setColor] = useState(initialRole?.color || 'var(--exp-generalist)')
   const [systemPrompt, setSystemPrompt] = useState(initialRole?.systemPrompt ?? '')
   const [greeting, setGreeting] = useState(initialRole?.greeting ?? '')
-  const [tools, setTools] = useState<Record<string, boolean>>(() => {
+  const [agent, setAgent] = useState(initialRole?.agent ?? false)
+  // Checked capability groups. Stored tools that aren't group keys (pre-agent checkbox labels) are
+  // dropped on load — they never mapped to anything. Kept across an off→on toggle (spec: switching
+  // the agent off must not clear the selection).
+  const [groups, setGroups] = useState<Record<string, boolean>>(() => {
     const out: Record<string, boolean> = {}
-    for (const t of initialRole?.tools ?? []) out[t] = true
+    for (const t of initialRole?.tools ?? []) if ((AGENT_GROUPS as readonly string[]).includes(t)) out[t] = true
     return out
   })
   // Real endpoint+model pickers. Endpoints listed on mount; model list follows the selected endpoint.
@@ -88,7 +100,25 @@ export function RoleEditorDialog({
   }, [endpointId, endpoints])
 
   const previewExpert = { name: name || '?', color } as Expert
-  const toggleTool = (t: string): void => setTools((prev) => ({ ...prev, [t]: !prev[t] }))
+  // First-ever enable seeds the safe default kit; a re-enable keeps whatever was checked before.
+  const toggleAgent = (): void => {
+    setAgent((prev) => {
+      const next = !prev
+      if (next && !Object.values(groups).some(Boolean)) {
+        setGroups(Object.fromEntries(DEFAULT_AGENT_GROUPS.map((k) => [k, true])))
+      }
+      return next
+    })
+  }
+  // write ⇒ read: checking write force-checks read; read stays locked while write is on (an agent that
+  // edits files but can't read them can't complete a single edit loop). Main enforces the same backstop.
+  const toggleGroup = (k: string): void =>
+    setGroups((prev) => {
+      if (k === 'read' && prev.read && prev.write) return prev
+      const next = { ...prev, [k]: !prev[k] }
+      if (k === 'write' && next.write) next.read = true
+      return next
+    })
   const valid = name.trim().length > 0 && !!endpointId && !!model
 
   const onSave = async (): Promise<void> => {
@@ -101,7 +131,10 @@ export function RoleEditorDialog({
         color,
         systemPrompt: systemPrompt.trim() || undefined,
         greeting: greeting.trim() || undefined,
-        tools: Object.entries(tools).filter(([, v]) => v).map(([k]) => k)
+        // Persist the checked groups even while agent=false (main ignores them until it's on) so a
+        // later re-enable restores the selection.
+        tools: AGENT_GROUPS.filter((k) => groups[k]),
+        agent
       }
       let roleId = initialRole?.id
       if (isEdit) {
@@ -141,6 +174,7 @@ export function RoleEditorDialog({
         <Avatar expert={previewExpert} size={36} />
         <div>
           <span className="name-chip" style={{ '--chip-color': color } as CSSProperties}>{name || tr('roleEditor.unnamed')}</span>
+          {agent && <span className="primary-tag">{tr('sidebar.agent')}</span>}
           <div style={{ fontSize: 11.5, color: 'var(--text-4)', marginTop: 4 }}>{tr('roleEditor.livePreview')}</div>
         </div>
       </div>
@@ -203,15 +237,30 @@ export function RoleEditorDialog({
         </div>
       </div>
       <div>
-        <label className="field-label">{tr('roleEditor.tools')}</label>
-        <div className="tools-list">
-          {ROLE_TOOLS.map((tool) => (
-            <div className="tool-check" key={tool} onClick={() => toggleTool(tool)}>
-              <span className={'checkbox' + (tools[tool] ? ' on' : '')}>{tools[tool] && <Icons.check size={12} />}</span>
-              <span className="tc-label">{toolLabels[tool] ?? tool}</span>
-            </div>
-          ))}
+        <label className="field-label">{tr('roleEditor.agentTitle')}</label>
+        <div className="agent-cap-row">
+          <div className="acr-text">
+            <span>{tr('roleEditor.agentDesc')}</span>
+            <span className="acr-hint">{tr('roleEditor.agentModelHint')}</span>
+          </div>
+          <Switch on={agent} onClick={toggleAgent} ariaLabel={tr('roleEditor.agentTitle')} />
         </div>
+        {agent && (
+          <div className="agent-groups">
+            {AGENT_GROUPS.map((k) => {
+              const checked = !!groups[k]
+              const locked = k === 'read' && !!groups.write
+              return (
+                <div className={'tool-check' + (locked ? ' locked' : '')} key={k} onClick={() => toggleGroup(k)}
+                  title={locked ? tr('roleEditor.readRequired') : undefined}>
+                  <span className={'checkbox' + (checked ? ' on' : '')}>{checked && <Icons.check size={12} />}</span>
+                  <span className="tc-label">{groupLabels[k]}</span>
+                  {k === 'bash' && <span className="tc-warn"><Icons.alert size={11} /> {tr('roleEditor.groupBashWarn')}</span>}
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
       <div>
         <label className="field-label">{tr('roleEditor.greeting')} <span style={{ color: 'var(--text-4)', fontWeight: 400 }}>· {tr('roleEditor.optional')}</span></label>

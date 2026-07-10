@@ -222,7 +222,7 @@ export function ExpertDetail({
   onChat: (id: string) => void
   onOpenConv: (id: string) => void
   onOpenEndpoint: () => void
-  onEdit?: (initialRole: { id: string; name: string; color: string | null; systemPrompt: string | null; greeting: string | null; tools: string[] }) => void
+  onEdit?: (initialRole: { id: string; name: string; color: string | null; systemPrompt: string | null; greeting: string | null; tools: string[]; agent: boolean }) => void
   onDeleted?: () => void
 }): ReactElement {
   const { byId: EXPERT_BY_ID } = useAllExperts()
@@ -272,6 +272,7 @@ export function ExpertDetail({
                 {e.name}
                 {e.coordinator && <span className="dh-badge">coordinator</span>}
                 {e.custom && <span className="dh-badge custom">custom</span>}
+                {e.custom && e.agent && <span className="dh-badge">agent</span>}
               </div>
               <div className="dh-spec">{e.specialty}</div>
               <div className="dh-personality">{e.personality}.</div>
@@ -341,7 +342,8 @@ export function ExpertDetail({
                       color: row.color,
                       systemPrompt: row.systemPrompt,
                       greeting: row.greeting,
-                      tools: row.tools
+                      tools: row.tools,
+                      agent: row.agent
                     })
                   }}
                 >
