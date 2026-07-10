@@ -849,7 +849,8 @@
 .dialog-err { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--error); }
 
 /* Playwright (Tier 2) read-only availability readout — Extensions › Tools (doc-57 §4.2/§4.3) */
-.pw-card { margin-top: 14px; border: 1px solid var(--border-1); border-radius: var(--r-lg); padding: 14px 15px; }
+.pw-card { margin-top: 14px; border: 1px solid var(--border-1); border-radius: var(--r-lg); padding: 14px 15px; transition: background 0.1s; }
+.pw-card:hover { background: var(--bg-2); } /* same hover light-up as .ext-row — the Tools cards read as one family */
 .pw-head { display: flex; align-items: center; gap: 9px; }
 .pw-ic { width: 26px; height: 26px; flex: 0 0 26px; border-radius: 7px; display: grid; place-items: center; background: var(--bg-2); border: 1px solid var(--border-1); color: var(--text-3); }
 .pw-title { font-size: 13.5px; color: var(--text-1); font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; }

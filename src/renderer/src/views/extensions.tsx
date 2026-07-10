@@ -380,32 +380,31 @@ function AgentInstallCard(): ReactElement {
     void window.api.settings.set(AGENT_INSTALL_SOURCE_KEY, '');
   };
   return (
-    <div className={'ext-row tool' + (enabled ? '' : ' off')}>
-      <span className="ext-lead"><Icons.download size={16} /></span>
-      <div className="ext-main">
-        <div className="ext-line1">
-          <span className="ext-name">{t('agentInstall.title')}</span>
-          <span className="ext-name mono">install_skill · install_mcp · install_plugin</span>
-        </div>
-        <div className="ext-line2">{t('agentInstall.desc')}</div>
-        {enabled ? (
-          <div className="tool-config">
-            <span className="tool-config-label">{t('agentInstall.sourceDir')}</span>
-            {sourceDir ? (
-              <>
-                <code className="ap-install-path" title={sourceDir}>{sourceDir}</code>
-                <button className="ap-install-pick" onClick={() => void pickSource()}>{t('agentInstall.change')}</button>
-                <button className="ap-install-pick" onClick={clearSource}>{t('agentInstall.clear')}</button>
-              </>
-            ) : (
-              <button className="ap-install-pick" onClick={() => void pickSource()}>{t('agentInstall.choose')}</button>
-            )}
-          </div>
-        ) : null}
-      </div>
-      <div className="ext-right">
+    // Same .pw-card shell as Playwright / Computer use — one Tools-card family: 26px icon box inline
+    // with the title, description below in .pw-desc (wraps, never truncates), switch in the head row,
+    // stack spacing + hover from the shared shell.
+    <div className={'pw-card' + (enabled ? '' : ' off')}>
+      <div className="pw-head">
+        <span className="pw-ic"><Icons.download size={15} /></span>
+        <span className="pw-title">{t('agentInstall.title')}</span>
+        <span className="ext-name mono pw-tools">install_skill · install_mcp · install_plugin</span>
         <Switch on={enabled} onClick={toggle} />
       </div>
+      <div className="pw-desc">{t('agentInstall.desc')}</div>
+      {enabled ? (
+        <div className="tool-config">
+          <span className="tool-config-label">{t('agentInstall.sourceDir')}</span>
+          {sourceDir ? (
+            <>
+              <code className="ap-install-path" title={sourceDir}>{sourceDir}</code>
+              <button className="ap-install-pick" onClick={() => void pickSource()}>{t('agentInstall.change')}</button>
+              <button className="ap-install-pick" onClick={clearSource}>{t('agentInstall.clear')}</button>
+            </>
+          ) : (
+            <button className="ap-install-pick" onClick={() => void pickSource()}>{t('agentInstall.choose')}</button>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
