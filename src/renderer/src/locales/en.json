@@ -643,12 +643,8 @@
   "ap.install.materialize": "Installs into Studio's own data folder (~/.nsai/extensions) — the original download can be deleted afterwards.",
   "ap.install.confirm": "Install",
   "agentInstall.title": "Agent extension installs",
-  "agentInstall.desc": "Let experts help install skills, MCP servers and plugins from local folders you choose. Every install needs your confirmation; agents never download anything.",
-  "agentInstall.sourceDir": "Extensions source folder",
-  "agentInstall.choose": "Choose…",
-  "agentInstall.change": "Change…",
-  "agentInstall.clear": "Clear",
-  "ap.install.outsideSource": "This folder is outside your extensions source folder — pick it yourself to continue.",
+  "agentInstall.desc": "Let experts install skills, MCP servers and plugins from this conversation's working folder — or a path you give them in chat. Every install needs your confirmation in a dialog; agents never download anything.",
+  "ap.install.outsideSource": "This folder is outside the conversation's working folder — pick it yourself to continue.",
   "ext.materializeNote": "Installs are copied into Studio's own data folder (~/.nsai/extensions).",
   "ext.mcpNetWarn": "This command fetches code from the network when connecting (npx-style) — make sure you trust the package."
 }

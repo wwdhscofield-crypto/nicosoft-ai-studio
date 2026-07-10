@@ -15,6 +15,8 @@ import { QuestionDialog } from '@/components/question-dialog'
 import { ApprovalCards } from '@/components/approval-cards'
 import { VerifyTimeline } from '@/components/verify-timeline'
 import { useAllExperts } from '@/lib/all-experts'
+import { useWorkspace } from '@/stores/workspace'
+import { resolveConvCwd } from '@/lib/resolve-cwd'
 import { toast } from '@/stores/toast'
 import { useT } from '@/stores/locale'
 import type { Expert } from '@/types'
@@ -55,6 +57,11 @@ export function ChatView({ expert, onOpenSettings, onBackToProject }: { expert: 
   const retry = activeConv ? chat.retry[activeConv] : null
   const error = activeConv ? chat.error[activeConv] : null
   const permission = activeConv ? chat.permission[activeConv] : null
+  // The conversation's working folder — the install-approval source anchor (resolveConvCwd is the same
+  // resolver the composer + Files panel use, so the dialog gates on the exact cwd the agent runs in).
+  const cwdByExpert = useWorkspace((s) => s.cwdByExpert)
+  const activeConvRow = activeConv ? chat.conversations.find((c) => c.id === activeConv) ?? null : null
+  const installCwd = resolveConvCwd(activeConvRow, cwdByExpert, messages)
   const question = activeConv ? chat.question[activeConv] : null
   const approvals = activeConv ? chat.approvals[activeConv] : undefined
   const listRef = useRef<HTMLDivElement>(null)
@@ -261,6 +268,7 @@ export function ChatView({ expert, onOpenSettings, onBackToProject }: { expert: 
       {permission && activeConv ? (
         <ApprovalDialog
           prompt={permission}
+          cwd={installCwd}
           onAllow={(updatedInput) => chat.respondPermission(activeConv, true, updatedInput)}
           onDeny={() => chat.respondPermission(activeConv, false)}
         />

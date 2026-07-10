@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import type { PermissionPrompt } from '@/stores/chat'
 import { expertName, useAllExperts } from '@/lib/all-experts'
+import { resolveInstallDir, installDirBlocked } from '@/lib/install-source'
 import { useT } from '@/stores/locale'
 
 type InstallPreview = Awaited<ReturnType<typeof window.api.extensions.previewInstall>>
@@ -38,10 +39,12 @@ const PlanIcon = (): ReactElement => (
 
 export function ApprovalDialog({
   prompt,
+  cwd,
   onAllow,
   onDeny,
 }: {
   prompt: PermissionPrompt
+  cwd?: string | null // this conversation's working folder — the install source anchor (below)
   onAllow: (updatedInput?: Record<string, unknown>) => void
   onDeny: () => void
 }): ReactElement {
@@ -66,7 +69,7 @@ export function ApprovalDialog({
     return () => window.removeEventListener('keydown', onKey)
   }, [onAllow, onDeny, isInstall])
 
-  if (isInstall) return <InstallApproval prompt={prompt} onAllow={onAllow} onDeny={onDeny} />
+  if (isInstall) return <InstallApproval prompt={prompt} cwd={cwd} onAllow={onAllow} onDeny={onDeny} />
 
   // ExitPlanMode gets its own variant: the model is presenting a plan for approval, not asking to run a
   // mutating tool. Show the plan (+ optional steps) with Approve / Revise instead of the generic prompt.
@@ -144,10 +147,12 @@ const BoxIcon = (): ReactElement => (
 // token rides the approval answer, so the model never sees them. Enter never approves; Esc denies.
 function InstallApproval({
   prompt,
+  cwd,
   onAllow,
   onDeny,
 }: {
   prompt: PermissionPrompt
+  cwd?: string | null
   onAllow: (updatedInput?: Record<string, unknown>) => void
   onDeny: () => void
 }): ReactElement {
@@ -157,18 +162,19 @@ function InstallApproval({
   const kind = prompt.toolName // install_skill | install_mcp | install_plugin
   const isMcp = kind === 'install_mcp'
   const needsDir = kind === 'install_skill' || kind === 'install_plugin'
-  const [dir, setDir] = useState<string>(String((isMcp ? input.source_dir : input.dir_path) ?? ''))
+  // A relative dir_path/source_dir the agent proposed resolves against the conversation's working folder
+  // (matches the tool + prompt) — so the user sees, previews, and gates on the SAME absolute path the
+  // install will use.
+  const [dir, setDir] = useState<string>(resolveInstallDir(String((isMcp ? input.source_dir : input.dir_path) ?? ''), cwd))
   const [preview, setPreview] = useState<InstallPreview | null>(null)
   const [secrets, setSecrets] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
-  // sourceDir gate (design §5.3): when the user configured an extensions source directory, an agent-
-  // proposed folder OUTSIDE it must be re-picked by hand with the native picker — the picker click is
-  // the provable user authorization. Inside the source dir (or no source dir set) the prefill stands.
-  const [sourceDir, setSourceDir] = useState<string | null>(null)
+  // cwd gate (design §5.3, re-anchored 2026-07-11): the install source is the conversation's working
+  // folder — a folder INSIDE it is authorized ground (the user set that cwd and works there), so the
+  // prefill stands. An agent-proposed folder OUTSIDE the cwd must be re-picked by hand with the native
+  // picker — the picker click is the provable user authorization. (No cwd set → nothing to anchor on →
+  // any proposed path must be hand-picked.) This replaced the old global extensions.sourceDir setting.
   const [pickedByUser, setPickedByUser] = useState(false)
-  useEffect(() => {
-    void window.api.settings.get<string>('extensions.sourceDir').then((v) => setSourceDir(v || null))
-  }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -202,8 +208,7 @@ function InstallApproval({
   }
 
   const secretKeys = isMcp && preview?.ok && preview.kind === 'mcp' ? preview.secretKeys : []
-  const insideSourceDir = !sourceDir || !dir || dir === sourceDir || dir.startsWith(sourceDir.endsWith('/') ? sourceDir : sourceDir + '/')
-  const gateBlocked = !!dir && !insideSourceDir && !pickedByUser // outside the source dir + not hand-picked → re-pick
+  const gateBlocked = installDirBlocked(dir, cwd, pickedByUser) // outside the working folder + not hand-picked → re-pick
   const canConfirm =
     !busy && !gateBlocked && (needsDir ? !!dir && preview?.ok === true : preview?.ok === true && !(preview.kind === 'mcp' && preview.sourceDirMissing))
 
@@ -284,6 +289,11 @@ function InstallApproval({
                 <span className="ap-install-label">{t('ap.install.source')}</span>
                 <code className="ap-install-path" title={preview.sourceDir}>{preview.sourceDir}</code>
                 {preview.sourceDirMissing ? <span className="ap-install-missing">{t('ap.install.srcMissing')}</span> : null}
+                {/* A local-folder MCP source outside the conversation cwd trips the gate — this Change
+                    button is the ONLY affordance that clears it (pick() → pickedByUser). Without it a
+                    legitimate out-of-cwd MCP folder would be an un-approvable dead-end (adversarial review
+                    2026-07-11: the skill/plugin pick row is needsDir-gated, which excludes MCP). */}
+                <button className="ap-install-pick" onClick={() => void pick()}>{t('ap.install.change')}</button>
               </div>
             ) : null}
             {preview.netWarning ? <div className="ap-install-net">{t('ap.install.netWarn')}</div> : null}

@@ -352,32 +352,22 @@ function bundleSummary(bundles: PluginDto["bundles"]): string {
 /* ——— Tools (built-in ns_ tools) ——— */
 const TOOLS_ENABLED_KEY = 'tools.generate_image.enabled';
 const AGENT_INSTALL_KEY = 'extensions.agentInstallEnabled';
-const AGENT_INSTALL_SOURCE_KEY = 'extensions.sourceDir';
 
 /* — Agent extension installs (extension-install-design §5): a global OPT-IN switch (default off). When
      on, every expert gets install_skill / install_mcp / install_plugin — but each call is red-floor and
-     lands in the install confirmation dialog, so the user stays the gate. The optional source directory
-     is where the user drops downloaded extensions for the agent to install from (§5.3 batch mode). — */
+     lands in the install confirmation dialog, so the user stays the gate. There is no separate "source
+     folder" setting: the install source is the CONVERSATION'S working folder (or a path the user gives
+     in chat), and the confirmation dialog lets the user swap it — one less global to configure. — */
 function AgentInstallCard(): ReactElement {
   const t = useT();
   const [enabled, setEnabled] = useState(false);
-  const [sourceDir, setSourceDir] = useState('');
   useEffect(() => {
     void window.api.settings.get<boolean>(AGENT_INSTALL_KEY).then((v) => { if (v !== null) setEnabled(v); });
-    void window.api.settings.get<string>(AGENT_INSTALL_SOURCE_KEY).then((v) => { if (v) setSourceDir(v); });
   }, []);
   const toggle = (): void => {
     const next = !enabled;
     setEnabled(next);
     void window.api.settings.set(AGENT_INSTALL_KEY, next).catch(() => toast.error(t('tools.updateFailed')));
-  };
-  const pickSource = async (): Promise<void> => {
-    const dir = await window.api.extensions.pickDir();
-    if (dir) { setSourceDir(dir); void window.api.settings.set(AGENT_INSTALL_SOURCE_KEY, dir); }
-  };
-  const clearSource = (): void => {
-    setSourceDir('');
-    void window.api.settings.set(AGENT_INSTALL_SOURCE_KEY, '');
   };
   return (
     // Same .pw-card shell as Playwright / Computer use — one Tools-card family: 26px icon box inline
@@ -391,20 +381,6 @@ function AgentInstallCard(): ReactElement {
         <Switch on={enabled} onClick={toggle} />
       </div>
       <div className="pw-desc">{t('agentInstall.desc')}</div>
-      {enabled ? (
-        <div className="tool-config">
-          <span className="tool-config-label">{t('agentInstall.sourceDir')}</span>
-          {sourceDir ? (
-            <>
-              <code className="ap-install-path" title={sourceDir}>{sourceDir}</code>
-              <button className="ap-install-pick" onClick={() => void pickSource()}>{t('agentInstall.change')}</button>
-              <button className="ap-install-pick" onClick={clearSource}>{t('agentInstall.clear')}</button>
-            </>
-          ) : (
-            <button className="ap-install-pick" onClick={() => void pickSource()}>{t('agentInstall.choose')}</button>
-          )}
-        </div>
-      ) : null}
     </div>
   );
 }

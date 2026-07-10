@@ -643,12 +643,8 @@
   "ap.install.materialize": "安装到 Studio 自己的数据目录(~/.nsai/extensions)——之后可删除原始下载。",
   "ap.install.confirm": "安装",
   "agentInstall.title": "专家协助安装扩展",
-  "agentInstall.desc": "让专家从你指定的本地文件夹协助安装技能、MCP 服务器和插件。每次安装都需要你确认;专家绝不会自行下载。",
-  "agentInstall.sourceDir": "扩展来源文件夹",
-  "agentInstall.choose": "选择…",
-  "agentInstall.change": "更改…",
-  "agentInstall.clear": "清除",
-  "ap.install.outsideSource": "该文件夹在你的扩展来源文件夹之外——请亲自选择后再继续。",
+  "agentInstall.desc": "让专家从本会话的工作文件夹——或你在聊天里给出的路径——协助安装技能、MCP 服务器和插件。每次安装都会弹出确认对话框由你确认;专家绝不会自行下载。",
+  "ap.install.outsideSource": "该文件夹在本会话的工作文件夹之外——请亲自选择后再继续。",
   "ext.materializeNote": "安装会拷贝进 Studio 自己的数据目录(~/.nsai/extensions)。",
   "ext.mcpNetWarn": "此命令在连接时会从网络获取代码(npx 类)——请确认你信任该包。"
 }
