@@ -103,7 +103,7 @@ function assemble(
     experts,
     plan: tasks.map(taskToDto),
     tests: tests.map(testToDto),
-    consults: dedupeConsults(consults),
+    consults: consults.map(consultToDto),
     toolEvents: toolEvents.map(toolEventToDto),
     review,
     createdAt: p.createdAt,
@@ -111,21 +111,11 @@ function assemble(
   }
 }
 
-// Collapse the raw consult log into one entry per from→to pair: latest text + how many times, ordered
-// by first occurrence so the ProjectDetail arrows render stably.
-function dedupeConsults(rows: repo.ProjectConsultRow[]): ProjectConsultDto[] {
-  const byPair = new Map<string, ProjectConsultDto>()
-  for (const r of rows) {
-    const key = `${r.fromRole} ${r.toRole}`
-    const hit = byPair.get(key)
-    if (hit) {
-      hit.count++
-      if (r.text) hit.text = r.text
-    } else {
-      byPair.set(key, { from: r.fromRole, to: r.toRole, text: r.text, count: 1 })
-    }
-  }
-  return [...byPair.values()]
+// One DTO per consult row — every send/assign is its own interaction (its own Workbench arrow). The old
+// dedupe-by-from→to collapsed the whole exchange history into one edge per pair, which read as "these two
+// talked once"; the log is already chronological (listConsults ORDER BY created_at).
+function consultToDto(r: repo.ProjectConsultRow): ProjectConsultDto {
+  return { id: r.id, from: r.fromRole, to: r.toRole, kind: r.kind === 'assign' ? 'assign' : 'send', text: r.text, createdAt: r.createdAt }
 }
 
 export function list(): ProjectDto[] {

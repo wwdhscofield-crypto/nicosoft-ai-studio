@@ -1,5 +1,6 @@
 import * as projectService from './project.service'
 import * as convRepo from '../repos/conversation.repo'
+import { displayName } from '../agent/roles/prompts'
 import { classifyApproval } from '../agent/approval'
 import type { ProjectTaskDto } from '../ipc/contracts'
 import type { CollabEvent } from '../agent/collab'
@@ -115,7 +116,10 @@ function mapOrSeedTasks(projectId: string, roles: string[]): CollabProject {
 }
 
 function taskTitle(roleId: string): string {
-  return `${roleId.charAt(0).toUpperCase()}${roleId.slice(1)} contribution`
+  // displayName (main's dynamic resolver) — a custom collaborator's task reads "Vega contribution",
+  // never "<ulid> contribution"; the name is SNAPSHOTTED into the task title at seed time, so the
+  // Workbench keeps a human label even if the role is later deleted.
+  return `${displayName(roleId)} contribution`
 }
 
 // Persist one expert tool call onto the project's orchestration timeline (the tool-card timeline). zone is

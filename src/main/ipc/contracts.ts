@@ -1272,13 +1272,16 @@ export interface ProjectTestDto {
   title: string
   status: ProjectTestStatus
 }
-// A consult relationship surfaced from collab events (send/assign), deduped by from→to: which expert
-// reached out to which, the latest message, and how many times. Drives the ProjectDetail consult arrows.
+// ONE consult interaction from the collab log (send/assign): who reached out to whom, with what, when.
+// PER-INTERACTION on purpose — the Workbench draws one arrow per exchange (an assign, a hand-off message,
+// an answer are each their own arrow), never a deduped from→to relationship edge.
 export interface ProjectConsultDto {
+  id: string
   from: string
   to: string
+  kind: 'assign' | 'send'
   text: string | null
-  count: number
+  createdAt: string
 }
 // One tool call an expert made during the collaboration — the orchestration tool-card timeline.
 // zone is the safety classification at call time; ordered by seq within a project.
@@ -1313,7 +1316,7 @@ export interface ProjectDto {
   experts: string[] // derived: distinct task assignees, coordinator first
   plan: ProjectTaskDto[]
   tests: ProjectTestDto[]
-  consults: ProjectConsultDto[] // derived from collab send/assign events, deduped by from→to
+  consults: ProjectConsultDto[] // the collab send/assign log, one row per interaction, chronological
   toolEvents: ProjectToolEventDto[] // per-expert tool calls in order — the orchestration timeline
   review: ProjectFindingDto[] // derived: Lens findings the project's collab recorded, reverse-looked-up by convId
   createdAt: string

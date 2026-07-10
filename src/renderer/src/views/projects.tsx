@@ -7,11 +7,13 @@
    (services / approvals / consult arrows / Danny dock) wire up in
    phase 5c.
    ============================================================ */
-import { Fragment, useCallback, useEffect, useLayoutEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
 import { Icons, toolIconName } from '@/components/icons'
 import { Avatar, AvatarStack } from '@/components/primitives'
 import { STUDIO_DATA, PHASES, PHASE_INDEX } from '@/data/studio-data'
+import { useAllExperts } from '@/lib/all-experts'
+import type { Expert } from '@/types'
 import { toast } from '@/stores/toast'
 import { useT } from '@/stores/locale'
 import { Modal } from '@/components/modal'
@@ -26,6 +28,11 @@ type TestDto = ProjectDto['tests'][number]
 // project.phase is stored lowercase (planning|executing|testing|done); the chip + rail label in TitleCase.
 const PHASE_LABEL: Record<string, string> = { planning: 'Planning', executing: 'Executing', testing: 'Testing', done: 'Done' }
 const phaseTitle = (p: string): string => PHASE_LABEL[p] ?? 'Planning'
+
+// Role display name for the Workbench: built-ins + LIVING custom roles resolve via useAllExperts' byId; a
+// role that no longer exists (deleted custom) degrades to a short id, full id on :title via callers.
+const ULID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/
+const nameOf = (byId: Record<string, Expert>, id: string): string => byId[id]?.name ?? (ULID_RE.test(id) ? id.slice(0, 6) + '…' : id)
 
 // A doer lane's status, derived from its tasks: all done → done, any in-flight → working, any parked (collab
 // wait/idle) → waiting, else watching. 'doing' outranks 'waiting' so a mid-work expert still reads as working.
@@ -275,7 +282,7 @@ type LaneEvent = { id: string; toolName: string; target: string | null; zone?: s
 function EventCard({ ev, running, onClick }: { ev: LaneEvent; running?: boolean; onClick?: () => void }): ReactElement {
   const Ico = Icons[toolIconName(ev.toolName)]
   return (
-    <div className={'wb-card' + (running ? ' running' : '') + (onClick ? ' clickable' : '')} onClick={onClick}>
+    <div className={'wb-card' + (running ? ' running' : '') + (onClick ? ' clickable' : '')} data-ev={ev.id} onClick={onClick}>
       <div className="wb-card-head">
         <span className="wb-card-ic"><Ico size={13} /></span>
         <span className="wb-tool">{ev.toolName}</span>
@@ -314,31 +321,15 @@ function EventDetailModal({ ev, onClose }: { ev: LaneEvent; onClose: () => void 
   )
 }
 
-/* — a consult request card on the source lane (dashed); the SVG layer draws the arrow to the target lane — */
-function ConsultCard({ consult, idx }: { consult: ConsultDto; idx: number }): ReactElement {
-  const to = STUDIO_DATA.EXPERT_BY_ID[consult.to]?.name ?? consult.to
-  return (
-    <div className="wb-card consult-from" data-cfrom={idx} title={consult.text ?? `Consulted ${to}`}>
-      <div className="wb-card-head">
-        <span className="wb-card-ic"><Icons.link size={13} /></span>
-        <span className="wb-tool">Consult</span>
-      </div>
-      <div className="wb-target">→ {to}</div>
-      <div className="wb-card-foot">
-        <span className="wb-tag consult"><Icons.link size={9} /> consult</span>
-      </div>
-    </div>
-  )
-}
-
 /* — one swimlane: sticky gutter (id block + status line below) + a horizontal track of cards with a
-     .wb-conn connector between them. The coordinator lane renders as a compact conductor ribbon. — */
+     .wb-conn connector between them. The coordinator lane renders as a compact conductor ribbon.
+     Consult interactions are NOT separate cards — their assign_task/send_message tool calls already sit
+     on the track as event cards; the ConsultLayer anchors one arrow per interaction onto those cards. — */
 function Lane({
   roleId,
   conductor,
   status,
   events,
-  consults,
   onOpenExpert,
   onSelectEvent
 }: {
@@ -346,21 +337,20 @@ function Lane({
   conductor?: boolean
   status: LaneStatus
   events: LaneEvent[]
-  consults: (ConsultDto & { __idx: number })[]
   onOpenExpert: (id: string) => void
   onSelectEvent?: (ev: LaneEvent) => void
 }): ReactElement {
-  const e = STUDIO_DATA.EXPERT_BY_ID[roleId]
+  const { byId } = useAllExperts() // custom roles resolve too; a deleted role degrades to the short id
+  const e = byId[roleId]
   const lastRunning = !conductor && status.state === 'running' ? events.length - 1 : -1
-  const empty = events.length === 0 && consults.length === 0
   return (
     <div className={'wb-lane' + (conductor ? ' conductor' : '')} data-role={roleId} style={{ '--lane': e?.color ?? 'var(--accent)' } as CSSProperties}>
       <div className="wb-gutter" onClick={() => onOpenExpert(roleId)}>
         <div className="wb-gutter-id">
           {e ? <Avatar expert={e} size={28} /> : <span className="wb-avatar-fallback">{roleId[0]?.toUpperCase()}</span>}
           <div className="wb-gutter-meta">
-            <div className="wb-gutter-name" style={{ color: e?.color ?? 'var(--accent)' }}>{e?.name ?? roleId}</div>
-            <div className="wb-gutter-role">{e?.specialty?.split('—')[0]?.trim() ?? roleId}</div>
+            <div className="wb-gutter-name" style={{ color: e?.color ?? 'var(--accent)' }} title={roleId}>{nameOf(byId, roleId)}</div>
+            <div className="wb-gutter-role">{e?.specialty?.split('—')[0]?.trim() ?? (ULID_RE.test(roleId) ? 'deleted role' : roleId)}</div>
           </div>
         </div>
         <div className={'wb-lane-status ' + status.state}>
@@ -368,61 +358,115 @@ function Lane({
         </div>
       </div>
       <div className="wb-track">
-        {empty ? (
+        {events.length === 0 ? (
           <span className="wb-lane-empty">no activity yet</span>
         ) : (
-          <>
-            {events.map((ev, i) => (
-              <Fragment key={ev.id}>
-                {i > 0 && <span className="wb-conn" />}
-                <EventCard ev={ev} running={i === lastRunning} onClick={onSelectEvent ? () => onSelectEvent(ev) : undefined} />
-              </Fragment>
-            ))}
-            {consults.map((c, i) => (
-              <Fragment key={'c' + c.__idx}>
-                {(events.length > 0 || i > 0) && <span className="wb-conn" />}
-                <ConsultCard consult={c} idx={c.__idx} />
-              </Fragment>
-            ))}
-          </>
+          events.map((ev, i) => (
+            <Fragment key={ev.id}>
+              {i > 0 && <span className="wb-conn" />}
+              <EventCard ev={ev} running={i === lastRunning} onClick={onSelectEvent ? () => onSelectEvent(ev) : undefined} />
+            </Fragment>
+          ))
         )}
       </div>
     </div>
   )
 }
 
-/* — cross-lane consult arrows (doc 19): an SVG bezier from each consult's source card into the target lane's
-     first card, drawn in the .wb-lanes coordinate space so it scrolls with the content. Ported from the
-     design's ConsultLayer — measure card rects, retry across frames until layout settles, re-measure on resize. — */
-function ConsultLayer({ lanesEl, consults }: { lanesEl: HTMLDivElement | null; consults: (ConsultDto & { __idx: number })[] }): ReactElement | null {
-  const [geo, setGeo] = useState<{ w: number; h: number; edges: { fx: number; fy: number; tx: number; ty: number; to: string }[] } | null>(null)
+// One arrow PER INTERACTION, anchored to the interaction's own cards: the tail sits on the sender's
+// assign_task/send_message event card, the ARROWHEAD lands on the receiver's temporally-nearest card —
+// so the line itself reads "who initiated → who received" for every exchange, not one deduped edge per
+// pair. Resolved in ProjectDetail (it holds both the consult log and the tool events); missing anchors
+// (projects predating tool-event capture) degrade to the lane track.
+interface ConsultEdge {
+  id: string
+  from: string
+  to: string
+  kind: 'assign' | 'send'
+  text: string | null
+  fromEvId: string | null
+  toEvId: string | null
+}
+
+/* — cross-lane consult arrows (doc 19): an SVG bezier PER INTERACTION, from the sender's own event card
+     to the receiver's nearest card, drawn in the .wb-lanes coordinate space so it scrolls with the
+     content. Measure card rects, retry across frames until layout settles, re-measure on resize. — */
+function ConsultLayer({ lanesEl, edges }: { lanesEl: HTMLDivElement | null; edges: ConsultEdge[] }): ReactElement | null {
+  const { byId } = useAllExperts()
+  type Measured = { fx: number; fy: number; tx: number; ty: number; lx: number; ly: number; kind: 'assign' | 'send'; to: string; text: string | null }
+  const [geo, setGeo] = useState<{ w: number; h: number; edges: Measured[] } | null>(null)
   useLayoutEffect(() => {
-    if (!lanesEl || consults.length === 0) {
+    if (!lanesEl || edges.length === 0) {
       setGeo(null)
       return
     }
     let raf = 0
     let tries = 0
+    const anchorKey = (evId: string | null, roleId: string): string => evId ?? `lane:${roleId}`
+    const anchorRect = (evId: string | null, roleId: string): DOMRect | null => {
+      const el = (evId && lanesEl.querySelector(`[data-ev="${evId}"]`)) || lanesEl.querySelector(`.wb-lane[data-role="${roleId}"] .wb-track`)
+      const r = el?.getBoundingClientRect()
+      return r && r.width > 0 ? r : null
+    }
     const measure = (): boolean => {
       const ir = lanesEl.getBoundingClientRect()
-      const edges: { fx: number; fy: number; tx: number; ty: number; to: string }[] = []
-      for (const c of consults) {
-        const from = lanesEl.querySelector(`[data-cfrom="${c.__idx}"]`)
-        const toCard = lanesEl.querySelector(`.wb-lane[data-role="${c.to}"] .wb-track .wb-card`)
-        if (!from || !toCard) continue
-        const fr = from.getBoundingClientRect()
-        const tr = toCard.getBoundingClientRect()
-        if (fr.width === 0 || tr.width === 0) continue
-        edges.push({
-          fx: fr.left - ir.left + fr.width / 2,
-          fy: fr.bottom - ir.top,
-          tx: tr.left - ir.left + tr.width / 2,
-          ty: tr.top - ir.top,
-          to: STUDIO_DATA.EXPERT_BY_ID[c.to]?.name ?? c.to
+      // One x-slot registry per (anchor element × edge side): the tail wants the card center, the head
+      // wants the tail's x VERTICALLY PROJECTED into the receiver card (clamped to it) — near-vertical
+      // lines whose heads spread along the card instead of piling on its center. A wanted x that lands
+      // within 14px of an already-claimed x on the same edge steps aside (left first, then right).
+      const used = new Map<string, number[]>()
+      const claimX = (key: string, rect: DOMRect, want: number): number => {
+        const lo = rect.left - ir.left + 12
+        const hi = rect.right - ir.left - 12
+        const clamp = (v: number): number => Math.min(hi, Math.max(lo, v))
+        const taken = used.get(key) ?? []
+        const collides = (v: number): boolean => taken.some((u) => Math.abs(u - v) < 14)
+        let x = clamp(want)
+        while (collides(x) && x > lo) x = Math.max(lo, x - 14)
+        if (collides(x)) {
+          x = clamp(want)
+          while (collides(x) && x < hi) x = Math.min(hi, x + 14)
+        }
+        taken.push(x)
+        used.set(key, taken)
+        return x
+      }
+      const out: Measured[] = []
+      for (const e of edges) {
+        const fr = anchorRect(e.fromEvId, e.from)
+        const tr = anchorRect(e.toEvId, e.to)
+        if (!fr || !tr) continue
+        // Exit the sender card on the side FACING the receiver's lane (below → bottom edge, above → top
+        // edge) and land the arrowhead on the receiver card's facing edge — the marker stays visible
+        // instead of dying under the card.
+        const downward = tr.top >= fr.bottom
+        const fx = claimX(`${anchorKey(e.fromEvId, e.from)}:${downward ? 'b' : 't'}`, fr, fr.left - ir.left + fr.width / 2)
+        const tx = claimX(`${anchorKey(e.toEvId, e.to)}:${downward ? 't' : 'b'}`, tr, fx)
+        out.push({
+          fx,
+          fy: (downward ? fr.bottom : fr.top) - ir.top,
+          tx,
+          ty: (downward ? tr.top - 2 : tr.bottom + 2) - ir.top,
+          lx: 0,
+          ly: 0,
+          kind: e.kind,
+          to: nameOf(byId, e.to),
+          text: e.text
         })
       }
-      setGeo({ w: lanesEl.scrollWidth, h: lanesEl.offsetHeight, edges })
-      return edges.length > 0
+      // Label positions: midpoint, then greedily pushed down while it would sit on an earlier label —
+      // stacked chips instead of an unreadable pile when edges cross the same region.
+      const placed: { x: number; y: number }[] = []
+      for (const m of out) {
+        let x = (m.fx + m.tx) / 2
+        let y = (m.fy + m.ty) / 2
+        while (placed.some((p) => Math.abs(p.x - x) < 110 && Math.abs(p.y - y) < 24)) y += 24
+        placed.push({ x, y })
+        m.lx = x
+        m.ly = y
+      }
+      setGeo({ w: lanesEl.scrollWidth, h: lanesEl.offsetHeight, edges: out })
+      return out.length > 0
     }
     const loop = (): void => {
       measure()
@@ -435,15 +479,16 @@ function ConsultLayer({ lanesEl, consults }: { lanesEl: HTMLDivElement | null; c
       cancelAnimationFrame(raf)
       ro.disconnect()
     }
-  }, [lanesEl, consults])
+  }, [lanesEl, edges, byId])
 
   if (!geo || geo.edges.length === 0) return null
   return (
     <>
       <svg className="wb-consult-layer" width={geo.w} height={geo.h} viewBox={`0 0 ${geo.w} ${geo.h}`}>
         <defs>
-          <marker id="wb-arrow" markerWidth="9" markerHeight="9" refX="6" refY="4.5" orient="auto">
-            <path d="M1 1 L7 4.5 L1 8" fill="none" stroke="var(--accent)" strokeWidth="1.4" />
+          {/* filled head so the direction survives the dashed stroke; sized to the 1.5px stroke */}
+          <marker id="wb-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+            <path d="M0 0 L6 3 L0 6 Z" fill="var(--accent)" />
           </marker>
         </defs>
         {geo.edges.map((ed, i) => {
@@ -457,9 +502,9 @@ function ConsultLayer({ lanesEl, consults }: { lanesEl: HTMLDivElement | null; c
         })}
       </svg>
       {geo.edges.map((ed, i) => (
-        <div key={i} className="wb-consult-label" style={{ left: (ed.fx + ed.tx) / 2, top: (ed.fy + ed.ty) / 2 }}>
-          <span className="wb-cl-ic"><Icons.link size={11} /></span>
-          <span className="wb-cl-name">→ {ed.to}</span>
+        <div key={i} className="wb-consult-label" style={{ left: ed.lx, top: ed.ly }} title={ed.text ?? undefined}>
+          <span className="wb-cl-ic">{ed.kind === 'assign' ? <Icons.kanban size={11} /> : <Icons.message size={11} />}</span>
+          <span className="wb-cl-name">{ed.kind} → {ed.to}</span>
         </div>
       ))}
     </>
@@ -537,7 +582,6 @@ function ProjectReview({ review }: { review: FindingDto[] }): ReactElement {
   )
 }
 
-type ConsultDto = ProjectDto['consults'][number]
 type PendingDto = Awaited<ReturnType<typeof window.api.approval.list>>[number]
 
 // The Bash command (or tool name) a deferred red-zone action would run — shown in the approval bar.
@@ -562,10 +606,28 @@ function ProjectDetail({
   onDelete: () => void
 }): ReactElement {
   const t = useT()
+  const { byId } = useAllExperts()
   const doers = project.experts.filter((id) => id !== 'coordinator')
   const [lanesEl, setLanesEl] = useState<HTMLDivElement | null>(null)
-  const consultsIdx = project.consults.map((c, i) => ({ ...c, __idx: i }))
-  const doerNames = doers.map((rid) => STUDIO_DATA.EXPERT_BY_ID[rid]?.name ?? rid).join(' + ')
+  // One edge PER consult interaction: tail = the sender's k-th assign_task/send_message event card (the
+  // consult log and the tool-event log record the same calls in the same order, so pairing the k-th
+  // consult of a (sender, kind) with the k-th matching event card is exact); head = the receiver's first
+  // card at-or-after the interaction (where they picked it up), else their last card. Missing anchors
+  // (pre-capture projects) leave the ids null — ConsultLayer degrades to the lane track.
+  const consultEdges = useMemo<ConsultEdge[]>(() => {
+    const CONSULT_TOOL: Record<string, string> = { assign: 'assign_task', send: 'send_message' }
+    const used = new Map<string, number>()
+    return project.consults.map((c) => {
+      const key = `${c.from}:${c.kind}`
+      const k = used.get(key) ?? 0
+      used.set(key, k + 1)
+      const fromEv = project.toolEvents.filter((ev) => ev.roleId === c.from && ev.toolName === CONSULT_TOOL[c.kind])[k] ?? null
+      const toEvs = project.toolEvents.filter((ev) => ev.roleId === c.to)
+      const toEv = toEvs.find((ev) => ev.createdAt >= c.createdAt) ?? toEvs[toEvs.length - 1] ?? null
+      return { id: c.id, from: c.from, to: c.to, kind: c.kind, text: c.text, fromEvId: fromEv?.id ?? null, toEvId: toEv?.id ?? null }
+    })
+  }, [project.consults, project.toolEvents])
+  const doerNames = doers.map((rid) => nameOf(byId, rid)).join(' + ')
   // Coordinator lane = a compact conductor ribbon (PLAN → DISPATCH → WATCH), synthesized from project state.
   const conductorEvents: LaneEvent[] = [
     { id: 'c-plan', toolName: 'Plan', target: `${project.plan.length} task${project.plan.length === 1 ? '' : 's'}` },
@@ -741,7 +803,7 @@ function ProjectDetail({
               <strong>
                 {pending.length} approval{pending.length > 1 ? 's' : ''} needed
               </strong>{' '}
-              — {STUDIO_DATA.EXPERT_BY_ID[pending[0].roleId]?.name ?? pending[0].roleId} wants to run a destructive command{' '}
+              — {nameOf(byId, pending[0].roleId)} wants to run a destructive command{' '}
               <code>{pendingCommand(pending[0])}</code>.
             </span>
             <button className="btn ghost sm" onClick={() => void resolve(pending[0].id, false)}>
@@ -773,7 +835,6 @@ function ProjectDetail({
                   conductor
                   status={project.phase === 'done' ? { state: 'done', label: 'done' } : { state: 'watching', label: 'watching' }}
                   events={conductorEvents}
-                  consults={[]}
                   onOpenExpert={onOpenExpert}
                   onSelectEvent={setEventDetail}
                 />
@@ -783,13 +844,12 @@ function ProjectDetail({
                     roleId={rid}
                     status={laneStatusOf(rid)}
                     events={eventsOf(rid)}
-                    consults={consultsIdx.filter((c) => c.from === rid)}
                     onOpenExpert={onOpenExpert}
                     onSelectEvent={setEventDetail}
                   />
                 ))}
               </div>
-              <ConsultLayer lanesEl={lanesEl} consults={consultsIdx} />
+              <ConsultLayer lanesEl={lanesEl} edges={consultEdges} />
             </div>
           </div>
         </div>

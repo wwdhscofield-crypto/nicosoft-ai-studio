@@ -1913,9 +1913,12 @@
 .wb-consult-layer { position: absolute; inset: 0; pointer-events: none; z-index: 3; overflow: visible; }
 .wb-consult-path { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 4; opacity: 0.85; }
 .wb-consult-origin { fill: var(--accent); }
-.wb-consult-label { position: absolute; transform: translate(-50%, -50%); pointer-events: none; z-index: 6; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; background: var(--bg-3); border: 1px solid var(--border-2); border-radius: 6px; padding: 3px 8px; box-shadow: var(--shadow-float); }
-.wb-consult-label .wb-cl-name { font-family: var(--mono); font-size: 11px; color: var(--accent); }
-.wb-consult-label .wb-cl-ic { color: var(--accent); display: grid; place-items: center; }
+/* Translucent by default so the dashed lines stay visible beneath; hover restores a solid chip (and the
+   full message rides :title). pointer-events only on the chip itself — the layer stays click-through. */
+.wb-consult-label { position: absolute; transform: translate(-50%, -50%); pointer-events: auto; cursor: default; z-index: 6; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; background: color-mix(in srgb, var(--bg-3) 52%, transparent); backdrop-filter: blur(2.5px); border-radius: 5px; padding: 2px 7px; transition: background 0.12s ease, box-shadow 0.12s ease; }
+.wb-consult-label:hover { background: var(--bg-3); box-shadow: var(--shadow-float); z-index: 7; }
+.wb-consult-label .wb-cl-name { font-family: var(--mono); font-size: 10.5px; color: var(--accent); }
+.wb-consult-label .wb-cl-ic { color: var(--accent); display: grid; place-items: center; opacity: 0.9; }
 
 /* tests strip */
 .wb-tests { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border-1); }

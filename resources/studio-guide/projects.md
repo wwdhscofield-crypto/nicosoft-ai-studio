@@ -10,6 +10,7 @@ A project is a multi-expert collaboration with a goal, an optional working folde
 ## While it runs
 
 - The project card shows the phase chip, a progress bar and the avatars of the experts involved.
+- Inside a project, the Orchestration timeline shows one swimlane per expert (custom roles by name) with their tool calls as cards. Every teammate exchange — an assignment, a hand-off message, a reply — draws its own dashed arrow from the sender's card to where the receiver picked it up, arrowhead on the receiving end; the small label reads `assign → Name` / `send → Name` and hovering it shows the message.
 - The dock at the bottom of a project sends the team a new instruction; while a run is in flight the send button becomes **Stop** — one click aborts the run.
 - Plans can pause for your decision: "Plan ready for review" → **Approve & run** or **Revise**; approve/reject actions are also available from the project surface.
 - The Overview page's Activity tab shows live, currently-streaming work including collaborations.
