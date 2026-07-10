@@ -4,7 +4,7 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { CODING_DISCIPLINE, PANEL_REVIEW_DISCIPLINE, ENGINEER_SYSTEM_PROMPT } from '../agent/system-prompt'
+import { CODING_DISCIPLINE, PANEL_REVIEW_DISCIPLINE } from '../agent/system-prompt'
 import { buildRolePrompt, displayName } from '../agent/roles/prompts'
 import { COMMON_PREAMBLE, SAFETY_PREAMBLE } from '../agent/roles/common-preamble'
 import type { AgentContext } from '../agent/context'
@@ -12,6 +12,7 @@ import type { MemoryRow } from '../repos/memory.repo'
 import { DEV_PROMPT, DEV_ROLES } from './agent-tools'
 import { STUDIO_GUIDE_INDEX } from './studio-guide'
 import * as settingsService from './settings.service'
+import * as rolesService from './roles.service'
 
 // Agent system = the role's base prompt (Engineer's coding prompt, or the role section via
 // buildRolePrompt for other agent roles) + the chat layer's injected context (memories, summary, skills).
@@ -153,6 +154,20 @@ function readProjectConventions(cwd: string | undefined): string | null {
   return joined.length > MAX_CONVENTION_CHARS ? joined.slice(0, MAX_CONVENTION_CHARS) + '\n…(truncated)' : joined
 }
 
+// Base prompt for a NON-built-in role on the agent path: COMMON_PREAMBLE + the custom role's user-authored
+// system prompt (its persona). An empty prompt gets a neutral identity line — the role still acts under its
+// own name, not some borrowed built-in persona. A roleId that is neither built-in nor a stored custom role
+// (dangling reference) gets the neutral line too: upstream validations (binding / runsAgentLoop) are the
+// real gate, this is the honest last-resort text. TOOL_AWARENESS is appended by the !DEV_ROLES branch below,
+// same as every non-dev agent role.
+function customRoleBase(roleId: string): string {
+  const custom = rolesService.getCustom(roleId)
+  const persona =
+    custom?.systemPrompt?.trim() ||
+    `You are ${custom?.name ?? 'a custom assistant'}, a role the user defined in NicoSoft AI Studio. No further persona was configured — be a capable, direct generalist within the task you are given.`
+  return `${COMMON_PREAMBLE}\n\n${persona}`
+}
+
 export function buildAgentSystem(
   roleId: string,
   memories: MemoryRow[],
@@ -169,7 +184,10 @@ export function buildAgentSystem(
   // carry COMMON_PREAMBLE, so they were missing the "reply in the user's language / no filler / own mistakes"
   // baseline on the agent + collab paths (the dogfood Flynn-in-English-filler bug). Prepend it for DEV roles;
   // the buildRolePrompt branch already includes it.
-  const base = DEV_ROLES.has(roleId) ? `${COMMON_PREAMBLE}\n\n${DEV_PROMPT[roleId]}` : (buildRolePrompt(roleId, { toolless: false }) ?? ENGINEER_SYSTEM_PROMPT)
+  // Non-built-in ids (custom agent roles, or a dangling id) build from the custom role's OWN system prompt —
+  // NEVER the old `?? ENGINEER_SYSTEM_PROMPT` fallback, which ran a custom persona as a coding agent under
+  // Flynn's identity (custom-agent-roles design §7).
+  const base = DEV_ROLES.has(roleId) ? `${COMMON_PREAMBLE}\n\n${DEV_PROMPT[roleId]}` : (buildRolePrompt(roleId, { toolless: false }) ?? customRoleBase(roleId))
   // Verify-before-done + stay-in-scope discipline applies to EVERY tool-wielding expert, not just the dev
   // roles — a non-dev expert (e.g. the translator editing source files) must verify + stay in scope too.
   // SAFETY_PREAMBLE rides at the very front of every user-facing agent (all roles, incl. collab via

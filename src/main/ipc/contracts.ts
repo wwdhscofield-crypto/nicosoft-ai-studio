@@ -774,9 +774,10 @@ export interface CustomRoleDto {
   avatar: string | null
   color: string | null
   systemPrompt: string | null
-  tools: string[]
+  tools: string[] // capability-group keys (read/write/web/code/schedule/bash/image/pdf/task); ignored while agent=false
   greeting: string | null
   exampleQueries: string[]
+  agent: boolean // opt-in agent loop: tool kit per `tools` groups, dispatchable, joins collaborations
   createdAt: string
 }
 export interface CustomRoleCreateDto {
@@ -787,6 +788,7 @@ export interface CustomRoleCreateDto {
   tools?: string[]
   greeting?: string
   exampleQueries?: string[]
+  agent?: boolean
 }
 export interface CustomRoleUpdateDto {
   name?: string
@@ -796,6 +798,7 @@ export interface CustomRoleUpdateDto {
   tools?: string[]
   greeting?: string | null
   exampleQueries?: string[]
+  agent?: boolean
 }
 
 // === Conversations (persisted chat threads) ===

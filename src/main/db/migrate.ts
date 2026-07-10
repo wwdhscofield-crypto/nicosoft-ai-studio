@@ -63,6 +63,10 @@ export function runMigrations(db: DatabaseSync): void {
   // Project archive (批4): archived projects leave the default list and a scheduled advance skips them.
   // 0 on existing rows; schema.ts carries the column for fresh DBs.
   ensureColumn(db, 'projects', 'archived', 'INTEGER NOT NULL DEFAULT 0')
+  // Custom agent roles: opt-in agent-loop capability for user-defined roles. 0 on existing rows (pure
+  // chat personas, behavior unchanged); the `tools` JSON column's meaning shifts from the old dead
+  // checkbox labels to capability-group keys — old values were never consumed, so no value migration.
+  ensureColumn(db, 'custom_roles', 'agent', 'INTEGER NOT NULL DEFAULT 0')
   migrateShuriToFrontend(db)
 }
 

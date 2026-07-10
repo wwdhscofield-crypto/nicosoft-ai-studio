@@ -2,6 +2,7 @@ import * as roleRepo from '../repos/role.repo'
 import * as memoryRepo from '../repos/memory.repo'
 import * as convRepo from '../repos/conversation.repo'
 import { transaction } from '../db/connection'
+import { AGENT_ROLE_IDS } from '@shared/roles'
 import type {
   CustomRoleCreateDto,
   CustomRoleDto,
@@ -119,8 +120,24 @@ function toCustomDto(r: roleRepo.CustomRoleRow): CustomRoleDto {
     tools: r.tools,
     greeting: r.greeting,
     exampleQueries: r.exampleQueries,
+    agent: r.agent,
     createdAt: r.createdAt
   }
+}
+
+export function getCustom(roleId: string): CustomRoleDto | null {
+  const row = roleRepo.getCustom(roleId)
+  return row ? toCustomDto(row) : null
+}
+
+// THE capability predicate: does this role run the full agent loop (tool kit + multi-turn transcript)?
+// Built-in agent roles (AGENT_ROLE_IDS — a CONSTANT of the 8 built-ins, no longer a predicate) plus any
+// custom role whose Agent capability is switched on. Every main-process capability gate (kit tiers,
+// dispatch execution, scheduled expert steps, workflow lint, collab membership) asks THIS, never the
+// built-in set directly — the be388d6 predicate discipline (roleHasAgent = routing vs runsAgentLoop =
+// capability) carried to data-driven membership.
+export function runsAgentLoop(roleId: string): boolean {
+  return AGENT_ROLE_IDS.has(roleId) || roleRepo.getCustom(roleId)?.agent === true
 }
 
 export function listCustom(): CustomRoleDto[] {

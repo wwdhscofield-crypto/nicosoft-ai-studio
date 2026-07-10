@@ -33,6 +33,7 @@ import { studioGuideTool } from '../agent/tools/studio-guide'
 import type { Tool } from '../agent/tool'
 import { AGENT_ROLE_IDS } from '@shared/roles'
 import * as settingsService from './settings.service'
+import * as rolesService from './roles.service'
 import { manager as mcpManager } from './extensions/mcp'
 import { manager as skillManager } from './extensions/skill'
 
@@ -79,6 +80,38 @@ const ROLE_CORE_TOOLS: Record<string, readonly string[]> = {
   // web lookup itself instead of dispatching. Deliberately no Write/Edit/Bash/code — mutating or multi-step
   // work is a specialist's job (the prompt steers him to hand off). Read/Glob need a cwd; WebSearch doesn't.
   coordinator: ['Read', 'Glob', 'WebSearch']
+}
+
+// Capability groups for CUSTOM agent roles (custom-agent-roles design §4) — the ONE group→tools mapping;
+// the role editor's checkboxes and the custom_roles.tools column speak these keys, never raw tool names.
+// Deliberately absent from any group (see §4 exclusion table): TodoWrite (built-in non-dev roles don't
+// have it either) and enter/exit_worktree (dev-kit boundary — a "custom engineer" is a separate decision).
+// The universal tiers below (plan/panel/visualize/preview/monitor/memory/guide/MCP/Skill) are automatic
+// infrastructure, not checkboxes — they follow runsAgentLoop like every built-in agent role.
+export const CUSTOM_AGENT_TOOL_GROUPS: Record<string, readonly string[]> = {
+  read: ['Read', 'LS', 'Glob', 'Grep', 'view_image'],
+  write: ['Write', 'Edit', 'MultiEdit'],
+  web: ['WebFetch', 'WebSearch'],
+  code: ['code_execution'],
+  schedule: ['schedule_create', 'schedule_list', 'schedule_delete'],
+  bash: ['Bash'],
+  image: ['ns_generate_image'], // additionally gated by the tools.generate_image.enabled global (filter below)
+  pdf: ['WritePdf'],
+  task: ['Task'],
+}
+// Editor defaults for a freshly-enabled agent (§4): the safe everyday kit. bash/image/pdf/task start unchecked.
+export const CUSTOM_AGENT_DEFAULT_GROUPS: readonly string[] = ['read', 'write', 'web', 'code', 'schedule']
+
+// Group keys → allowed CORE tool names for a custom agent. Unknown keys (legacy checkbox labels that
+// predate the semantics change, typos) are ignored; `write ⇒ read` is enforced HERE as well as in the
+// editor UI — an agent that can edit files but not read them can't complete a single edit loop, so
+// stored data missing `read` must not produce a broken kit.
+export function customAgentToolNames(groups: readonly string[]): Set<string> {
+  const keys = new Set(groups.filter((g) => g in CUSTOM_AGENT_TOOL_GROUPS))
+  if (keys.has('write')) keys.add('read')
+  const names = new Set<string>()
+  for (const key of keys) for (const name of CUSTOM_AGENT_TOOL_GROUPS[key]) names.add(name)
+  return names
 }
 
 // Plan-mode tools (EnterPlanMode/ExitPlanMode) — every agent role gets them (doc 17). They're
@@ -151,32 +184,41 @@ export const DISTILL_TOOLS = [distillSkillTool] as unknown as Tool[]
 export const INSTALL_TOOLS = [installSkillTool, installMcpTool, installPluginTool] as unknown as Tool[]
 
 export function toolsForAgentRole(roleId: string): Tool[] {
+  // Membership is the runsAgentLoop PREDICATE (built-in agent set ∪ custom roles with Agent on), computed
+  // once for the tier gates below. A custom agent's CORE subset comes from its checked capability groups
+  // (CUSTOM_AGENT_TOOL_GROUPS union); built-ins keep their curated ROLE_CORE_TOOLS lists.
+  const customRow = AGENT_ROLE_IDS.has(roleId) ? null : rolesService.getCustom(roleId)
+  const customAllowed = customRow?.agent ? customAgentToolNames(customRow.tools) : null
+  const isAgent = AGENT_ROLE_IDS.has(roleId) || customAllowed !== null
   let core =
     DEV_ROLES.has(roleId)
       ? [...CORE_TOOLS]
-      : CORE_TOOLS.filter((t) => (ROLE_CORE_TOOLS[roleId] ?? []).includes(t.name))
+      : customAllowed
+        ? CORE_TOOLS.filter((t) => customAllowed.has(t.name))
+        : CORE_TOOLS.filter((t) => (ROLE_CORE_TOOLS[roleId] ?? []).includes(t.name))
   // ns_generate_image is opt-out in Extensions → Tools (default on). When disabled, drop it from the kit so
-  // designer becomes a text-only design consultant (research + specs) instead of generating images.
+  // designer becomes a text-only design consultant (research + specs) instead of generating images. Applies
+  // to a custom agent's `image` group too (the group grants the tool; the global switch still filters it).
   if (settingsService.get<boolean>('tools.generate_image.enabled') === false) {
     core = core.filter((t) => t.name !== 'ns_generate_image')
   }
   const skill = skillManager.skillTool(roleId)
   // studio_lens for every agent role (decision ⑤). coordinator's read-only DIRECT kit is not an agent role,
   // so it does not get it; the runtime gate handles whether an independent reviewer can be formed.
-  const panel = AGENT_ROLE_IDS.has(roleId) ? PANEL_TOOLS : []
-  const visualize = AGENT_ROLE_IDS.has(roleId) ? VISUALIZE_TOOLS : []
-  const preview = AGENT_ROLE_IDS.has(roleId) ? PREVIEW_AGENT_TOOLS : []
-  const monitor = AGENT_ROLE_IDS.has(roleId) ? MONITOR_TOOLS : []
+  const panel = isAgent ? PANEL_TOOLS : []
+  const visualize = isAgent ? VISUALIZE_TOOLS : []
+  const preview = isAgent ? PREVIEW_AGENT_TOOLS : []
+  const monitor = isAgent ? MONITOR_TOOLS : []
   // ns_computer_use: global toggle + macOS + helper installed (computerUseToolAvailable). Every agent role;
   // coordinator-direct (not an agent role) is excluded by construction — desktop control is a doer's job.
-  const computerUse = AGENT_ROLE_IDS.has(roleId) && computerUseToolAvailable() ? COMPUTER_USE_TOOLS : []
+  const computerUse = isAgent && computerUseToolAvailable() ? COMPUTER_USE_TOOLS : []
   // install_{skill,mcp,plugin}: global opt-in toggle (default OFF). When off, the tools are not in ANY
   // kit — an agent can't even propose an install. The red-floor classifier + install confirmation gate
   // the calls when on (extension-install-design §5.2).
-  const install = AGENT_ROLE_IDS.has(roleId) && settingsService.get<boolean>('extensions.agentInstallEnabled') === true ? INSTALL_TOOLS : []
+  const install = isAgent && settingsService.get<boolean>('extensions.agentInstallEnabled') === true ? INSTALL_TOOLS : []
   // workflow_status (§7.5 batch C): the read-only run window — the ONLY standing workflow tool a role
   // has (launching stays behind the per-turn review closure, so watching ≠ starting).
-  const wfStatus = AGENT_ROLE_IDS.has(roleId) ? [workflowStatusTool as unknown as Tool] : []
+  const wfStatus = isAgent ? [workflowStatusTool as unknown as Tool] : []
   // remember_project_map — project memory's write side for every role incl. coordinator-direct (§4.6: seed when
   // none recorded / refresh when verified stale; app-DB only, read-only classified). Sub-agents are stripped in
   // loop.ts (a Task/async child sees a narrow slice by construction — exactly the write the prompt forbids).

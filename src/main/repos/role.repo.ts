@@ -1,6 +1,6 @@
 import { ulid } from '../db/id'
 import { getDb } from '../db/connection'
-import { asJson, buildUpdate } from './_sql'
+import { asBool, asJson, buildUpdate } from './_sql'
 
 // role_bindings + custom_roles + role_states tables. Pure SQL.
 // - bindings: which endpoint+model a role talks to (role_id PK, UPSERT).
@@ -27,9 +27,10 @@ export interface CustomRoleRow {
   avatar: string | null
   color: string | null
   systemPrompt: string | null
-  tools: string[]
+  tools: string[] // capability-group keys (agent kit), e.g. ["read","write","web"]; ignored while agent=false
   greeting: string | null
   exampleQueries: string[]
+  agent: boolean // runs the full agent loop (rolesService.runsAgentLoop reads this)
   createdAt: string
 }
 
@@ -41,6 +42,7 @@ export interface CustomRoleCreateInput {
   tools?: string[]
   greeting?: string
   exampleQueries?: string[]
+  agent?: boolean
 }
 
 export interface CustomRoleUpdatePatch {
@@ -51,6 +53,7 @@ export interface CustomRoleUpdatePatch {
   tools?: string[]
   greeting?: string | null
   exampleQueries?: string[]
+  agent?: boolean
 }
 
 interface RoleBindingRaw {
@@ -76,6 +79,7 @@ interface CustomRoleRaw {
   tools: string
   greeting: string | null
   example_queries: string
+  agent: number
   created_at: string
 }
 
@@ -107,6 +111,7 @@ function mapCustom(raw: CustomRoleRaw): CustomRoleRow {
     tools: JSON.parse(raw.tools) as string[],
     greeting: raw.greeting,
     exampleQueries: JSON.parse(raw.example_queries) as string[],
+    agent: raw.agent === 1,
     createdAt: raw.created_at
   }
 }
@@ -192,8 +197,8 @@ export function createCustom(input: CustomRoleCreateInput): CustomRoleRow {
   const exampleQueries = JSON.stringify(input.exampleQueries ?? [])
   getDb()
     .prepare(
-      `INSERT INTO custom_roles (id, name, avatar, color, system_prompt, tools, greeting, example_queries, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO custom_roles (id, name, avatar, color, system_prompt, tools, greeting, example_queries, agent, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id,
@@ -204,6 +209,7 @@ export function createCustom(input: CustomRoleCreateInput): CustomRoleRow {
       tools,
       input.greeting ?? null,
       exampleQueries,
+      input.agent ? 1 : 0,
       createdAt
     )
   return {
@@ -215,6 +221,7 @@ export function createCustom(input: CustomRoleCreateInput): CustomRoleRow {
     tools: input.tools ?? [],
     greeting: input.greeting ?? null,
     exampleQueries: input.exampleQueries ?? [],
+    agent: input.agent ?? false,
     createdAt
   }
 }
@@ -228,6 +235,7 @@ export function updateCustom(id: string, patch: CustomRoleUpdatePatch): CustomRo
     ['tools', asJson(patch.tools)],
     ['greeting', patch.greeting],
     ['example_queries', asJson(patch.exampleQueries)],
+    ['agent', asBool(patch.agent)],
   ])
   if (sets.length > 0) {
     getDb()

@@ -215,7 +215,9 @@ export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string;
   const agentProtocol = protocolFamily(ep.protocol)
   // Agent path: a dispatched expert (full kit), OR Danny's DIRECT turn (isDirect → his read-only kit +
   // the DIRECT persona via systemPromptOverride). Synthesis turns stay on the tool-less llmChat path below.
-  if (agentProtocol && ((agentService.AGENT_ROLE_IDS.has(roleId) && !isCoordinatorSelf) || isDirect)) {
+  // runsAgentLoop = built-in agent set ∪ agent-enabled custom roles (custom-agent-roles §5) — a dispatched
+  // custom agent takes the full loop here; chat-only personas stay on the llmChat fallback.
+  if (agentProtocol && ((rolesService.runsAgentLoop(roleId) && !isCoordinatorSelf) || isDirect)) {
     // Delta-stall watchdog (P4): a finder/skeptic whose LLM stream FREEZES mid-flight (streams a while, then the
     // upstream stops sending without closing the stream) hangs the examine Promise.all barrier FOREVER — examine/
     // has no timeout anywhere. Abort a run that emits NO stream event for stallTimeoutMs so its task degrades to

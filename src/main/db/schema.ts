@@ -30,9 +30,10 @@ CREATE TABLE IF NOT EXISTS custom_roles (
   avatar          TEXT,
   color           TEXT,
   system_prompt   TEXT,
-  tools           TEXT NOT NULL DEFAULT '[]',     -- JSON string[]
+  tools           TEXT NOT NULL DEFAULT '[]',     -- JSON string[]: capability-group keys (agent kit), e.g. ["read","write"]
   greeting        TEXT,
   example_queries TEXT NOT NULL DEFAULT '[]',     -- JSON string[]
+  agent           INTEGER NOT NULL DEFAULT 0,     -- 1 = runs the full agent loop (kit from the tools groups)
   created_at      TEXT NOT NULL
 );
 

@@ -499,6 +499,12 @@ class SchedulerEngine {
     convId: string,
     signal: AbortSignal,
   ): Promise<string> {
+    // A step executor must RUN THE AGENT LOOP. Previously only the binding was checked, so a step pointing
+    // at a chat-only custom persona ran with an empty core kit under a borrowed engineer prompt (custom-
+    // agent-roles design §2). Custom roles with Agent enabled pass; chat-only personas fail loud and clear.
+    if (!rolesService.runsAgentLoop(roleId)) {
+      throw new Error(`${where}: role "${roleId}" is a chat-only persona — enable its Agent capability to use it as a step executor`)
+    }
     const binding = rolesService.getBinding(roleId)
     if (!binding?.endpointId || !binding.model) throw new Error(`${where}: role "${roleId}" not bound`)
     if (!endpointRepo.getById(binding.endpointId)) throw new Error(`${where}: endpoint missing`)
