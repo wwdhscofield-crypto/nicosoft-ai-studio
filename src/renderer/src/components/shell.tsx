@@ -425,6 +425,10 @@ export function Sidebar({
           <span className="sn-grid"><Icons.kanban size={16} /></span>
           {t('sidebar.projects')}
         </div>
+        <div className={"studio-nav-row" + (workflowsActive ? " active" : "")} onClick={onWorkflows}>
+          <span className="sn-grid"><Icons.workflow size={16} /></span>
+          {t('sidebar.workflows')}
+        </div>
         <div className={"studio-nav-row" + (scheduledActive ? " active" : "")} onClick={onScheduled}>
           <span className="sn-grid"><Icons.calendarClock size={16} /></span>
           {t('sidebar.scheduled')}
@@ -432,10 +436,6 @@ export function Sidebar({
         <div className={"studio-nav-row" + (extensionsActive ? " active" : "")} onClick={onExtensions}>
           <span className="sn-grid"><Icons.puzzle size={16} /></span>
           {t('sidebar.extensions')}
-        </div>
-        <div className={"studio-nav-row" + (workflowsActive ? " active" : "")} onClick={onWorkflows}>
-          <span className="sn-grid"><Icons.workflow size={16} /></span>
-          {t('sidebar.workflows')}
         </div>
 
         <SideSectionHead label={t('sidebar.roles')} count={1 + enabledRest.length} collapsed={!rolesOpen} onToggle={() => setRolesOpen((s) => !s)} />
