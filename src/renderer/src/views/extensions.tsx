@@ -17,6 +17,7 @@ import { SkillDialog } from '@/components/dialogs/skill-dialog'
 import { PluginDialog } from '@/components/dialogs/plugin-dialog'
 import { useRoleBinding } from '@/lib/use-role-binding'
 import { STUDIO_DATA } from '@/data/studio-data'
+import { expertName, useAllExperts } from '@/lib/all-experts'
 import type { McpServerDto, SkillDto, PluginDto, PlaywrightAvailabilityDto, ComputerUseStatusDto } from '@/lib/api'
 import type { PluginBundle } from '@/types'
 import { toast } from '@/stores/toast'
@@ -68,16 +69,18 @@ function OwnedTag({ name }: { name: string }): ReactElement {
 
 /* — capability scope: All experts, or specific experts — */
 function ScopeChip({ scope }: { scope: 'all' | string[] }): ReactElement {
-  const { EXPERT_BY_ID } = STUDIO_DATA;
+  // useAllExperts, not STUDIO_DATA: a skill distilled BY a custom agent carries the custom's ulid in
+  // its scope — the static roster would crash on `.name` (and a deleted role's ulid degrades to a stub).
+  const { byId } = useAllExperts()
   if (scope === "all") {
     return <span className="scope-chip all"><Icons.users size={12} /> All experts</span>;
   }
   return (
     <span className="scope-chip">
       <span className="scope-avs">
-        {scope.map((id) => <Avatar key={id} expert={EXPERT_BY_ID[id]} size={18} />)}
+        {scope.map((id) => <Avatar key={id} expert={byId[id] ?? null} size={18} />)}
       </span>
-      {scope.map((id) => EXPERT_BY_ID[id].name).join(", ")}
+      {scope.map((id) => expertName(byId, id)).join(", ")}
     </span>
   );
 }
@@ -189,7 +192,7 @@ const AUTO_ACTIVATE_KEY = 'skills.autoActivateDistilled';
 
 function SkillsTab({ onCount }: { onCount: (n: number) => void }): ReactElement {
   const t = useT();
-  const { EXPERT_BY_ID } = STUDIO_DATA;
+  const { byId } = useAllExperts();
   const [skills, setSkills] = useState<SkillDto[]>([]);
   const [plugins, setPlugins] = useState<PluginDto[]>([]);
   const [dialog, setDialog] = useState<{ editing: SkillDto | null } | null>(null);
@@ -211,7 +214,7 @@ function SkillsTab({ onCount }: { onCount: (n: number) => void }): ReactElement 
   };
   useEffect(() => { reload(); }, []);
   const pluginName = (id: string | null): string => plugins.find((p) => p.id === id)?.name ?? "plugin";
-  const roleName = (id: string | null): string => (id ? (EXPERT_BY_ID[id]?.name ?? id) : "agent");
+  const roleName = (id: string | null): string => (id ? expertName(byId, id) : "agent");
   const draftCount = skills.filter((s) => s.source === "distilled" && !s.enabled).length;
 
   const onToggle = (s: SkillDto): void => {

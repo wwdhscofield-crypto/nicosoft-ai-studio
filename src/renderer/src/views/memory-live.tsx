@@ -32,7 +32,7 @@ import type { ReactElement } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { Icons } from '@/components/icons'
-import { STUDIO_DATA } from '@/data/studio-data'
+import { useAllExperts } from '@/lib/all-experts'
 import type { MemoryDto } from '@/lib/api'
 import '@/styles/memory-live.css'
 
@@ -1388,7 +1388,7 @@ export function MemoryLive({ onClose }: { onClose: () => void }): ReactElement {
     }
   }, [memories])
 
-  const { EXPERT_BY_ID } = STUDIO_DATA
+  const { byId: EXPERT_BY_ID } = useAllExperts() // custom-scoped memories name their role too
   const tipLayer = !tip
     ? null
     : tip.mem.layer === 'shared'

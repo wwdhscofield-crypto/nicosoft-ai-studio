@@ -237,6 +237,7 @@ export interface ProjectConsultRow {
   toRole: string
   kind: string
   text: string | null
+  srcId: string | null // tool_use id of the send/assign call — exact join to its project_tool_events card
   createdAt: string
 }
 interface ConsultRaw {
@@ -246,12 +247,13 @@ interface ConsultRaw {
   to_role: string
   kind: string
   text: string | null
+  src_id: string | null
   created_at: string
 }
-export function insertConsult(projectId: string, fromRole: string, toRole: string, kind: string, text: string | null): void {
+export function insertConsult(projectId: string, fromRole: string, toRole: string, kind: string, text: string | null, srcId: string | null): void {
   getDb()
-    .prepare(`INSERT INTO project_consults (id, project_id, from_role, to_role, kind, text, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-    .run(ulid(), projectId, fromRole, toRole, kind, text, new Date().toISOString())
+    .prepare(`INSERT INTO project_consults (id, project_id, from_role, to_role, kind, text, src_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(ulid(), projectId, fromRole, toRole, kind, text, srcId, new Date().toISOString())
 }
 export function listConsults(projectId: string): ProjectConsultRow[] {
   const rows = getDb().prepare('SELECT * FROM project_consults WHERE project_id = ? ORDER BY created_at ASC').all(projectId)
@@ -262,6 +264,7 @@ export function listConsults(projectId: string): ProjectConsultRow[] {
     toRole: r.to_role,
     kind: r.kind,
     text: r.text,
+    srcId: r.src_id,
     createdAt: r.created_at,
   }))
 }
@@ -271,6 +274,7 @@ export interface ProjectToolEventRow {
   id: string
   projectId: string
   roleId: string
+  srcId: string | null // tool_use block id — consult rows join on it for exact arrow anchoring
   seq: number
   toolName: string
   target: string | null
@@ -282,6 +286,7 @@ interface ToolEventRaw {
   id: string
   project_id: string
   role_id: string
+  src_id: string | null
   seq: number
   tool_name: string
   target: string | null
@@ -311,7 +316,7 @@ export function insertToolEvent(input: ToolEventInsert): ProjectToolEventRow | n
     )
     .run(id, input.projectId, input.roleId, input.srcId, next.n, input.toolName, input.target, input.zone, now)
   if (res.changes === 0) return null
-  return { id, projectId: input.projectId, roleId: input.roleId, seq: next.n, toolName: input.toolName, target: input.target, zone: input.zone, mediaUrl: null, createdAt: now }
+  return { id, projectId: input.projectId, roleId: input.roleId, srcId: input.srcId, seq: next.n, toolName: input.toolName, target: input.target, zone: input.zone, mediaUrl: null, createdAt: now }
 }
 
 // Attach an image a tool produced (screenshot / generated image) to its already-recorded tool-event row, keyed
@@ -329,6 +334,7 @@ export function listToolEvents(projectId: string): ProjectToolEventRow[] {
     id: r.id,
     projectId: r.project_id,
     roleId: r.role_id,
+    srcId: r.src_id,
     seq: r.seq,
     toolName: r.tool_name,
     target: r.target,

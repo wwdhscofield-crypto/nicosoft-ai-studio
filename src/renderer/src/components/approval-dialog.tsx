@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import type { PermissionPrompt } from '@/stores/chat'
-import { STUDIO_DATA } from '@/data/studio-data'
+import { expertName, useAllExperts } from '@/lib/all-experts'
 import { useT } from '@/stores/locale'
 
 type InstallPreview = Awaited<ReturnType<typeof window.api.extensions.previewInstall>>
@@ -46,6 +46,7 @@ export function ApprovalDialog({
   onDeny: () => void
 }): ReactElement {
   const t = useT()
+  const { byId } = useAllExperts() // resolve custom agents' names too (bash approvals come from them)
   // Extension installs get their own variant with their own keys: Enter must NOT approve one — the
   // whole point of the dialog is that the user reviews the concrete consequences (and may need to type
   // secret values / pick a folder) before confirming.
@@ -110,7 +111,7 @@ export function ApprovalDialog({
             <TerminalIcon />
           </span>
           <span className="ap-title">
-            {STUDIO_DATA.EXPERT_BY_ID[prompt.roleId ?? 'engineer']?.name ?? prompt.roleId ?? 'Expert'} {t('ap.wantsToRun')} <span className="ap-tool">{prompt.toolName}</span>
+            {expertName(byId, prompt.roleId ?? 'engineer')} {t('ap.wantsToRun')} <span className="ap-tool">{prompt.toolName}</span>
           </span>
         </div>
         {prompt.reason ? <div className="ap-reason">{prompt.reason}</div> : null}
@@ -151,6 +152,7 @@ function InstallApproval({
   onDeny: () => void
 }): ReactElement {
   const t = useT()
+  const { byId } = useAllExperts()
   const input = (prompt.input ?? {}) as Record<string, unknown>
   const kind = prompt.toolName // install_skill | install_mcp | install_plugin
   const isMcp = kind === 'install_mcp'
@@ -224,7 +226,7 @@ function InstallApproval({
     }
   }
 
-  const roleName = STUDIO_DATA.EXPERT_BY_ID[prompt.roleId ?? 'engineer']?.name ?? prompt.roleId ?? 'Expert'
+  const roleName = expertName(byId, prompt.roleId ?? 'engineer')
   const titleKey = kind === 'install_skill' ? 'ap.install.skillTitle' : kind === 'install_plugin' ? 'ap.install.pluginTitle' : 'ap.install.mcpTitle'
 
   return (

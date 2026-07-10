@@ -10,7 +10,6 @@ import { ModelPicker, ThinkingPicker, ImageModelPicker, ModePicker } from '@/com
 import { CommandPalette, matchCommands, type SlashCommand } from '@/components/command-palette'
 import { parseWorkflowArgs, launchPayload, type WfCmdWorkflow } from '@/lib/workflow-command'
 import { resolveTarget } from '@/lib/command-routing'
-import { AGENT_ROLE_IDS } from '@shared/roles'
 import { toast } from '@/stores/toast'
 import { PathBar } from '@/components/path-bar'
 import { GitStatusChip } from '@/components/git-status-chip'
@@ -294,7 +293,10 @@ export function Composer({
     void (async () => {
       try {
         let convId = activeConv
-        if (AGENT_ROLE_IDS.has(expert.id)) {
+        // roleHasAgent (not the raw built-in constant): an agent-enabled CUSTOM role must run the
+        // same launch-review turn as built-in agents — 'whoever launches, checks'. Danny stays on
+        // the direct-start branch below (his routing carries its own review).
+        if (roleHasAgent(expert.id)) {
           chat.ensureStreamListeners() // the review turn streams on agent:resume-stream — subscribe before it can fire
           if (!convId) {
             const conv = await window.api.conversations.create({ kind: 'single', primaryRoleId: expert.id, title: rawCmd.slice(0, 60), cwd: effectiveCwd || '' })

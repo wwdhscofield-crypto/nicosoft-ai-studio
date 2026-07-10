@@ -81,7 +81,7 @@ export function applyCollabEvent(project: CollabProject, e: CollabEvent): boolea
   // consult relationships (5c-B): an expert sending/assigning to a peer → persist the from→to edge so the
   // ProjectDetail draws an arrow. roleId is the sender, e.to the recipient.
   if ((e.kind === 'send' || e.kind === 'assign') && e.to) {
-    return tolerateDeleted(project.projectId, () => projectService.addConsult(project.projectId, e.roleId, e.to!, e.kind, e.text ?? null))
+    return tolerateDeleted(project.projectId, () => projectService.addConsult(project.projectId, e.roleId, e.to!, e.kind, e.text ?? null, e.srcId ?? null))
   }
   const taskId = project.taskByRole[e.roleId]
   if (!taskId) return false

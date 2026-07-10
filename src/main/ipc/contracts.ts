@@ -1281,6 +1281,7 @@ export interface ProjectConsultDto {
   to: string
   kind: 'assign' | 'send'
   text: string | null
+  srcId: string | null // tool_use id of the send/assign call — exact join to its tool-event card (null on legacy rows)
   createdAt: string
 }
 // One tool call an expert made during the collaboration — the orchestration tool-card timeline.
@@ -1288,6 +1289,7 @@ export interface ProjectConsultDto {
 export interface ProjectToolEventDto {
   id: string
   roleId: string
+  srcId: string | null // tool_use block id — consult rows join on it for exact arrow anchoring
   toolName: string
   target: string | null
   zone: 'green' | 'yellow' | 'red'

@@ -50,21 +50,20 @@ export async function route(userInput: string, history: convRepo.MessageRow[], c
   const enabled = rolesService.dispatchableRoleIds().filter((r) => !disabled.has(r))
   if (enabled.length === 0) return { mode: 'single', role: 'generalist', reason: 'no roles enabled', needsPlan: isNonTrivialTask(userInput) }
 
-  // 0. @mention 0-LLM fast path — user explicitly named a role (built-in OR agent-enabled custom; the
-  //    dynamic roleIdFromName resolves custom names to their ids, built-ins winning a name collision).
-  //    Must be currently enabled; a disabled/unknown/chat-only @mention falls through to the LLM router.
-  //    Single-word letter names only (\p{L}+) — a custom name with spaces/digits routes via the roster.
-  const mention = /^@(\p{L}+)/u.exec(userInput)
+  // 0. @mention 0-LLM fast path — user explicitly named a role (built-in OR agent-enabled custom).
+  //    Matched against the ENABLED roster's full display names (and raw built-in ids), longest name
+  //    first, so "@Flynn Pro …" hits the custom "Flynn Pro" instead of prefix-capturing built-in Flynn,
+  //    and names with digits/spaces ("@Ada2") resolve instead of being truncated at the first non-letter.
+  //    Only a FULL name followed by a boundary (end / non-alphanumeric) takes the fast path; a partial,
+  //    disabled, unknown or chat-only @mention falls through to the LLM router.
+  const mention = matchMention(userInput, enabled)
   if (mention) {
-    const id = roleIdFromName(mention[1]) // accepts a display name (@Flynn / @Nova) or the raw id (@engineer)
-    if (enabled.includes(id)) {
-      // Assignments: the 0-LLM fast path has no router judgment, so work-vs-chat falls to the SAME
-      // conservative heuristic the solo fallback uses ("@Flynn fix the login" is 接活 like any other) —
-      // classified on the message with the mention stripped, so the leading @name can't skew it.
-      const stripped = userInput.slice(mention[0].length).trim()
-      const w = classifyHeuristic(stripped || userInput)
-      return { mode: 'single', role: id, reason: 'explicit @mention', needsPlan: isNonTrivialTask(userInput), ...(w.isWork ? { isWork: true, taskTitle: w.title } : {}) }
-    }
+    // Assignments: the 0-LLM fast path has no router judgment, so work-vs-chat falls to the SAME
+    // conservative heuristic the solo fallback uses ("@Flynn fix the login" is 接活 like any other) —
+    // classified on the message with the mention stripped, so the leading @name can't skew it.
+    const stripped = userInput.slice(mention.matchedLen).trim()
+    const w = classifyHeuristic(stripped || userInput)
+    return { mode: 'single', role: mention.id, reason: 'explicit @mention', needsPlan: isNonTrivialTask(userInput), ...(w.isWork ? { isWork: true, taskTitle: w.title } : {}) }
   }
 
   const binding = rolesService.getBinding('coordinator')
@@ -102,6 +101,25 @@ export async function route(userInput: string, history: convRepo.MessageRow[], c
     return await routeAsAgent(userInput, history, enabled, workflows, ctx.cwd, ctx.convId, tier1, cb, signal)
   }
   return tier1
+}
+
+// "@<full display name or raw id>" at the start of the message, resolved against the enabled roster.
+// Longest matching name wins (a custom "Flynn Pro" beats built-in "Flynn"); the char after the name must
+// be a boundary (end / not letter-or-digit) so a mere prefix never dispatches. Case-insensitive.
+export function matchMention(input: string, enabled: string[]): { id: string; matchedLen: number } | null {
+  if (!input.startsWith('@')) return null
+  let best: { id: string; len: number } | null = null
+  for (const id of enabled) {
+    for (const cand of new Set([displayName(id), id])) {
+      const name = cand.trim()
+      if (!name) continue
+      if (input.slice(1, 1 + name.length).toLowerCase() !== name.toLowerCase()) continue
+      const after = input[1 + name.length]
+      if (after !== undefined && /[\p{L}\p{N}]/u.test(after)) continue // partial word — not this role
+      if (!best || name.length > best.len) best = { id, len: name.length }
+    }
+  }
+  return best ? { id: best.id, matchedLen: 1 + best.len } : null
 }
 
 // The investigation's DECISION CHANNEL: Danny submits the routing decision as a TOOL CALL instead of printing

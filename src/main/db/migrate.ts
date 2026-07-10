@@ -67,6 +67,10 @@ export function runMigrations(db: DatabaseSync): void {
   // chat personas, behavior unchanged); the `tools` JSON column's meaning shifts from the old dead
   // checkbox labels to capability-group keys — old values were never consumed, so no value migration.
   ensureColumn(db, 'custom_roles', 'agent', 'INTEGER NOT NULL DEFAULT 0')
+  // Consult arrows exact anchoring: the tool_use id of the send/assign call that produced the consult —
+  // joins the row to its project_tool_events card (which already stores src_id). NULL on existing rows
+  // (the renderer falls back to positional pairing for those); schema.ts carries it for fresh DBs.
+  ensureColumn(db, 'project_consults', 'src_id', 'TEXT')
   migrateShuriToFrontend(db)
 }
 

@@ -7,7 +7,7 @@ import { useEffect, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
 import { Icons, toolIconName } from '@/components/icons'
 import { Avatar } from '@/components/primitives'
-import { STUDIO_DATA, expertMeta } from '@/data/studio-data'
+import { useAllExperts, useExpertMeta } from '@/lib/all-experts'
 import { fmtTokens } from '@/lib/format'
 import { useChat } from '@/stores/chat'
 import type { AnalyticsSummary } from '@/lib/api'
@@ -132,6 +132,9 @@ function AnCard({ title, sub, children, wide }: { title: string; sub?: string; c
 }
 
 export function StatsPage(): ReactElement {
+  // Dynamic roster (not the static expertMeta): usage/memory rows include custom agents' ulids.
+  const expertMeta = useExpertMeta()
+  const { byId } = useAllExperts()
   const [a, setA] = useState<AnalyticsSummary | null>(null)
   // In-progress conversations = whatever is streaming right now (live renderer state); total from the summary.
   const streamingCount = useChat((s) => Object.values(s.streaming).filter(Boolean).length)
@@ -293,7 +296,7 @@ export function StatsPage(): ReactElement {
 
           <AnCard title="Most active">
             <div className="most-active">
-              <Avatar expert={STUDIO_DATA.EXPERT_BY_ID[a.activity.mostActive.id] ?? null} size={34} />
+              <Avatar expert={byId[a.activity.mostActive.id] ?? null} size={34} />
               <div>
                 <div className="ma-name">{ma.name}</div>
                 <div className="ma-sub">{a.activity.mostActive.today} today · {a.activity.mostActive.week} this week</div>

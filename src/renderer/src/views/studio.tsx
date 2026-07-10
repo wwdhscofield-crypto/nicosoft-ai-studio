@@ -10,7 +10,8 @@ import { Fragment, useEffect, useState } from 'react'
 import type { CSSProperties, ReactElement } from 'react'
 import { Icons } from '@/components/icons'
 import { Avatar, AvatarStack, Segmented, SelectMenu } from '@/components/primitives'
-import { STUDIO_DATA, expertMeta } from '@/data/studio-data'
+import { STUDIO_DATA } from '@/data/studio-data'
+import { useAllExperts, useExpertMeta } from '@/lib/all-experts'
 import { fmtTokens } from '@/lib/format'
 import { useRoles } from '@/stores/roles'
 import { useAssignments } from '@/stores/assignments'
@@ -97,8 +98,11 @@ function ProjectBadge({ projectId, title, onOpenProject }: { projectId: string |
 
 /* — One expert's own slice inside a multi-expert card: name + slice title + live dot / settle glyph. — */
 function AssignmentRoleRow({ row }: { row: AssignmentDto }): ReactElement {
-  const m = expertMeta(row.roleId)
-  const e = STUDIO_DATA.EXPERT_BY_ID[row.roleId]
+  // useExpertMeta/useAllExperts (not the static roster): assignment rows carry custom agents' ulids.
+  const meta = useExpertMeta()
+  const { byId } = useAllExperts()
+  const m = meta(row.roleId)
+  const e = byId[row.roleId]
   return (
     <div className="asg-role-row">
       <Avatar expert={e ?? null} size={20} />
@@ -129,11 +133,13 @@ function AssignmentCard({
   onOpenProject: (id: string) => void
 }): ReactElement {
   const t = useT()
+  const meta = useExpertMeta()
+  const { byId } = useAllExperts()
   const elapsed = fmtElapsed(now - batch.startedAt)
   if (batch.rows.length === 1) {
     const row = batch.rows[0]
-    const m = expertMeta(row.roleId)
-    const e = STUDIO_DATA.EXPERT_BY_ID[row.roleId]
+    const m = meta(row.roleId)
+    const e = byId[row.roleId]
     return (
       <div className="tl-row" onClick={() => onOpenConv(batch.convId)} style={{ '--ws-color': m.color } as CSSProperties}>
         <Avatar expert={e ?? null} size={30} />
@@ -221,6 +227,7 @@ function DoneBatchRow({
 
 /* — A real collaboration project — opens the Project detail — */
 function ProjectRow({ project, onOpenProject }: { project: ProjectDto; onOpenProject: (id: string) => void }): ReactElement {
+  const meta = useExpertMeta()
   // Prototype shows "2 of 4 steps". Derive from the plan's done tasks; fall back to the phase word
   // for a project that has no plan yet (still planning).
   const total = project.plan.length
@@ -234,7 +241,7 @@ function ProjectRow({ project, onOpenProject }: { project: ProjectDto; onOpenPro
           <div className="tl-name">{project.title}</div>
           <div className="tl-chain">
             {project.experts.map((id, i) => {
-              const m = expertMeta(id)
+              const m = meta(id)
               return (
                 <Fragment key={id}>
                   {i > 0 && <span className="tl-chain-sep">›</span>}
@@ -387,6 +394,7 @@ function ActivityTimeline({
    the user perceives); live batches render as cards, settled ones as done rows. — */
 function AssignmentsPage({ onOpenConv, onOpenProject }: { onOpenConv: (convId: string) => void; onOpenProject: (id: string) => void }): ReactElement {
   const t = useT()
+  const meta = useExpertMeta()
   const [rows, setRows] = useState<AssignmentDto[]>([])
   const [projects, setProjects] = useState<ProjectDto[]>([])
   const [roleFilter, setRoleFilter] = useState('all')
@@ -452,7 +460,7 @@ function AssignmentsPage({ onOpenConv, onOpenProject }: { onOpenConv: (convId: s
             className="asg-filter-sel"
             value={roleFilter}
             onChange={setRoleFilter}
-            options={[{ value: 'all', label: t('overview.filter.allRoles') }, ...roleIds.map((id) => ({ value: id, label: expertMeta(id).name }))]}
+            options={[{ value: 'all', label: t('overview.filter.allRoles') }, ...roleIds.map((id) => ({ value: id, label: meta(id).name }))]}
           />
           <SelectMenu
             className="asg-filter-sel"
@@ -503,6 +511,7 @@ function AssignmentsPage({ onOpenConv, onOpenProject }: { onOpenConv: (convId: s
 }
 
 function StudioStats(): ReactElement {
+  const meta = useExpertMeta()
   const [a, setA] = useState<AnalyticsSummary | null>(null)
   // Assignments are the in-progress source of truth (docs/assignments-design.md §6): a dock- or
   // chat-launched work batch counts; plain chat doesn't. One BATCH = one work item the user perceives.
@@ -542,7 +551,7 @@ function StudioStats(): ReactElement {
             <div className="stat-sub">No usage yet.</div>
           ) : (
             top.map((r) => {
-              const m = expertMeta(r.id)
+              const m = meta(r.id)
               const pct = Math.round((r.v / sum) * 100)
               return (
                 <div className="share-row" key={r.id}>

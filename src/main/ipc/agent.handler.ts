@@ -11,7 +11,7 @@ import * as assignmentService from '../services/assignment.service'
 import { forwardLlmEvent, type RunStreamSink } from '../services/agent-dispatch'
 import * as compressionService from '../services/compression.service'
 import * as workspaceTasks from '../services/workspace/tasks'
-import { sessionBus } from '../agent/session-bus'
+import { sessionBus, type InjectionOutcome } from '../agent/session-bus'
 import { drainSoloResume } from '../services/solo-async'
 import { ENGINEER_ROLE_ID } from '../services/agent-tools'
 import { isSoloPreviewWriteTool } from '../agent/tools/preview'
@@ -58,9 +58,12 @@ function sweepStream(streamId: string): void {
 // turn through the SAME streaming/permission machinery a user-initiated run gets, with its per-run
 // closure tool riding opts.extraTools.
 // `settled` resolves when the run fully finishes (after the done/error wire events + idle release) — never
-// rejects. The session-bus delivery closure returns it so an injector (the scheduler's live chain) can await
-// the resumed run; the IPC boundary strips it (a Promise doesn't survive structured clone).
-export function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: { resumeNote?: string; extraTools?: Tool[] }): { streamId: string; settled: Promise<void> } {
+// rejects. It reports the injection-outcome contract (session-bus.ts): an ABORTED run resolves 'dropped'
+// (its consuming turn was cut short — a scheduler chain must not run the next step on top of it); any other
+// terminal, including an in-run error the conversation itself surfaces, resolves 'settled'. The session-bus
+// delivery closure returns it so an injector (the scheduler's live chain) can await the resumed run; the
+// IPC boundary strips it (a Promise doesn't survive structured clone).
+export function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: { resumeNote?: string; extraTools?: Tool[] }): { streamId: string; settled: Promise<InjectionOutcome> } {
   const streamId = ulid()
   const roleId = input.roleId ?? ENGINEER_ROLE_ID
   const { controller, send, finish } = streams.open(streamId, sender)
@@ -201,7 +204,7 @@ export function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: 
         controller.signal,
         { resumeNote: opts?.resumeNote, extraTools: opts?.extraTools },
       )
-      .then((r) => {
+      .then((r): InjectionOutcome => {
         // step:done settles the segment (authoritative text — mirrors the persisted row), then the terminal
         // done closes the stream: the exact two-beat every dispatched step ends with. ensureOpen covers a
         // degenerate zero-event run so the settle still has a segment to land on.
@@ -212,13 +215,15 @@ export function startAgentRun(input: AgentRunInput, sender: WebContents, opts?: 
         // Assignments: the run settled — close this run's row (if classification opened/reopened one) with
         // the run's own terminal. Awaits the bounded classifier, so a fast run can't leak an orphan.
         void assignmentService.settleSoloRun(pendingAssignment, assignmentService.statusForRunReason(r.reason))
+        return r.reason === 'aborted' ? 'dropped' : 'settled'
       })
-      .catch((err: unknown) => {
+      .catch((err: unknown): InjectionOutcome => {
         const code = err instanceof LlmError ? err.code : 'unknown'
         const message = err instanceof Error ? err.message : String(err)
         lanes.flushAll()
         send('coordinator:error', { streamId, code, message })
         void assignmentService.settleSoloRun(pendingAssignment, controller.signal.aborted ? 'stopped' : 'failed')
+        return controller.signal.aborted ? 'dropped' : 'settled'
       })
       .finally(() => {
         lanes.flushAll() // belt-and-suspenders: no armed timer may outlive the stream

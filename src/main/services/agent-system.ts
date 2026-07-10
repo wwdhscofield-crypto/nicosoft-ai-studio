@@ -42,14 +42,16 @@ const PLAN_FIRST =
 // The own-working-scripts exemption is safe role-wide (analyst-quant-backtest design §3.5b): generalist has
 // code_execution but no Write, scheduler has neither, translator/editor/designer already write deliverable
 // files — the rule's true intent (non-dev roles don't modify the user's APPLICATION) is preserved verbatim.
-const TOOL_AWARENESS =
+const TOOL_AWARENESS_ACT =
   '# You can act, not just answer — use the tools you have by your own judgment\n' +
   "You're not limited to replying: the tools available to you this turn are in your tool schema — reach " +
   'for them when they help, and do NOT report a result you have not actually produced with one. Rule of ' +
   'thumb: anything you can compute or derive precisely (math, statistics, data wrangling, parsing, ' +
   'formatting) is more reliable run through a code-execution tool — IF you have one — than estimated or ' +
   "fetched from an external service; reach for the web when you genuinely need information you don't " +
-  'already have. There is no rule that you must stay local or must go online — the choice is yours.\n\n' +
+  'already have. There is no rule that you must stay local or must go online — the choice is yours.'
+
+const TOOL_AWARENESS_IRON_RULE =
   '# Iron rule: you are not a software engineer — do NOT write code\n' +
   'Use your tools for YOUR job, but you must NOT write or edit the project source code (application logic, ' +
   'components, types, build or config files) — that work belongs to the engineers. If your task needs a code ' +
@@ -59,6 +61,13 @@ const TOOL_AWARENESS =
   'WORKING SCRIPTS you write and run yourself to do YOUR OWN job (data processing, analysis, backtests, ' +
   "batch text work) — those are your deliverables too. The hard line is the user's APPLICATION source code: " +
   'creating or editing THAT belongs to the engineers.'
+
+// For a CUSTOM agent whose user checked the Write & edit group: the iron rule above would forbid exactly
+// what the user granted, so it is replaced by this scope line (custom-agent-roles review C5).
+const CUSTOM_WRITE_SCOPE =
+  '# You may write and edit files\n' +
+  'The user granted this role the Write & edit files capability: creating and editing files — including ' +
+  'project source code — is part of YOUR job when the task calls for it.'
 
 // The unified self-learning criteria block (skill-distillation design §0.5 point 1): the ONE place the
 // model sees all three saving outlets — remember (declarative), distill_skill (procedural),
@@ -199,7 +208,13 @@ export function buildAgentSystem(
   if (!collab) parts.push(PANEL_REVIEW_DISCIPLINE)
   // Non-dev agent roles use a chat-style role prompt with no tool awareness — give them the capability note
   // so they know they can act (dev roles already have detailed tool guidance baked into DEV_PROMPT).
-  if (!DEV_ROLES.has(roleId)) parts.push(TOOL_AWARENESS)
+  // The no-source-code iron rule holds for every built-in non-dev role; a CUSTOM agent granted the
+  // write group is explicitly licensed to edit files, so it gets the write-scope note instead.
+  if (!DEV_ROLES.has(roleId)) {
+    parts.push(TOOL_AWARENESS_ACT)
+    const customWrite = rolesService.getCustom(roleId)?.tools.includes('write') ?? false
+    parts.push(customWrite ? CUSTOM_WRITE_SCOPE : TOOL_AWARENESS_IRON_RULE)
+  }
   const conventions = readProjectConventions(cwd)
   if (conventions) {
     parts.push(

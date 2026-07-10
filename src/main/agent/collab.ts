@@ -29,6 +29,10 @@ export interface CollabEvent {
   roleId: string // the acting expert (sender for send/assign, waiter for wait, runner for turn/done)
   to?: string // target roleId for send/assign
   text?: string // message body for send/assign
+  // send/assign only: the tool_use id of the very call that delivered it — the exact anchor joining the
+  // persisted consult to its project tool-event card (a failed/capped call makes a CARD but no consult,
+  // so positional pairing skews; this id never does).
+  srcId?: string
   // 'done' only: the loop ERROR-exited (dropped from the session) rather than finishing — 'done' fires on
   // BOTH paths (the common exit tail), so a consumer settling per-expert state (assignments) needs the truth.
   errored?: boolean
@@ -38,8 +42,9 @@ export interface CollabEvent {
 export interface CollabHandle {
   self: string
   roster: { id: string; name: string }[] // the OTHER experts this one can reach
-  send: (to: string, text: string) => string // returns a status line for the tool result
-  assign: (to: string, text: string) => string
+  // srcId = the calling tool_use id (ctx.currentToolUseId) — rides the consult event as the exact card anchor.
+  send: (to: string, text: string, srcId?: string) => string // returns a status line for the tool result
+  assign: (to: string, text: string, srcId?: string) => string
   requestWait: () => string
   // C3 §6.5: await_async parks the caller until the given in-flight handles complete (woken by the completion
   // event). settledResults = results of handles ALREADY done at call time, injected alongside on resume so an
@@ -196,8 +201,8 @@ export class CollabSession {
     return {
       self,
       roster,
-      send: (to, text) => this.deliver(self, to, text, false),
-      assign: (to, text) => this.deliver(self, to, text, true),
+      send: (to, text, srcId) => this.deliver(self, to, text, false, srcId),
+      assign: (to, text, srcId) => this.deliver(self, to, text, true, srcId),
       requestWait: () => {
         const me = this.experts.get(self)!
         me.waitRequested = true
@@ -245,7 +250,7 @@ export class CollabSession {
     return undefined
   }
 
-  private deliver(from: string, to: string, text: string, wake: boolean): string {
+  private deliver(from: string, to: string, text: string, wake: boolean, srcId?: string): string {
     const toId = this.resolveTargetId(to)
     const target = toId ? this.experts.get(toId) : undefined
     if (!target || !toId) {
@@ -262,7 +267,7 @@ export class CollabSession {
     const effectiveWake = wake && !capped
 
     target.mailbox.push({ from, fromName: sender.spec.name, text })
-    this.onEvent({ kind: effectiveWake ? 'assign' : 'send', roleId: from, to: toId, text })
+    this.onEvent({ kind: effectiveWake ? 'assign' : 'send', roleId: from, to: toId, text, srcId })
 
     let woke = false
     if (effectiveWake && target.status === 'parked' && target.wake) {

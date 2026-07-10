@@ -7,7 +7,7 @@
    ============================================================ */
 import { Fragment, useCallback, useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
-import { useAllExperts } from '@/lib/all-experts'
+import { expertName, useAllExperts } from '@/lib/all-experts'
 import { roleHasAgent } from '@/stores/chat'
 import { Avatar, Segmented, Switch } from '@/components/primitives'
 import { Icons } from '@/components/icons'
@@ -533,11 +533,20 @@ function ScheduledEditor({
                           )}
                         </div>
                       )}
-                      {s.kind === 'expert' && (
-                        <div style={{ width: 130 }}>
-                          <Dropdown options={expertOpts} value={s.roleId || 'generalist'} onChange={(v) => setStep(i, { roleId: v })} />
-                        </div>
-                      )}
+                      {s.kind === 'expert' && (() => {
+                        const rid = s.roleId || 'generalist'
+                        // A saved executor that is no longer an agent (capability off / role deleted) must
+                        // stay visible AS ITSELF — same stale-option pattern as the role editor's vanished
+                        // model — not silently display as the first agent while the broken id rides to fire time.
+                        const opts = expertOpts.some((o) => o.v === rid)
+                          ? expertOpts
+                          : [...expertOpts, { v: rid, l: `${expertName(byId, rid)} (no longer an agent)` }]
+                        return (
+                          <div style={{ width: 130 }}>
+                            <Dropdown options={opts} value={rid} onChange={(v) => setStep(i, { roleId: v })} />
+                          </div>
+                        )
+                      })()}
                       {s.kind === 'project' && (
                         <div style={{ width: 120 }}>
                           <Dropdown options={PROJECT_ACTIONS} value={s.action || 'create'} onChange={(v) => setStep(i, { action: v as 'create' | 'advance' })} />

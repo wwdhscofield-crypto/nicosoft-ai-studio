@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import type { QuestionPrompt } from '@/stores/chat'
-import { STUDIO_DATA } from '@/data/studio-data'
+import { useAllExperts } from '@/lib/all-experts'
 import { useT } from '@/stores/locale'
 
 export function QuestionDialog({
@@ -17,8 +17,9 @@ export function QuestionDialog({
   onAnswer: (answer: string) => void
 }): ReactElement {
   const t = useT()
+  const { byId } = useAllExperts() // custom agents ask questions too — show their name, not "the agent"
   const [other, setOther] = useState('')
-  const name = (prompt.roleId && STUDIO_DATA.EXPERT_BY_ID[prompt.roleId]?.name) || t('q.theAgent')
+  const name = (prompt.roleId && byId[prompt.roleId]?.name) || t('q.theAgent')
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       // Ignore the keypress while the IME is composing — pressing 1/2 to pick a Chinese/Japanese candidate must NOT

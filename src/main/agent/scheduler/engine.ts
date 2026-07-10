@@ -401,6 +401,15 @@ class SchedulerEngine {
       }
 
       if (live) {
+        // Re-check liveness PER STEP: the conversation can be deleted (stop-and-delete disposes its bus
+        // session) while an earlier step's await was in flight. Injecting then would queue into a fresh
+        // zombie session whose promise never settles — the chain would wedge forever and the recurring
+        // task would silently never fire again. Fail honestly instead; the check and the inject below run
+        // in the same synchronous block, so the session can't be disposed between them.
+        if (!sessionBus.hasDelivery(task.convId!)) {
+          results.push({ kind: step.kind, label, ok: false, ms: Date.now() - t0, outputTail: 'the live session ended before this step could run' })
+          throw new Error(`${where}: the live session ended before the injected step ran`)
+        }
         const delivered = sessionBus.inject(task.convId!, { text: agentInstruction(step), source: `schedule:${task.id}`, priority: 'later', roleId: step.roleId })
         if (i === task.steps.length - 1) {
           // Nothing follows — no ordering to protect. Don't hold the engine slot for the live turn's duration;
@@ -501,9 +510,13 @@ class SchedulerEngine {
   ): Promise<string> {
     // A step executor must RUN THE AGENT LOOP. Previously only the binding was checked, so a step pointing
     // at a chat-only custom persona ran with an empty core kit under a borrowed engineer prompt (custom-
-    // agent-roles design §2). Custom roles with Agent enabled pass; chat-only personas fail loud and clear.
+    // agent-roles design §2). Custom roles with Agent enabled pass; chat-only personas fail loud and clear —
+    // and a DELETED custom role must say so instead of telling the user to enable Agent on a ghost.
     if (!rolesService.runsAgentLoop(roleId)) {
-      throw new Error(`${where}: role "${roleId}" is a chat-only persona — enable its Agent capability to use it as a step executor`)
+      const custom = rolesService.getCustom(roleId)
+      if (custom) throw new Error(`${where}: role "${custom.name}" is a chat-only persona — enable its Agent capability to use it as a step executor`)
+      if (/^[0-9A-HJKMNP-TV-Z]{26}$/.test(roleId)) throw new Error(`${where}: this step's role was deleted — edit the task and pick a different step executor`)
+      throw new Error(`${where}: role "${roleId}" cannot run agent steps — pick a different step executor`)
     }
     const binding = rolesService.getBinding(roleId)
     if (!binding?.endpointId || !binding.model) throw new Error(`${where}: role "${roleId}" not bound`)

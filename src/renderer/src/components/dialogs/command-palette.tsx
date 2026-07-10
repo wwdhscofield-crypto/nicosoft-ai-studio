@@ -5,6 +5,7 @@ import type { ReactElement } from 'react'
 import { Icons, type IconName } from '@/components/icons'
 import { Avatar } from '@/components/primitives'
 import { STUDIO_DATA } from '@/data/studio-data'
+import { useAllExperts } from '@/lib/all-experts'
 import { useRoles } from '@/stores/roles'
 import { useChat } from '@/stores/chat'
 import { useT } from '@/stores/locale'
@@ -36,7 +37,8 @@ export function CommandPalette({
   onStudio: () => void
   onNewRole: () => void
 }): ReactElement {
-  const { EXPERTS, EXPERT_BY_ID } = STUDIO_DATA
+  const { EXPERTS } = STUDIO_DATA
+  const { byId: EXPERT_BY_ID } = useAllExperts() // conv rows can belong to custom roles — resolve their color
   const t = useT()
   const chat = useChat()
   const roles = useRoles()

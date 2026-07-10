@@ -42,3 +42,23 @@ export function useAllExperts(): { experts: Expert[]; byId: Record<string, Exper
     return { experts, byId }
   }, [customs])
 }
+
+// A deleted custom role's 26-char ulid must never render raw — degrade to a short stub.
+const ULID_RE = /^[0-9A-HJKMNP-TV-Z]{26}$/
+
+export function expertName(byId: Record<string, Expert>, id: string): string {
+  return byId[id]?.name ?? (ULID_RE.test(id) ? id.slice(0, 6) + '…' : id)
+}
+
+// Dynamic replacement for studio-data's static expertMeta: resolves built-ins AND customs (with the
+// deleted-custom degrade above). Hook form so callers re-render when the custom roster changes.
+export function useExpertMeta(): (id: string) => { name: string; color: string } {
+  const { byId } = useAllExperts()
+  return useMemo(
+    () => (id: string) => ({
+      name: id ? expertName(byId, id) : '—',
+      color: byId[id]?.color ?? 'var(--text-3)'
+    }),
+    [byId]
+  )
+}

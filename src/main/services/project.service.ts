@@ -33,7 +33,7 @@ function testToDto(t: repo.ProjectTestRow): ProjectTestDto {
   return { id: t.id, title: t.title, status: t.status }
 }
 function toolEventToDto(t: repo.ProjectToolEventRow): ProjectToolEventDto {
-  return { id: t.id, roleId: t.roleId, toolName: t.toolName, target: t.target, zone: t.zone as ProjectToolEventDto['zone'], mediaUrl: t.mediaUrl, createdAt: t.createdAt }
+  return { id: t.id, roleId: t.roleId, srcId: t.srcId, toolName: t.toolName, target: t.target, zone: t.zone as ProjectToolEventDto['zone'], mediaUrl: t.mediaUrl, createdAt: t.createdAt }
 }
 
 // One examine finding → a flat project Review row. verdict maps the source: fail→confirmed (a real defect),
@@ -115,7 +115,7 @@ function assemble(
 // dedupe-by-from→to collapsed the whole exchange history into one edge per pair, which read as "these two
 // talked once"; the log is already chronological (listConsults ORDER BY created_at).
 function consultToDto(r: repo.ProjectConsultRow): ProjectConsultDto {
-  return { id: r.id, from: r.fromRole, to: r.toRole, kind: r.kind === 'assign' ? 'assign' : 'send', text: r.text, createdAt: r.createdAt }
+  return { id: r.id, from: r.fromRole, to: r.toRole, kind: r.kind === 'assign' ? 'assign' : 'send', text: r.text, srcId: r.srcId, createdAt: r.createdAt }
 }
 
 export function list(): ProjectDto[] {
@@ -239,8 +239,8 @@ export function setTestStatus(projectId: string, testId: string, status: Project
   repo.touchProject(projectId)
 }
 
-export function addConsult(projectId: string, from: string, to: string, kind: string, text: string | null): void {
-  repo.insertConsult(projectId, from, to, kind, text)
+export function addConsult(projectId: string, from: string, to: string, kind: string, text: string | null, srcId: string | null = null): void {
+  repo.insertConsult(projectId, from, to, kind, text, srcId)
   repo.touchProject(projectId)
 }
 

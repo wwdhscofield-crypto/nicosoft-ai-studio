@@ -181,6 +181,7 @@ CREATE TABLE IF NOT EXISTS project_consults (
   to_role    TEXT NOT NULL,
   kind       TEXT NOT NULL,                        -- send | assign
   text       TEXT,
+  src_id     TEXT,                                 -- tool_use id of the send/assign call (joins its tool-event card)
   created_at TEXT NOT NULL,
   FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE
 );

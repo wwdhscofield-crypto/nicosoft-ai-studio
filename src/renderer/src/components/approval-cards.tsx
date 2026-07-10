@@ -5,7 +5,7 @@
 
 import type { ReactElement } from 'react'
 import type { ApprovalCard } from '@/stores/chat'
-import { STUDIO_DATA } from '@/data/studio-data'
+import { expertName, useAllExperts } from '@/lib/all-experts'
 
 function statusLabel(c: ApprovalCard): string {
   if (c.status === 'executing') return 'Running…'
@@ -24,11 +24,12 @@ export function ApprovalCards({
   onApprove: (pendingId: string) => void
   onReject: (pendingId: string) => void
 }): ReactElement | null {
+  const { byId } = useAllExperts() // custom agents raise approvals too — resolve their names, not raw ulids
   if (!cards.length) return null
   return (
     <div className="ac-list">
       {cards.map((c) => {
-        const name = STUDIO_DATA.EXPERT_BY_ID[c.roleId]?.name ?? c.roleId
+        const name = expertName(byId, c.roleId)
         if (c.zone === 'yellow') {
           return (
             <div key={c.key} className="ac-card ac-yellow">

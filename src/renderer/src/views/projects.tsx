@@ -609,19 +609,24 @@ function ProjectDetail({
   const { byId } = useAllExperts()
   const doers = project.experts.filter((id) => id !== 'coordinator')
   const [lanesEl, setLanesEl] = useState<HTMLDivElement | null>(null)
-  // One edge PER consult interaction: tail = the sender's k-th assign_task/send_message event card (the
-  // consult log and the tool-event log record the same calls in the same order, so pairing the k-th
-  // consult of a (sender, kind) with the k-th matching event card is exact); head = the receiver's first
-  // card at-or-after the interaction (where they picked it up), else their last card. Missing anchors
-  // (pre-capture projects) leave the ids null — ConsultLayer degrades to the lane track.
+  // One edge PER consult interaction: tail = the sender's very send/assign call CARD — joined EXACTLY by
+  // srcId (the consult row carries the tool_use id of the call that delivered it; the tool-event row
+  // records the same id). Legacy rows (pre-srcId) fall back to k-th-of-kind positional pairing — which can
+  // skew when a failed/self/capped call made a card but no consult, the reason srcId exists. Head = the
+  // receiver's first card at-or-after the interaction (where they picked it up), else their last card.
+  // Missing anchors (pre-capture projects) leave the ids null — ConsultLayer degrades to the lane track.
   const consultEdges = useMemo<ConsultEdge[]>(() => {
     const CONSULT_TOOL: Record<string, string> = { assign: 'assign_task', send: 'send_message' }
+    const bySrc = new Map(project.toolEvents.filter((ev) => ev.srcId).map((ev) => [ev.srcId!, ev]))
     const used = new Map<string, number>()
     return project.consults.map((c) => {
-      const key = `${c.from}:${c.kind}`
-      const k = used.get(key) ?? 0
-      used.set(key, k + 1)
-      const fromEv = project.toolEvents.filter((ev) => ev.roleId === c.from && ev.toolName === CONSULT_TOOL[c.kind])[k] ?? null
+      let fromEv = (c.srcId ? bySrc.get(c.srcId) : undefined) ?? null
+      if (!fromEv) {
+        const key = `${c.from}:${c.kind}`
+        const k = used.get(key) ?? 0
+        used.set(key, k + 1)
+        fromEv = project.toolEvents.filter((ev) => ev.roleId === c.from && ev.toolName === CONSULT_TOOL[c.kind])[k] ?? null
+      }
       const toEvs = project.toolEvents.filter((ev) => ev.roleId === c.to)
       const toEv = toEvs.find((ev) => ev.createdAt >= c.createdAt) ?? toEvs[toEvs.length - 1] ?? null
       return { id: c.id, from: c.from, to: c.to, kind: c.kind, text: c.text, fromEvId: fromEv?.id ?? null, toEvId: toEv?.id ?? null }

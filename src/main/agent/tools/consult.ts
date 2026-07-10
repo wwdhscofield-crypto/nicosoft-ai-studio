@@ -24,7 +24,7 @@ export const sendMessageTool = buildTool<typeof messageSchema, { status: string 
   isReadOnly: () => true,
   isConcurrencySafe: () => true,
   async call(input, ctx) {
-    return { data: { status: ctx.collab ? ctx.collab.send(input.target, input.message) : NO_TEAM } }
+    return { data: { status: ctx.collab ? ctx.collab.send(input.target, input.message, ctx.currentToolUseId) : NO_TEAM } }
   },
   mapResult(out, toolUseId): ToolResultBlock {
     return { type: 'tool_result', tool_use_id: toolUseId, content: out.status }
@@ -41,7 +41,7 @@ export const assignTaskTool = buildTool<typeof messageSchema, { status: string }
   isReadOnly: () => true,
   isConcurrencySafe: () => true,
   async call(input, ctx) {
-    return { data: { status: ctx.collab ? ctx.collab.assign(input.target, input.message) : NO_TEAM } }
+    return { data: { status: ctx.collab ? ctx.collab.assign(input.target, input.message, ctx.currentToolUseId) : NO_TEAM } }
   },
   mapResult(out, toolUseId): ToolResultBlock {
     return { type: 'tool_result', tool_use_id: toolUseId, content: out.status }

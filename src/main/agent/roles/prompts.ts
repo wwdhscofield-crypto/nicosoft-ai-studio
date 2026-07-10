@@ -35,7 +35,13 @@ export function roleIdFromName(name: string): string {
   if (ROLE_DISPLAY_NAMES[builtin]) return builtin
   const raw = name.trim()
   const lower = raw.toLowerCase()
-  const hit = roleRepo.listCustom().find((r) => r.id === raw || r.name.trim().toLowerCase() === lower)
+  const customs = roleRepo.listCustom()
+  const byId = customs.find((r) => r.id === raw)
+  if (byId) return byId.id
+  // Same-name twins: prefer the agent-enabled one — it's what the roster advertises and dispatch
+  // needs; resolving to a chat-only twin would silently fail the enabled-set check downstream.
+  const named = customs.filter((r) => r.name.trim().toLowerCase() === lower)
+  const hit = named.find((r) => r.agent) ?? named[0]
   return hit?.id ?? builtin
 }
 

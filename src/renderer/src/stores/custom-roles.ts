@@ -13,7 +13,13 @@ interface CustomRolesState {
   update: (id: string, patch: CustomRoleUpdateDto) => Promise<void>
 }
 
-export const useCustomRoles = create<CustomRolesState>((set) => ({
+// In-flight update count per role id. The profile page saves EVERY toggle immediately, so a second
+// click can land within the first one's round-trip: without this, the second payload is computed from
+// the stale row and silently resurrects/loses the first change. With the optimistic apply below, later
+// clicks compute against the applied state; intermediate echoes are ignored and the LAST echo reconciles.
+const pendingWrites = new Map<string, number>()
+
+export const useCustomRoles = create<CustomRolesState>((set, get) => ({
   list: [],
   loaded: false,
 
@@ -29,7 +35,24 @@ export const useCustomRoles = create<CustomRolesState>((set) => ({
   },
 
   update: async (id, patch) => {
-    const row = await window.api.roles.updateCustom(id, patch)
-    if (row) set((s) => ({ list: s.list.map((r) => (r.id === id ? row : r)) }))
+    // Optimistic: apply synchronously (dropping undefined keys — "leave unchanged" in the wire patch),
+    // then reconcile with the server row once no later write is in flight. A failed write reloads the
+    // persisted truth so the optimistic state can't stick around wrong.
+    const clean = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined))
+    set((s) => ({ list: s.list.map((r) => (r.id === id ? { ...r, ...clean } : r)) }))
+    pendingWrites.set(id, (pendingWrites.get(id) ?? 0) + 1)
+    const done = (): number => {
+      const left = (pendingWrites.get(id) ?? 1) - 1
+      pendingWrites.set(id, left)
+      return left
+    }
+    try {
+      const row = await window.api.roles.updateCustom(id, patch)
+      if (done() === 0 && row) set((s) => ({ list: s.list.map((r) => (r.id === id ? row : r)) }))
+    } catch (e) {
+      done()
+      void get().load()
+      throw e
+    }
   }
 }))

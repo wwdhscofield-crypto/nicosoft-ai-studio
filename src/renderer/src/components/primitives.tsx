@@ -46,12 +46,13 @@ export function Avatar({
 
 /* — Avatar stack: overlapping expert monograms — */
 export function AvatarStack({ ids, size = 26 }: { ids: string[]; size?: number }): ReactElement {
-  const { EXPERT_BY_ID } = STUDIO_DATA
+  // useAllExperts (not STUDIO_DATA): stacks routinely carry custom agents' ulids (assignments, projects).
+  const { byId } = useAllExperts()
   return (
     <div className="avatar-stack" style={{ height: size }}>
       {ids.map((id, i) => (
         <span key={id} className="as-item" style={{ marginLeft: i === 0 ? 0 : -size * 0.34, zIndex: ids.length - i }}>
-          <Avatar expert={EXPERT_BY_ID[id]} size={size} />
+          <Avatar expert={byId[id] ?? null} size={size} />
         </span>
       ))}
     </div>
@@ -258,7 +259,11 @@ export function SelectMenu({
       e.stopPropagation()
       close(true)
     } else if (e.key === 'Tab') {
-      close(false) // native selects close on Tab and let focus move on
+      // Native selects close on Tab and let focus move on — FROM THE SELECT. Refocus the trigger before
+      // the default action runs (focus() is synchronous; the default Tab then advances from the trigger),
+      // otherwise focus dies with the unmounting portal and Tab restarts from the document's first
+      // tabbable — outside the host dialog. Covers Shift+Tab symmetrically.
+      close(true)
     } else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
       // Single-char typeahead (native-select parity): jump to the next enabled option starting with the key.
       const ch = e.key.toLowerCase()

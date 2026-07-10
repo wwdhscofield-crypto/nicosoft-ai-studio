@@ -7,6 +7,7 @@ import type { ReactElement } from 'react'
 import { Icons } from '@/components/icons'
 import { Avatar, Segmented, Switch } from '@/components/primitives'
 import { STUDIO_DATA } from '@/data/studio-data'
+import { useAllExperts } from '@/lib/all-experts'
 import { Dropdown } from '@/views/profile'
 import { Pagination } from '@/components/pagination'
 import { useMemoryCloud } from '@/stores/memory-cloud'
@@ -149,11 +150,12 @@ function GlobalMemRow({
   onEdit: (text: string) => void
   onDelete: () => void
 }): ReactElement {
-  const { EXPERT_BY_ID } = STUDIO_DATA
+  // useAllExperts: a custom role's scoped memory must show that role, not fall through to "Shared".
+  const { byId } = useAllExperts()
   const t = useT()
   const [editing, setEditing] = useState(false)
   const [text, setText] = useState(entry.text)
-  const e = entry.scope === 'shared' ? null : EXPERT_BY_ID[entry.scope]
+  const e = entry.scope === 'shared' ? null : byId[entry.scope]
   return (
     <div className="mem-item">
       <span className={'mem-layer-dot ' + entry.layer.toLowerCase()} title={entry.layer} />
