@@ -17,6 +17,7 @@ import { Icons } from '@/components/icons'
 import { useT, useLocale } from '@/stores/locale'
 import { isSynthesis, groupRuns, sameChain, segmentFolds, roleIsCoordinator } from '@/stores/chat-helpers'
 import { useChat } from '@/stores/chat'
+import { useRoles } from '@/stores/roles'
 import { matchLeadingMention } from '@/lib/conversation-participants'
 import type { Expert } from '@/types'
 
@@ -89,7 +90,11 @@ function SegActions({
 // the leading token isn't a real routable expert, the text renders verbatim. Mirrors the server's
 // matchMention boundary rules (matchLeadingMention), so the chip appears exactly when the mention routes.
 function UserMessageText({ text, coordinator, experts }: { text: string; coordinator: boolean; experts: Record<string, Expert> }): ReactElement {
-  const m = coordinator ? matchLeadingMention(text, Object.values(experts)) : null
+  // Exclude disabled roles from the chip roster: the server drops a disabled @mention from routing (it
+  // silently reroutes to someone else), so highlighting "@Flynn" on a message that did NOT reach Flynn
+  // would be a false audit record. Disabled → no chip (plain text), matching where the mention routes.
+  const disabled = useRoles((s) => s.disabled)
+  const m = coordinator ? matchLeadingMention(text, Object.values(experts).filter((e) => !disabled.includes(e.id))) : null
   if (!m) return <p className="user-msg-text">{text}</p>
   return (
     <p className="user-msg-text">
@@ -448,8 +453,14 @@ export function ChatSegment({
   // Companion "Reply to <expert>" affordance (at-mention-expert-picker-design §3.8): only on a GUEST
   // expert's segment in a COORDINATOR conversation (`expert` is the conversation's primary role — the id is
   // 'coordinator' when Danny hosts). Danny's own synthesis (expertId 'coordinator') and every solo chat are
-  // excluded — you @-reply the dispatched experts, never the coordinator or yourself.
-  const replyTarget = roleIsCoordinator(expert.id) && !isUser && first.expertId && first.expertId !== 'coordinator' ? renderExpert : null
+  // excluded — you @-reply the dispatched experts, never the coordinator or yourself. A DISABLED expert is
+  // also excluded: the button prefills `@Name`, which the server would silently reroute — the same trap the
+  // picker's dimmed-pick guards, so this second @-entry-point must guard it too (re-enable the role first).
+  const disabledRoles = useRoles((s) => s.disabled)
+  const replyTarget =
+    roleIsCoordinator(expert.id) && !isUser && first.expertId && first.expertId !== 'coordinator' && !disabledRoles.includes(first.expertId)
+      ? renderExpert
+      : null
   const segColor = isUser ? 'var(--border-2)' : synthesis ? 'var(--accent)' : renderExpert.color
   // Foldable: every GUEST segment (expertId ≠ the conversation's primary role) renders in the fixed-height
   // scroll window; the HOST's own segments (Danny's intro / direct / investigation / synthesis in a

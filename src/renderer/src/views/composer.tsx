@@ -15,7 +15,7 @@ import { toast } from '@/stores/toast'
 import { PathBar } from '@/components/path-bar'
 import { GitStatusChip } from '@/components/git-status-chip'
 import { resolveConvCwd } from '@/lib/resolve-cwd'
-import { participantsOf } from '@/lib/conversation-participants'
+import { participantsOf, matchLeadingMention } from '@/lib/conversation-participants'
 import { useAllExperts } from '@/lib/all-experts'
 import { useRoles } from '@/stores/roles'
 import { useWorkspace } from '@/stores/workspace'
@@ -271,7 +271,11 @@ export function Composer({
   // mention prefix already present is REPLACED so clicking a second expert re-targets instead of stacking.
   const prefillRef = useRef((_name: string): void => {})
   prefillRef.current = (name: string): void => {
-    const rest = value.replace(/^@\S*\s*/, '')
+    // Strip an EXISTING leading mention by its ACCURATE length: matchLeadingMention handles multi-word
+    // display names ("@Data Analyst"), where a bare /^@\S*/ would truncate to "@Data" and corrupt the
+    // draft ("@Data Analyst hello" → "@Flynn Analyst hello"). No valid leading mention → keep the draft.
+    const m = matchLeadingMention(value, allExperts)
+    const rest = (m ? value.slice(m.matchedLen) : value).replace(/^\s+/, '')
     const next = `@${name} ${rest}`
     setValue(next)
     setTimeout(() => {
@@ -533,6 +537,13 @@ export function Composer({
     : []
   const mentionOpen = mentionMatches.length > 0
   const pickMention = (c: MentionCandidate): void => {
+    // A disabled/undispatchable participant can't be routed to — the server drops it from the mention
+    // roster (route.ts) and would SILENTLY reroute the turn to another expert. Don't fill a misleading
+    // mention; tell the user to re-enable the role instead (the "淡列 → 选中给提示" behavior).
+    if (c.disabled) {
+      toast.error(t('conv.mentionUnavailable', { name: c.name }))
+      return
+    }
     const rest = value.replace(/^@\S*/, '').replace(/^\s+/, '') // drop the @prefix + any gap, keep the body
     const next = `@${c.name} ${rest}`
     setValue(next)

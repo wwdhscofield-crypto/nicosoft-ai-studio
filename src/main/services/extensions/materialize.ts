@@ -77,15 +77,41 @@ export interface MaterializeOptions {
 // its own folder. Nothing in a self-contained copy may reference the world outside it. Async end to end:
 // this runs on install — sometimes from an agent tool mid-turn — and a large source folder must not block
 // the main process. .git and .DS_Store are dead weight and are skipped. Returns the internal path.
+// Serialize materialize calls per (kind/id): the fixed `.tmp-`/`.old-` staging names mean two concurrent
+// copies of the SAME id would delete each other's in-flight staging (the rm at the top of each run nukes the
+// other's tmp). Studio is a single main process, so an in-process per-id queue is the whole story — there is
+// no cross-process race (two windows still share one main). Different ids run in parallel (independent keys).
+const materializeLocks = new Map<string, Promise<unknown>>()
+function withIdLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const prev = materializeLocks.get(key) ?? Promise.resolve()
+  const next = prev.then(fn, fn) // run after the previous op for this id settles (resolve OR reject)
+  const guard = next.then(() => {}, () => {}) // stored promise swallows errors so it never poisons the chain
+  materializeLocks.set(key, guard)
+  void guard.then(() => {
+    if (materializeLocks.get(key) === guard) materializeLocks.delete(key)
+  })
+  return next
+}
+
 export async function materializeDirCopy(kind: ExtensionKind, id: string, srcDir: string, opts?: MaterializeOptions): Promise<string> {
+  return withIdLock(`${kind}/${safeSegment(id)}`, () => doMaterializeDirCopy(kind, id, srcDir, opts))
+}
+
+async function doMaterializeDirCopy(kind: ExtensionKind, id: string, srcDir: string, opts?: MaterializeOptions): Promise<string> {
   if (!existsSync(srcDir)) throw new Error(`source folder not found: ${srcDir}`)
   const safe = safeSegment(id)
   const dest = materializedDir(kind, id)
   // Staging siblings of dest (same fs → rename is atomic). safeSegment never allows dots, so `.tmp-…` /
-  // `.old-…` can't collide with a real extension id. Deterministic names double as crash self-healing:
-  // clear any leftovers from an earlier interrupted install of this same id before starting.
+  // `.old-…` can't collide with a real extension id.
   const tmp = join(extensionsRoot(), kind, `.tmp-${safe}`)
   const old = join(extensionsRoot(), kind, `.old-${safe}`)
+  // Crash recovery: a prior run that died AFTER `rename(dest → old)` but BEFORE `rename(tmp → dest)` left the
+  // id with NO dest while `.old` holds the previous payload. Restore it BEFORE clearing leftovers — otherwise
+  // the rm(old) below deletes the ONLY surviving copy (the deterministic-name "self-healing" was in fact
+  // destructive here). After the restore `.old` is gone, so the rm is a no-op and the fresh copy replaces it.
+  if (!existsSync(dest) && existsSync(old)) {
+    await rename(old, dest).catch(() => {})
+  }
   await rm(tmp, { recursive: true, force: true })
   await rm(old, { recursive: true, force: true })
   const maxFiles = opts?.maxFiles ?? MATERIALIZE_MAX_FILES

@@ -189,10 +189,20 @@ function InstallApproval({
 
   useEffect(() => {
     let alive = true
+    // Clear the previous dir's preview immediately. Until the NEW preview lands, a stale preview.ok would
+    // keep the Confirm button enabled AND show the OLD manifest — the user could approve installing B while
+    // reading A's contents. A REJECTED preview also clears (the old `.then` had no rejection arm, so a
+    // failed lookup left the stale ok in place), so a failed preview disables Confirm instead of misleading.
+    setPreview(null)
     const payload = isMcp ? { ...input, source_dir: dir } : { ...input, dir_path: dir }
-    void window.api.extensions.previewInstall(kind, payload).then((p) => {
-      if (alive) setPreview(p)
-    })
+    void window.api.extensions.previewInstall(kind, payload).then(
+      (p) => {
+        if (alive) setPreview(p)
+      },
+      () => {
+        if (alive) setPreview(null)
+      }
+    )
     return () => {
       alive = false
     }
@@ -258,6 +268,9 @@ function InstallApproval({
 
         {gateBlocked ? <div className="ap-install-error">{t('ap.install.outsideSource')}</div> : null}
         {preview?.ok === false && dir ? <div className="ap-install-error">{preview.error}</div> : null}
+        {/* Preview in flight for the current dir (just changed / picked): Confirm is disabled and no manifest
+            shows, so the user never confirms against a stale preview of a different folder. */}
+        {!preview && dir && !gateBlocked ? <div className="ap-install-line ap-install-dim">{t('ap.install.checking')}</div> : null}
 
         {preview?.ok && preview.kind === 'skill' ? (
           <div className="ap-install-body">

@@ -64,10 +64,13 @@ export async function runVerifierStep(implementerRoleId: string | string[], opts
   // Implementer(s): a single string for floor/panel (byte-identical), a SET in collaborate (exclude every builder).
   const implementers = Array.isArray(implementerRoleId) ? implementerRoleId : [implementerRoleId]
   const verifierRoleId = chooseVerifierRole(implementerRoleId)
-  // No independent agent role is bound besides the implementer(s) → there's no one to verify. Don't FAIL/throw
-  // the turn over a config gap; deliver the result with an explicit skipped marker so the caller labels
-  // the outcome 'unverified' (never a silent pass).
-  if (implementers.includes(verifierRoleId)) return { passed: true, skipped: true, feedback: 'Independent verification skipped: no independent verifier role bound (only the implementer is available); result delivered unverified.', inputTokens: 0, outputTokens: 0 }
+  // No independent, dispatch-ready agent role besides the implementer(s) → there's no one to verify. Don't
+  // FAIL/throw the turn over a config gap; deliver the result with an explicit skipped marker so the caller
+  // labels the outcome 'unverified' (never a silent pass). The `!isDispatchReady` arm matters: chooseVerifierRole
+  // falls back to 'generalist' when no independent ready role exists, and that fallback is — BY CONSTRUCTION —
+  // either an implementer or not dispatch-ready. Without this check a not-ready generalist would be RUN and
+  // throw a bad_request infra error at dispatch time, instead of degrading honestly to "no independent verifier".
+  if (implementers.includes(verifierRoleId) || !rolesService.isDispatchReady(verifierRoleId)) return { passed: true, skipped: true, feedback: 'Independent verification skipped: no independent, dispatch-ready verifier role bound (only the implementer is available); result delivered unverified.', inputTokens: 0, outputTokens: 0 }
   // closure-loop §3.2: presentation split by role.
   //   FLOOR (no subject) → renders as the independent "<verifier> · Verifier" SEGMENT (its verdict prose IS the
   //     body). It emits NO sub_tool card — the segment is the presentation, eliminating the old double (a card on

@@ -13,6 +13,7 @@ import { COORDINATOR_E2E_PROMPT } from '../../agent/roles/prompts'
 import { describeSnapshot, snapshotWorkspace } from '../workspace/git-snapshot'
 import { runRoleStep } from './step'
 import { chooseVerifierRole } from '../lens/verifier'
+import * as rolesService from '../roles.service'
 import type { CoordinatorCallbacks, CoordinatorRunInput, RouteDecision } from './types'
 
 // Submit this turn's e2e verification onto the background queue. Never awaited by the caller — the queue
@@ -150,6 +151,12 @@ function makeE2EForwardCb(convId: string, round: number, cb: CoordinatorCallback
 
 async function runE2EVerify(convId: string, prompt: string, cwd: string | undefined, round: number, signal: AbortSignal, cb: CoordinatorCallbacks, shots: string[]): Promise<E2ERoundResult> {
   const verifierRoleId = chooseVerifierRole('frontend')
+  // chooseVerifierRole falls back to a possibly not-ready 'generalist' when no independent ready role
+  // exists. Running a not-ready role would throw a bad_request infra error at dispatch time; SKIP honestly
+  // instead (no e2e verifier available) rather than surfacing an infra failure as a verification outcome.
+  if (!rolesService.isDispatchReady(verifierRoleId)) {
+    return { kind: 'SKIP', detail: 'End-to-end verification skipped: no dispatch-ready verifier role is configured.' }
+  }
   const forwardCb = makeE2EForwardCb(convId, round, cb, shots)
   const verifierPrompt = [
     `End-to-end verification, round ${round}. Actually run the product and verify the task below — do not trust any written summary.`,
