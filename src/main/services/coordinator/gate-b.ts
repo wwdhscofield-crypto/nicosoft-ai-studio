@@ -31,7 +31,11 @@ import { runVerifierStep, chooseVerifierRole } from '../lens/verifier'
 // Closing-voice invariant the caller upholds: a gated step's conversation must END on the verifier's
 // own report ('pass' / 'fixed') or an explicit coordinator verdict (everything else) — never on the
 // implementer/handler's note, which reads as a normal done and hides the verification state.
-export type GateOutcome = 'pass' | 'fixed' | 'false-positive' | 'unverified' | 'unresolved'
+// 'aborted' = the user STOPPED the turn mid-gate (the verifier detected the abort and did NOT scan partial
+// output into a phantom verdict). It is neither a delivery nor a failure of the work — the caller propagates
+// the abort (throws) rather than emitting any "Delivered"/"NOT delivered" beat; recorded distinctly so stats
+// don't fold a user Stop into the unverified/unresolved rates.
+export type GateOutcome = 'pass' | 'fixed' | 'false-positive' | 'unverified' | 'unresolved' | 'aborted'
 export type GatedStepResult = Awaited<ReturnType<typeof runRoleStep>> & { gateOutcome?: GateOutcome; gateEvidence?: string }
 
 // --- Panel closure model (studio-lens §3 D2 integrator) ---------------------------------------
@@ -41,6 +45,7 @@ export type GatedStepResult = Awaited<ReturnType<typeof runRoleStep>> & { gateOu
 // (fixed/false-positive/pass). unverified sits just under unresolved (a verifier that could not judge is worse
 // than a confirmed fix) and above fixed. This is the worst-of guarantee inv1 mandates preserving.
 const OUTCOME_SEVERITY: Record<GateOutcome, number> = {
+  aborted: 5,
   unresolved: 4,
   unverified: 3,
   fixed: 2,
@@ -62,7 +67,7 @@ const MAX_FIX_ROUNDS = 3
 // to a per-subject outcome map). Floor keeps its holistic handler + false-positive path.
 interface FloorClosure {
   handlerRoleId: string
-  outcome: Extract<GateOutcome, 'fixed' | 'false-positive' | 'unresolved'>
+  outcome: Extract<GateOutcome, 'fixed' | 'false-positive' | 'unresolved' | 'unverified'>
   failureFeedback: string // the original floor failure (the learning loop's "verdict")
   evidence: string // the closure result (handler text or re-verify feedback)
   inputTokens: number
@@ -174,12 +179,22 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
   let inputTokens = result.inputTokens + verdict.inputTokens
   let outputTokens = result.outputTokens + verdict.outputTokens
 
-  // Floor verifier infrastructure failure (LLM call failed / no verdict at all): there is no defect evidence
-  // to act on, and the subjects share the SAME infra so they'd fail identically — skip the subject fan-out AND the
-  // fail handler. Deliver unverified with a loud note (round8: a fully-green impl was wrongly declared "NOT
-  // delivered"). Checked BEFORE the subject fan-out so a broken upstream never spends N more verifier calls.
-  if (verdict.infraFailure) {
-    console.warn(`[coordinator] gate-b verifier infrastructure failure — delivering unverified: ${verdict.feedback}`)
+  // The user STOPPED the turn during verification (the verifier returned 'aborted' rather than scanning its
+  // partial output into a phantom verdict). Short-circuit BEFORE the panel/closure — running them on a
+  // stopped turn only spends more aborted sub-runs. Record it distinctly; the caller sees signal.aborted and
+  // propagates (throws), so this gateOutcome is a marker, never a "Delivered" beat.
+  if (verdict.kind === 'aborted') {
+    recordOutcome('aborted', 1, verdict.feedback)
+    return { ...result, inputTokens, outputTokens, gateOutcome: 'aborted', gateEvidence: verdict.feedback }
+  }
+
+  // Verification could not JUDGE — no independent dispatch-ready verifier is bound, OR an infra fault (LLM
+  // call failed / no verdict at all). Either way there is no defect evidence to act on, and the subjects share
+  // the SAME verifier config/infra so they'd degrade identically — skip the subject fan-out AND the fail
+  // handler. Deliver unverified with a loud note (round8: a fully-green impl was wrongly declared "NOT
+  // delivered"). Checked BEFORE the subject fan-out so a broken/absent verifier never spends N more calls.
+  if (verdict.kind === 'unverified') {
+    console.warn(`[coordinator] gate-b verifier could not judge — delivering unverified: ${verdict.feedback}`)
     recordOutcome('unverified', 1, verdict.feedback)
     return {
       ...result,
@@ -195,11 +210,11 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
   // The lens panel runs ON TOP; the escalation throttle (was decideEscalation; M1) now lives INSIDE the engine
   // (review.yaml's conservative `escalate` step), so a small change fans out no lenses → [] (floor-only),
   // forgoing the Property-B amplifier, never Property A. Gated behind the kill-switch so a floor-only A/B baseline
-  // spends no engine cost. !verdict.skipped: a SKIPPED floor means no independent verifier role is bound — the
-  // panel can never form (the reviewer would resolve to the implementer → []), so don't even call the engine.
+  // spends no engine cost. (A verifier that couldn't judge already returned 'unverified' above — the panel
+  // can't form without an independent reviewer either, so we never reach here in that case.)
   const panelEnabled = lensEnabled() // new gateB.studioLens.enabled key, falling back to the old one
   let subjectFindings: SubjectFinding[] = []
-  if (panelEnabled && !verdict.skipped) {
+  if (panelEnabled) {
     // The escalation throttle (M1: was decideEscalation here) now lives INSIDE the engine — review.yaml's
     // conservative `escalate` step gates `select`, so a non-substantial change fans out no lenses → []. Gate-B
     // hands the engine the floor verdict + the written files it judges from.
@@ -218,8 +233,8 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
 
   // PRE-closure gate (studio-lens §4.F step 3 / §5.1): floor-FAIL OR any-subject-FAIL → close the loop.
   // All-green (floor PASS + every subject PASS, or no subject) is a real pass; a SKIPPED floor keeps 'unverified'.
-  if (verdict.passed && failedSubjects.length === 0 && refutedSubjects.length === 0) {
-    const outcome: GateOutcome = verdict.skipped ? 'unverified' : 'pass'
+  if (verdict.kind === 'pass' && failedSubjects.length === 0 && refutedSubjects.length === 0) {
+    const outcome: GateOutcome = 'pass'
     recordOutcome(outcome, 1, verdict.feedback)
     // Pure-green branch (no confirmed fail, no refuted fail): produced subject → 'pass'; dropped → 'unverified'
     // (kept so the selected set is reconstructable). Steps WITH a refuted subject take the unified path below.
@@ -235,13 +250,13 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
       const ev = droppedSubjects.length ? `${verdict.feedback}\n[${droppedSubjects.length} subject(s) dropped/unverified: ${droppedSubjects.map((l) => l.key).join(', ')}]` : verdict.feedback
       recordAggregate(outcome, 1, ev)
     }
-    return { ...result, inputTokens, outputTokens, gateOutcome: outcome, gateEvidence: verdict.skipped ? verdict.feedback : undefined }
+    return { ...result, inputTokens, outputTokens, gateOutcome: outcome, gateEvidence: undefined }
   }
 
   // D2 integrator (studio-lens §3): the floor closes on its own (holistic, own persona, false-positive path);
   // CONFIRMED subjects are consolidated by owning expert into fewer COHERENT fix rounds (vs M4's one handler per
   // subject, which could clobber related code). Snapshot before any edit; rollback point, recovery stays manual.
-  const floorFailed = !verdict.passed
+  const floorFailed = verdict.kind === 'fail'
   const willEdit = floorFailed || failedSubjects.length > 0
   const snap = willEdit ? await snapshotWorkspace(opts.cwd) : null
   if (snap) console.warn(`[coordinator] gate-b pre-fix workspace snapshot: ${describeSnapshot(snap)}`)
@@ -272,9 +287,10 @@ export async function runGatedRoleStep(roleId: string, prompt: string, opts: Run
   outputTokens += integrated.outputTokens
   const subjectClosures = integrated.outcomes
 
-  // Floor row — outcome from verdict.passed ALONE (inv3: independent of subjects, written before the fold), so the
-  // floor pass-rate stays byte-identical to the single-verifier era (the readers' WHERE row_kind='floor').
-  const floorDomainOutcome: GateOutcome = verdict.passed ? (verdict.skipped ? 'unverified' : 'pass') : (floorClosure?.outcome ?? 'unresolved')
+  // Floor row — outcome from the floor verdict ALONE (inv3: independent of subjects, written before the fold),
+  // so the floor pass-rate stays byte-identical to the single-verifier era (the readers' WHERE row_kind='floor').
+  // verdict.kind is 'pass' | 'fail' here (unverified/aborted already returned above).
+  const floorDomainOutcome: GateOutcome = verdict.kind === 'pass' ? 'pass' : (floorClosure?.outcome ?? 'unresolved')
   recordOutcome(floorDomainOutcome, floorClosure ? 2 : 1, floorClosure?.evidence ?? verdict.feedback)
 
   const subjectOutcomes: GateOutcome[] = []
@@ -450,7 +466,11 @@ async function closeFloor(
     const reVerdict = await runVerifierStep(implementerRoleId, opts, gate, followUp.text, signal) // floor persona, own build
     inputTokens += reVerdict.inputTokens
     outputTokens += reVerdict.outputTokens
-    return { ...base, outcome: reVerdict.passed ? 'fixed' : 'unresolved', evidence: reVerdict.feedback, inputTokens, outputTokens }
+    // Read the DISCRIMINATED kind, never `.passed` alone: a re-verify that could not judge (no independent
+    // verifier / infra fault) or was aborted did NOT confirm the claimed fix → 'unverified', never 'fixed'
+    // (mirrors the subject re-verify in integrateSubjectClosures — the bug once a skip returned pass:true).
+    const outcome = reVerdict.kind === 'pass' ? 'fixed' : reVerdict.kind === 'fail' ? 'unresolved' : 'unverified'
+    return { ...base, outcome, evidence: reVerdict.feedback, inputTokens, outputTokens }
   }
   return { ...base, outcome: 'unresolved', evidence: followUp.text, inputTokens, outputTokens }
 }
@@ -531,11 +551,10 @@ async function integrateSubjectClosures(
       const reVerdict = await runVerifierStep(implementerRoleId, opts, gate, followUp.text, signal, { key: lv.key, focus, stepId, quiet: true, reverify: true })
       inputTokens += reVerdict.inputTokens
       outputTokens += reVerdict.outputTokens
-      // A re-verify that SKIPPED (no independent, dispatch-ready verifier — verifier.ts returns passed:true,
-      // skipped:true) or hit an INFRA fault did NOT actually confirm the fix. Record it 'unverified', never
-      // 'fixed' (mirrors the floor path's `verdict.skipped ? 'unverified' : ...`) — reading reVerdict.passed
-      // alone wrote a skipped re-verify as fixed once #5 made not-ready verifiers skip instead of throw.
-      const settled: GateOutcome = reVerdict.skipped || reVerdict.infraFailure ? 'unverified' : reVerdict.passed ? 'fixed' : 'unresolved'
+      // Read the DISCRIMINATED kind, never `.passed` alone: a re-verify that could not judge (no independent,
+      // dispatch-ready verifier / infra fault) or was aborted did NOT actually confirm the fix → 'unverified',
+      // never 'fixed'. pass → fixed; fail → the claimed fix didn't hold.
+      const settled: GateOutcome = reVerdict.kind === 'pass' ? 'fixed' : reVerdict.kind === 'fail' ? 'unresolved' : 'unverified'
       outcomes.set(lv.key, { outcome: settled, evidence: reVerdict.feedback, handlerRoleId })
     }
   }

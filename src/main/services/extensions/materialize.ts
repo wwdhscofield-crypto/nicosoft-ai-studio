@@ -14,7 +14,7 @@
 // Existing rows installed before this feature keep their external dir_path untouched (no migration —
 // design decision 2); only NEW installs are materialized.
 
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { cp, lstat, mkdir, rename, rm } from 'node:fs/promises'
 import { basename, join, resolve, sep } from 'node:path'
 import { dataDir } from '../../db/connection'
@@ -177,8 +177,11 @@ export function removeMaterialized(kind: ExtensionKind, id: string): Promise<voi
   // delete `dest` mid-rename. Best-effort (the DB delete already happened) — errors are logged, not thrown.
   return withIdLock(`${kind}/${safe}`, async () => {
     try {
-      rmSync(join(extensionsRoot(), kind, safe), { recursive: true, force: true })
-      if (kind === 'mcp') rmSync(join(extensionsRoot(), 'mcp', `${safe}.json`), { force: true })
+      // Async rm (fs/promises), not rmSync: a payload can be up to the materialize cap (50k files / 2 GiB),
+      // and this runs on the main process during a DB delete — a synchronous recursive unlink of that would
+      // freeze the UI. The per-id lock already serializes against a running copy's swap.
+      await rm(join(extensionsRoot(), kind, safe), { recursive: true, force: true })
+      if (kind === 'mcp') await rm(join(extensionsRoot(), 'mcp', `${safe}.json`), { force: true })
     } catch (e) {
       console.error('[extensions] failed to remove materialized payload', kind, id, e)
     }
@@ -190,9 +193,10 @@ export function removeMaterialized(kind: ExtensionKind, id: string): Promise<voi
 // crashed copy) and any `.old-<id>` whose dest is already present (a stale leftover). Best-effort — a
 // failure here logs and moves on, never blocks boot. Runs at startup so recovery isn't deferred to the
 // next materialize of that same id (which might never come — the extension stays broken until then).
-// SYNCHRONOUS (rmSync/renameSync): it runs inline in the boot sequence before loadSkills/connectMcp read
-// the dirs, and there is no concurrency at boot to serialize against.
-export function recoverMaterializeLeftovers(): void {
+// ASYNC (await rm/rename): a leftover .old/.tmp can be a full payload (up to the materialize cap), so a
+// synchronous recursive unlink would freeze the main process during boot. The caller AWAITS this before
+// loadSkills/connectMcp read the dirs, so the ordering guarantee holds while the event loop stays live.
+export async function recoverMaterializeLeftovers(): Promise<void> {
   for (const kind of ['skills', 'plugins', 'mcp'] as ExtensionKind[]) {
     const base = join(extensionsRoot(), kind)
     let entries: string[]
@@ -204,16 +208,16 @@ export function recoverMaterializeLeftovers(): void {
     for (const name of entries) {
       try {
         if (name.startsWith('.tmp-')) {
-          rmSync(join(base, name), { recursive: true, force: true })
+          await rm(join(base, name), { recursive: true, force: true })
         } else if (name.startsWith('.old-')) {
           const rawId = name.slice('.old-'.length)
           if (!/^[0-9A-Za-z_-]+$/.test(rawId)) {
-            rmSync(join(base, name), { recursive: true, force: true }) // not one of ours (crafted name) — drop it
+            await rm(join(base, name), { recursive: true, force: true }) // not one of ours (crafted name) — drop it
             continue
           }
           const dest = join(base, rawId)
-          if (existsSync(dest)) rmSync(join(base, name), { recursive: true, force: true })
-          else renameSync(join(base, name), dest) // restore the mid-swap-crash payload
+          if (existsSync(dest)) await rm(join(base, name), { recursive: true, force: true })
+          else await rename(join(base, name), dest) // restore the mid-swap-crash payload
         }
       } catch (e) {
         console.error('[extensions] materialize leftover sweep failed for', join(kind, name), e)

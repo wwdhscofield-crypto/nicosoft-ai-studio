@@ -1009,6 +1009,7 @@ export interface MessageDto {
   sentTokens: number // cumulative billing input for this turn incl. cache (0 if unknown / user message) — billing/accounting only, never displayed (no settled per-turn readout)
   dispatch: string[] | null // coordinator pipeline chain; null for single-expert / direct chat / agent turns
   segmentKind: string | null // closure-loop: 'verifier' = independent Gate B reviewer segment (→ "· Verifier" badge); null = normal step
+  targetRoleId: string | null // P2-5: @mention target resolved + persisted at send (a user turn's stable audit identity); null = no mention / legacy row
   createdAt: string
 }
 export interface MessageAppendDto {
@@ -1024,6 +1025,7 @@ export interface MessageAppendDto {
   sentTokens?: number // cumulative billing input incl. cache (assistant messages) — billing/accounting record (not the ↑ display)
   dispatch?: string[] // set by coordinator.service for pipeline steps; renderer reads it via MessageDto.dispatch
   segmentKind?: string // closure-loop: 'verifier' marks an independent Gate B reviewer step → "· Verifier" identity badge
+  targetRoleId?: string // P2-5: the @mention target the renderer resolved for a coordinator-conversation user turn
 }
 export interface ConversationTitleInput {
   convId: string
@@ -1109,10 +1111,28 @@ export interface McpTestResult {
 
 // Install confirmation preview (extension-install-design §5.4): the concrete consequences the dialog
 // shows for a proposed install, parsed MAIN-SIDE from the source (the renderer never reads disk).
+// resolvedPath + digest (review round-4 P1-3): the CANONICAL real path the install will use (root symlink
+// resolved main-side, so the dialog shows where it TRULY installs from) and a content digest of that folder.
+// The dialog echoes the digest back as `source_digest` on approve; the install re-computes it and aborts if
+// the source changed since review. Both are present for every dir-based install (skill / plugin / local-
+// folder mcp); a raw-command / http mcp has no source folder, so they're absent there.
 export type InstallPreview =
   | { ok: false; error: string }
-  | { ok: true; kind: 'skill'; name: string; description: string; whenToUse: string; bodyPreview: string }
-  | { ok: true; kind: 'plugin'; name: string; version: string; skills: string[]; mcpServers: string[]; roles: string[]; hasHooks: boolean }
+  | { ok: true; kind: 'skill'; name: string; description: string; whenToUse: string; bodyPreview: string; resolvedPath: string; digest: string }
+  | {
+      ok: true
+      kind: 'plugin'
+      name: string
+      version: string
+      resolvedPath: string
+      digest: string
+      // Full consequence manifest (not just names): what each component RUNS / GRANTS, so the user approves a
+      // complete picture. MCP servers show their command/url, hooks show their commands, roles show their tools.
+      skills: { name: string; description: string }[]
+      mcpServers: { name: string; run: string; netWarning: boolean }[]
+      roles: { name: string; tools: string[] }[]
+      hooks: { event: string; run: string }[]
+    }
   | {
       ok: true
       kind: 'mcp'
@@ -1124,6 +1144,8 @@ export type InstallPreview =
       sourceDirMissing: boolean
       netWarning: boolean // remote http / net-fetching command (npx …) — the red line in the dialog
       secretKeys: string[]
+      resolvedPath?: string // present only for a local-folder (sourceDir) server
+      digest?: string
     }
 
 export type SkillSource = 'imported' | 'builtin' | 'distilled'

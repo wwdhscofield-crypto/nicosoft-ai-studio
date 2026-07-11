@@ -30,6 +30,7 @@ import * as convRepo from '../repos/conversation.repo'
 import * as summaryRepo from '../repos/summary.repo'
 import * as usageRepo from '../repos/usage.repo'
 import * as convService from './conversation.service'
+import * as rolesService from './roles.service'
 import * as memoryService from './memory/service'
 import * as compressionService from './compression.service'
 import { pickSmallModel } from './model-select'
@@ -72,6 +73,11 @@ export async function run(
   const runId = ulid()
   // Tools scoped to this agent role: a CORE subset (doc 16 §5) + MCP + Skill, by roleId + scope.
   const roleId = input.roleId ?? ENGINEER_ROLE_ID
+  // A role the user turned OFF must NEVER run — not even its OWN solo/scheduled/workflow conversation. The
+  // same centralized precondition runRoleStep applies to coordinator dispatch; solo/scheduled/workflow all
+  // funnel here, so this is their enforcement point. Thrown before any side effect (no user turn persisted,
+  // no hook fired for a rejected run). Coordinator/enabled roles pass through untouched.
+  rolesService.assertRoleExecutable(roleId)
   let submittedPrompt = input.prompt
   let userPromptContexts: string[] = []
   let tools = [...toolsForAgentRole(roleId), launchAsyncTool, awaitAsyncTool] // 批C2a: solo direct chat can launch/await async ops (studio_lens launches through ctx.async too)

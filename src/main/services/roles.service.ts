@@ -5,6 +5,7 @@ import * as endpointRepo from '../repos/endpoint.repo'
 import * as keychain from '../keychain/keychain'
 import * as convService from './conversation.service'
 import { transaction } from '../db/connection'
+import { LlmError } from '../llm/types'
 import { AGENT_ROLE_IDS, ROLE_DISPLAY_NAMES } from '@shared/roles'
 import { DISPATCHABLE_ROLE_IDS, roleIdFromName } from '../agent/roles/prompts'
 import type {
@@ -176,6 +177,22 @@ export function dispatchableRoleIds(): string[] {
 export function isDisabled(roleId: string): boolean {
   if (roleId === COORDINATOR_ROLE_ID) return false
   return roleRepo.getState(roleId)?.enabled === false
+}
+
+// THE role-execution precondition, centralized so it has ONE definition and can't be forgotten at a new
+// entry point. Every path that starts an agent/chat turn for a role MUST call this first: runRoleStep
+// (coordinator dispatch), agent.service.run (solo / scheduled / workflow), chat.service.send (plain chat).
+// It enforces the DISABLE POLICY — a role the user turned OFF must NEVER run, no matter which path reaches
+// it. Before this was centralized, only runRoleStep checked it, so a disabled expert's own solo/scheduled/
+// workflow/chat turn ran anyway (the disable merely blocked @mention re-routing). Deliberately scoped to the
+// disable policy: endpoint/model/key READINESS is validated where those values are resolved (and differs by
+// path — the solo path takes the endpoint from the composer, not the role binding), whereas the disable gate
+// is config-independent and must hold even for a fully-configured role. Coordinator can never be disabled
+// (isDisabled returns false for it), so this is a no-op for the router.
+export function assertRoleExecutable(roleId: string): void {
+  if (isDisabled(roleId)) {
+    throw new LlmError('bad_request', `role "${roleId}" is disabled — re-enable it to run this expert`)
+  }
 }
 
 export function isDispatchReady(roleId: string): boolean {

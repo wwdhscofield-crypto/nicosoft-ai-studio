@@ -60,7 +60,25 @@ export interface SubjectContext {
   reverify?: boolean
 }
 
-export async function runVerifierStep(implementerRoleId: string | string[], opts: RunStepOptions, gate: { originalPrompt: string; approvedPlan?: string; acceptance?: string[] }, implementationText: string, signal?: AbortSignal, subject?: SubjectContext): Promise<{ passed: boolean; feedback: string; inputTokens: number; outputTokens: number; infraFailure?: boolean; skipped?: boolean; contracted?: boolean }> {
+// A verifier run's terminal state — the ONE discriminated result every verifier consumer switches on. It
+// replaces the old bag of overlapping optional booleans ({ passed, skipped, infraFailure }), which were NOT
+// mutually exclusive and let each consumer re-derive the state ad-hoc — reading `.passed` alone recorded a
+// SKIP as 'fixed', and an ABORT (partial text) was scanned into a phantom PASS/FAIL. The four kinds are
+// exhaustive and mutually exclusive:
+//   pass       — the verifier ran and APPROVED the change.
+//   fail       — the verifier ran and REJECTED it (feedback = the defect evidence to act on).
+//   unverified — verification could not judge: no independent dispatch-ready verifier role is bound, OR an
+//                infra fault (the LLM call failed / returned empty). Deliver, but the caller MUST say so.
+//   aborted    — the user stopped the turn mid-verification. NOT a verdict and NOT a delivery: the caller
+//                must not emit any "Delivered" beat, and must not scan partial output for a verdict.
+export type VerifierVerdict = { feedback: string; inputTokens: number; outputTokens: number } & (
+  | { kind: 'pass' }
+  | { kind: 'fail' }
+  | { kind: 'unverified' }
+  | { kind: 'aborted' }
+)
+
+export async function runVerifierStep(implementerRoleId: string | string[], opts: RunStepOptions, gate: { originalPrompt: string; approvedPlan?: string; acceptance?: string[] }, implementationText: string, signal?: AbortSignal, subject?: SubjectContext): Promise<VerifierVerdict> {
   // Implementer(s): a single string for floor/panel (byte-identical), a SET in collaborate (exclude every builder).
   const implementers = Array.isArray(implementerRoleId) ? implementerRoleId : [implementerRoleId]
   const verifierRoleId = chooseVerifierRole(implementerRoleId)
@@ -70,7 +88,7 @@ export async function runVerifierStep(implementerRoleId: string | string[], opts
   // falls back to 'generalist' when no independent ready role exists, and that fallback is — BY CONSTRUCTION —
   // either an implementer or not dispatch-ready. Without this check a not-ready generalist would be RUN and
   // throw a bad_request infra error at dispatch time, instead of degrading honestly to "no independent verifier".
-  if (implementers.includes(verifierRoleId) || !rolesService.isDispatchReady(verifierRoleId)) return { passed: true, skipped: true, feedback: 'Independent verification skipped: no independent, dispatch-ready verifier role bound (only the implementer is available); result delivered unverified.', inputTokens: 0, outputTokens: 0 }
+  if (implementers.includes(verifierRoleId) || !rolesService.isDispatchReady(verifierRoleId)) return { kind: 'unverified', feedback: 'Independent verification skipped: no independent, dispatch-ready verifier role bound (only the implementer is available); result delivered unverified.', inputTokens: 0, outputTokens: 0 }
   // closure-loop §3.2: presentation split by role.
   //   FLOOR (no subject) → renders as the independent "<verifier> · Verifier" SEGMENT (its verdict prose IS the
   //     body). It emits NO sub_tool card — the segment is the presentation, eliminating the old double (a card on
@@ -138,24 +156,39 @@ export async function runVerifierStep(implementerRoleId: string | string[], opts
       signal: signal ?? opts.signal
     })
   } catch (err) {
-    // The verifier's own LLM call failed (e.g. upstream empty-response / channel fault — round8). That is
-    // an infrastructure failure, not a verdict: report it as such so the caller skips the fail handler.
+    // An ABORT can surface here as a thrown error (the loop rethrows during retry backoff once the signal
+    // fires) — that is NOT an infra fault. Surface it as 'aborted' so the caller stops cleanly instead of
+    // delivering an "unverified" note for a turn the user stopped.
+    if (signal?.aborted) {
+      if (emitCard) opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId, name: 'Subject', isError: true, result: 'aborted' })
+      return { kind: 'aborted', feedback: 'Independent verification aborted — the turn was stopped mid-check.', inputTokens: 0, outputTokens: 0 }
+    }
+    // Otherwise the verifier's own LLM call failed (upstream empty-response / channel fault — round8): an
+    // infrastructure failure, not a verdict → 'unverified' so the caller skips the fail handler and says so.
     const msg = err instanceof Error ? err.message : String(err)
     const feedback = `verifier LLM call failed: ${msg}`
     if (emitCard) opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId, name: 'Subject', isError: true, result: feedback })
-    return { passed: false, feedback, inputTokens: 0, outputTokens: 0, infraFailure: true }
+    return { kind: 'unverified', feedback, inputTokens: 0, outputTokens: 0 }
+  }
+  // A user abort comes back as a NORMAL return with reason:'aborted' (the loop RETURNS, it does not throw)
+  // and PARTIAL text. Detect it BEFORE scanning that text — otherwise the classifier reads a phantom
+  // VERDICT out of half-written output and the caller "delivers" a stopped turn. An abort is never a
+  // pass/fail/unverified verdict; it is its own terminal.
+  if (signal?.aborted || verifier.reason === 'aborted') {
+    if (emitCard) opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId, name: 'Subject', isError: true, result: 'aborted' })
+    return { kind: 'aborted', feedback: 'Independent verification aborted — the turn was stopped mid-check.', inputTokens: verifier.inputTokens, outputTokens: verifier.outputTokens }
   }
   const text = verifier.text.trim()
   // Contracted verdict line first: persona + user message both demand a FINAL `VERDICT: PASS|FAIL`
   // line, and the classifier reads only that (last match wins = final-line semantics). Free-text token
   // scanning is the fallback for a non-compliant reply only, fail-closed (PASS && !FAIL) — it MUST NOT
   // be the primary path: dogfood 2026-06-12 had two clear-PASS verdicts flipped to FAIL because the
-  // evidence prose contained the brief's own term "fail-open", voiding a fully-green delivery. `contracted`
-  // is also the subject-retry signal (runStudioLens): a non-contracted subject reply is retried once, then dropped.
+  // evidence prose contained the brief's own term "fail-open", voiding a fully-green delivery.
   const contracted = [...text.matchAll(/^\s*[#*>•-]*\s*VERDICT:\s*(PASS|FAIL)\b/gim)].pop()?.[1]
   const passed = contracted ? contracted.toUpperCase() === 'PASS' : /\bPASS\b/i.test(text) && !/\bFAIL\b/i.test(text)
   if (emitCard) opts.cb.onToolEvent?.(verifierRoleId, { type: 'sub_tool_done', toolUseId: toolId, parentToolId, name: 'Subject', isError: !passed, result: text })
-  // Empty text = the verifier ran but produced nothing (belt to the loop's empty-turn guard) — that is
-  // an absent verdict, not a FAIL with evidence; mark infra so the caller doesn't dispatch the handler.
-  return { passed, feedback: text || 'Verifier returned no verdict.', inputTokens: verifier.inputTokens, outputTokens: verifier.outputTokens, infraFailure: text ? undefined : true, contracted: Boolean(contracted) }
+  // Empty text = the verifier ran but produced nothing (belt to the loop's empty-turn guard) — an ABSENT
+  // verdict, not a FAIL with evidence: 'unverified' so the caller doesn't dispatch the fail handler.
+  if (!text) return { kind: 'unverified', feedback: 'Verifier returned no verdict.', inputTokens: verifier.inputTokens, outputTokens: verifier.outputTokens }
+  return { kind: passed ? 'pass' : 'fail', feedback: text, inputTokens: verifier.inputTokens, outputTokens: verifier.outputTokens }
 }

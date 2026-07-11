@@ -212,12 +212,19 @@ export function Composer({
   // thinking/mode always come from the current UI state.
   const dispatchSend = (text: string, images?: { dataUrl: string; mime: string; name: string }[]): void => {
     const thinking = resolveThinking(getThinkingCapability(b.family, b.model), effectiveDepth) ?? undefined
+    // P2-5: resolve the leading @mention ONCE, here, against the full roster — the SAME matchLeadingMention
+    // the chip mirrors and the backend's matchMention routes by — and persist its target with the turn (the
+    // store threads it through append). This freezes WHO the message addressed at send time, so the chip
+    // stays a stable audit fact when that role is later renamed/deleted. Only coordinator conversations route
+    // by mention, so solo/agent chats never carry one.
+    const targetRoleId = roleIsCoordinator(expert.id) ? matchLeadingMention(text, allExperts)?.id : undefined
     void chat.send({
       expertId: expert.id,
       endpointId: b.endpointId,
       model: b.model,
       thinking,
       text,
+      targetRoleId,
       images: images?.length ? images : undefined,
       // cwd gates on the CAPABILITY predicate (roleRunsAgentLoop), not the routing one (roleHasAgent):
       // Danny's coordinator.run consumes the conversation's cwd too — every dispatched / collab expert

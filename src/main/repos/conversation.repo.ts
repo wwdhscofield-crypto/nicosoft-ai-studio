@@ -41,6 +41,7 @@ export interface MessageRow {
   dispatch: string[] | null
   runId: string | null
   segmentKind: string | null
+  targetRoleId: string | null // P2-5: @mention target resolved at send (a user turn's stable audit identity)
   createdAt: string
 }
 
@@ -57,6 +58,7 @@ export interface MessageAppendInput {
   dispatch?: string[]
   runId?: string
   segmentKind?: string
+  targetRoleId?: string
 }
 
 interface ConversationRaw {
@@ -87,6 +89,7 @@ interface MessageRaw {
   dispatch: string | null
   run_id: string | null
   segment_kind: string | null
+  target_role_id: string | null
   created_at: string
 }
 
@@ -121,6 +124,7 @@ function mapMessage(raw: MessageRaw): MessageRow {
     dispatch: raw.dispatch ? (JSON.parse(raw.dispatch) as string[]) : null,
     runId: raw.run_id,
     segmentKind: raw.segment_kind,
+    targetRoleId: raw.target_role_id,
     createdAt: raw.created_at
   }
 }
@@ -234,10 +238,11 @@ export function append(conversationId: string, input: MessageAppendInput): Messa
   const sentTokens = input.sentTokens ?? 0
   const runId = input.runId ?? null
   const segmentKind = input.segmentKind ?? null
+  const targetRoleId = input.targetRoleId ?? null
   getDb()
     .prepare(
-      `INSERT INTO messages (id, conversation_id, author, expert_id, model, content, attachments, in_tokens, cache_read_tokens, out_tokens, sent_tokens, dispatch, run_id, segment_kind, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO messages (id, conversation_id, author, expert_id, model, content, attachments, in_tokens, cache_read_tokens, out_tokens, sent_tokens, dispatch, run_id, segment_kind, target_role_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       id,
@@ -254,6 +259,7 @@ export function append(conversationId: string, input: MessageAppendInput): Messa
       dispatch,
       runId,
       segmentKind,
+      targetRoleId,
       createdAt
     )
   return {
@@ -271,6 +277,7 @@ export function append(conversationId: string, input: MessageAppendInput): Messa
     dispatch: input.dispatch ?? null,
     runId,
     segmentKind,
+    targetRoleId,
     createdAt
   }
 }

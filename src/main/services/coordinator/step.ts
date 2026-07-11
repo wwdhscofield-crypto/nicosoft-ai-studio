@@ -175,13 +175,11 @@ export function withCoordinatorContext(base: string, memories: MemoryRow[], summ
 
 export async function runRoleStep(opts: RunStepOptions): Promise<{ text: string; reason: AgentResult['reason']; inputTokens: number; outputTokens: number; endpointId: string; model: string; writtenFiles: WrittenFile[] }> {
   const { convId, roleId, prompt, dispatch, cb, signal, cwd, includeHistory = false, isSynthesis = false, isDirect = false, isParallelSynthesis = false, isCouncilSynthesis = false, quiet = false, ephemeral = false, segmentKind, progressCard } = opts
-  // A disabled role must NEVER run a step. The only path that reaches here for one is an explicit @mention
-  // of a disabled expert — route.ts deliberately routes that here (instead of dropping it to the LLM router,
-  // which silently rerouted to someone else) so the rejection is loud and actionable. Fail with a clear
-  // re-enable message; never bypass the user's disable by running the role anyway.
-  if (rolesService.isDisabled(roleId)) {
-    throw new LlmError('bad_request', `role "${roleId}" is disabled — re-enable it to message this expert`)
-  }
+  // A disabled role must NEVER run a step — the SAME centralized precondition every entry point calls
+  // (rolesService.assertRoleExecutable), so the invariant has one definition. The only path that reaches
+  // HERE for a disabled role is an explicit @mention (route.ts routes it here for a loud, actionable
+  // rejection instead of a silent LLM reroute); never bypass the user's disable by running the role anyway.
+  rolesService.assertRoleExecutable(roleId)
   const binding = rolesService.getBinding(roleId)
   if (!binding?.endpointId || !binding.model) {
     throw new LlmError('bad_request', `role "${roleId}" has no endpoint binding`)

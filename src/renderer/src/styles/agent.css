@@ -445,6 +445,8 @@
 .ap-install-pre { max-height: 140px; margin-bottom: 10px; }
 .ap-install-list { margin: 0 0 10px; padding-left: 18px; font-size: 12.5px; color: var(--text-2); }
 .ap-install-list li { margin-bottom: 2px; }
+/* Inline command/url inside a plugin component line (the full consequence manifest, P1-3). */
+.ap-install-inlinecode { font-family: var(--mono); font-size: 11.5px; color: var(--text-1); background: var(--bg-2); padding: 0 4px; border-radius: 3px; word-break: break-all; }
 .ap-install-net { font-size: 12.5px; color: var(--error); font-weight: 500; margin-bottom: 10px; }
 .ap-install-secrets { margin-bottom: 8px; }
 .ap-install-secret { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }

@@ -790,6 +790,7 @@ export const useChat = create<ChatState>((set, get) => {
           expertId: m.author === 'user' ? null : m.expertId,
           dispatch: m.dispatch,
           segmentKind: m.author === 'user' ? null : m.segmentKind,
+          targetRoleId: m.targetRoleId, // P2-5: the persisted @mention target (user turns) — the chip's stable audit source
           runId: m.author === 'user' ? null : m.runId,
           inputTokens: m.author !== 'user' && m.inputTokens > 0 ? m.inputTokens : undefined,
           cacheReadTokens: m.author !== 'user' && m.cacheReadTokens > 0 ? m.cacheReadTokens : undefined,
@@ -894,7 +895,7 @@ export const useChat = create<ChatState>((set, get) => {
       })
     },
 
-    send: async ({ expertId, endpointId, model, thinking, text, images, cwd, contextWindow, permissionMode, imageModel }) => {
+    send: async ({ expertId, endpointId, model, thinking, text, images, cwd, contextWindow, permissionMode, imageModel, targetRoleId }) => {
       ensureListeners()
       let convId = get().activeConv
       const isNew = !convId
@@ -945,7 +946,7 @@ export const useChat = create<ChatState>((set, get) => {
             ...s.byConversation,
             [cid]: [
               ...prev,
-              { id: uid(), createdAt: Date.now(), role: 'user', text, images: userImages.length ? userImages : undefined },
+              { id: uid(), createdAt: Date.now(), role: 'user', text, images: userImages.length ? userImages : undefined, targetRoleId: targetRoleId ?? null },
               { id: uid(), createdAt: Date.now(), role: 'assistant', text: '', streaming: true }
             ]
           },
@@ -979,7 +980,8 @@ export const useChat = create<ChatState>((set, get) => {
             author: 'user',
             expertId,
             content: text,
-            attachments: userImages.map((i) => ({ url: i.url, name: i.name }))
+            attachments: userImages.map((i) => ({ url: i.url, name: i.name })),
+            targetRoleId // P2-5: persist the @mention target the composer resolved → the chip's stable audit fact
           })
           // cwd = THIS conversation's own working dir (per-conversation); every dispatched / collab expert
           // operates in it (collaborators share one project dir). modeByRole stays per-expert (the workspace

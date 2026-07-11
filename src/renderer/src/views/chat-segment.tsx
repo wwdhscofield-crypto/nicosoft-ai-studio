@@ -89,19 +89,34 @@ function SegActions({
 // (P3 — purely visual, so you can see at a glance who a message was directed to). Everywhere else, and when
 // the leading token isn't a real routable expert, the text renders verbatim. Mirrors the server's
 // matchMention boundary rules (matchLeadingMention), so the chip appears exactly when the mention routes.
-function UserMessageText({ text, coordinator, experts }: { text: string; coordinator: boolean; experts: Record<string, Expert> }): ReactElement {
-  // Highlight a leading @Name that resolves to a real expert by name/id — the SAME routing identity the
-  // server's matchMention uses. Deliberately NOT filtered by CURRENT disabled state: the chip must be a
-  // stable fact of who the message addressed, not flicker as roles are enabled/disabled (P2-C — the chip
-  // used to vanish when you disabled a role and reappear when you re-enabled). The backend now REJECTS a
-  // disabled @mention outright (route.ts) instead of silently rerouting it, so a leading @Name always WAS
-  // addressed to that role — the chip is accurate whether or not the role is currently enabled.
-  const m = coordinator ? matchLeadingMention(text, Object.values(experts)) : null
-  if (!m) return <p className="user-msg-text">{text}</p>
+function UserMessageText({ text, coordinator, experts, targetRoleId }: { text: string; coordinator: boolean; experts: Record<string, Expert>; targetRoleId?: string | null }): ReactElement {
+  // The chip is a STABLE AUDIT FACT. For a NEW message it renders from target_role_id — the mention target
+  // the composer resolved and PERSISTED at send — so it no longer drifts as the role is later renamed or
+  // deleted (P2-5; it used to re-derive from the live roster every render, and P2-C only stabilized it across
+  // enable/disable). Prefix: an exact roster match when the role still exists under its send-time name, else
+  // the leading @token (renamed/deleted). Color: by id (rename-safe) or a neutral chip (deleted).
+  //   targetRoleId null/undefined → no mention, OR a LEGACY row (column absent): fall back to the old
+  //   live-roster derivation — correct for both (no-mention text yields no chip; a legacy mention still
+  //   highlights as before, drift and all). The backend rejects a disabled @mention outright, so a leading
+  //   @Name always WAS addressed to that role — the chip is accurate whether or not it is currently enabled.
+  let chip: { len: number; color: string } | null = null
+  if (coordinator && targetRoleId) {
+    const exact = matchLeadingMention(text, Object.values(experts)) // exact prefix while the role still exists under its send-time name
+    // Fallback for a renamed/deleted target (the exact roster match fails): highlight the leading @-token using
+    // the SAME letter/number boundary matchLeadingMention uses, so trailing punctuation is NOT swallowed
+    // ("@Flynn," → "@Flynn"). A multi-word custom name ("@Data Scientist") is single-token-approximated here
+    // (its exact span isn't persisted) — a cosmetic under-highlight confined to the deleted/renamed path.
+    const len = exact?.matchedLen ?? (/^@[\p{L}\p{N}]+/u.exec(text)?.[0].length ?? 0)
+    if (len > 0) chip = { len, color: experts[targetRoleId]?.color ?? 'var(--text-3)' }
+  } else if (coordinator) {
+    const m = matchLeadingMention(text, Object.values(experts))
+    if (m) chip = { len: m.matchedLen, color: m.color }
+  }
+  if (!chip) return <p className="user-msg-text">{text}</p>
   return (
     <p className="user-msg-text">
-      <span className="mention-chip" style={{ '--chip': m.color } as CSSProperties}>{text.slice(0, m.matchedLen)}</span>
-      {text.slice(m.matchedLen)}
+      <span className="mention-chip" style={{ '--chip': chip.color } as CSSProperties}>{text.slice(0, chip.len)}</span>
+      {text.slice(chip.len)}
     </p>
   )
 }
@@ -448,7 +463,15 @@ export function ChatSegment({
   // Lookup the per-run expert if Coordinator tagged it (expertId is a merge condition, so it's uniform
   // across the run); fall back to the prop so direct chats / agents render the same as before.
   const msgExpert: Expert | undefined = !isUser && first.expertId ? expertById[first.expertId] : undefined
-  const renderExpert = msgExpert ?? expert
+  // A guest segment whose author role no longer resolves (a DELETED custom role) must NOT inherit the HOST's
+  // identity: `msgExpert ?? expert` would paint the deleted expert's work with Danny's avatar + name (round-3
+  // fixed the "Reply to Danny" button; the segment itself still misattributed — P2-5). Render a neutral
+  // "former expert" tombstone instead. Only a TAGGED guest segment (expertId set but unresolved) is a
+  // tombstone; a host segment (expertId null) legitimately uses `expert`, the conversation's primary role.
+  const deletedAuthor = !isUser && !!first.expertId && !msgExpert
+  const renderExpert: Expert = msgExpert ?? (deletedAuthor
+    ? { id: first.expertId as string, name: t('conv.formerExpert'), color: 'var(--text-3)', specialty: '', personality: '', model: null, family: null }
+    : expert)
   const synthesis = isSynthesis(first)
   // closure-loop §3.2/§3.3: an independent Gate B reviewer step renders with its own "· Verifier" identity.
   const verifier = !isUser && first.segmentKind === 'verifier'
@@ -528,7 +551,7 @@ export function ChatSegment({
       <div ref={bodyRef} className={'seg-body' + (isUser || synthesis ? ' primary' : '') + (windowed ? ' fold-window' : '')}>
         {isUser ? (
           <>
-            {first.text ? <UserMessageText text={first.text} coordinator={roleIsCoordinator(expert.id)} experts={expertById} /> : null}
+            {first.text ? <UserMessageText text={first.text} coordinator={roleIsCoordinator(expert.id)} experts={expertById} targetRoleId={first.targetRoleId} /> : null}
             {first.images && first.images.length > 0 ? (
               <div className="msg-images">
                 {first.images.map((img, i) => (

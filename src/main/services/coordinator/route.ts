@@ -48,18 +48,19 @@ export async function route(userInput: string, history: convRepo.MessageRow[], c
   // minus disabled. Custom names ride the roster via customExpertLines below; chat-only personas stay
   // outside the routing universe entirely (users reach them by clicking the sidebar).
   const enabled = rolesService.dispatchableRoleIds().filter((r) => !disabled.has(r))
-  if (enabled.length === 0) return { mode: 'single', role: 'generalist', reason: 'no roles enabled', needsPlan: isNonTrivialTask(userInput) }
 
-  // 0. @mention 0-LLM fast path — user explicitly named a role (built-in OR agent-enabled custom).
-  //    Matched against the FULL dispatchable roster INCLUDING disabled roles (longest name first, so
-  //    "@Flynn Pro …" hits the custom "Flynn Pro" instead of prefix-capturing built-in Flynn; names with
-  //    digits/spaces resolve instead of truncating at the first non-letter). Only a FULL name followed by a
-  //    boundary takes the fast path; a partial / unknown / chat-only @mention still falls through to the
-  //    LLM router. Deliberately NOT readiness-filtered AND NOT disabled-filtered: an @mention is the user
-  //    explicitly addressing a role, so dispatching it and failing with an actionable error (step.ts:
-  //    "no endpoint binding" / "role is disabled — re-enable it") beats SILENTLY rerouting their explicit
-  //    choice to someone else. Matching against `enabled` (disabled dropped) used to send a disabled
-  //    @mention to the router, which rerouted it invisibly (review 2026-07-12) — hence the full roster here.
+  // 0. @mention 0-LLM fast path — checked FIRST, before the all-disabled fallback below: the user explicitly
+  //    named a role (built-in OR agent-enabled custom). Matched against the FULL dispatchable roster
+  //    INCLUDING disabled roles (longest name first, so "@Flynn Pro …" hits the custom "Flynn Pro" instead of
+  //    prefix-capturing built-in Flynn; names with digits/spaces resolve instead of truncating at the first
+  //    non-letter). Only a FULL name followed by a boundary takes the fast path; a partial / unknown /
+  //    chat-only @mention still falls through to the LLM router. Deliberately NOT readiness-filtered AND NOT
+  //    disabled-filtered: an @mention is the user explicitly addressing a role, so dispatching it and failing
+  //    with an actionable error (step.ts: "no endpoint binding" / "role is disabled — re-enable it") beats
+  //    SILENTLY rerouting their explicit choice. This must sit ABOVE the "no roles enabled" early-return —
+  //    when EVERY role is disabled, an explicit @mention still has to route to the named (disabled) role and
+  //    fail loudly, not degrade to the generalist that then silently answers as someone else (review round-4;
+  //    the earlier order put the all-disabled return above this and short-circuited it).
   const mention = matchMention(userInput, rolesService.dispatchableRoleIds())
   if (mention) {
     // Assignments: the 0-LLM fast path has no router judgment, so work-vs-chat falls to the SAME
@@ -69,6 +70,10 @@ export async function route(userInput: string, history: convRepo.MessageRow[], c
     const w = classifyHeuristic(stripped || userInput)
     return { mode: 'single', role: mention.id, reason: 'explicit @mention', needsPlan: isNonTrivialTask(userInput), ...(w.isWork ? { isWork: true, taskTitle: w.title } : {}) }
   }
+
+  // No mention AND every dispatchable role disabled → degrade to the generalist (its dispatch error tells the
+  // user to enable a role). Below the mention fast path so an explicit @mention still routes to its target.
+  if (enabled.length === 0) return { mode: 'single', role: 'generalist', reason: 'no roles enabled', needsPlan: isNonTrivialTask(userInput) }
 
   // Danny's POOL is stricter than the mention universe: drop roles that cannot run a step right now
   // (no binding / dead endpoint / no API key — isDispatchReady, the same four checks runRoleStep throws

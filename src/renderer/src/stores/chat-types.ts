@@ -57,6 +57,10 @@ export interface ChatMessage {
   expertId?: string | null
   dispatch?: string[] | null
   segmentKind?: string | null // closure-loop: 'verifier' = an independent Gate B reviewer step → renders a "· Verifier" identity badge (live + across reload)
+  // P2-5: on a USER turn in a coordinator conversation, the @mention target resolved + persisted at send —
+  // the STABLE audit identity the mention chip renders from (so it survives the role being renamed/deleted,
+  // instead of re-deriving from the live roster every render). undefined = legacy row / not a mention.
+  targetRoleId?: string | null
   // The agent run this message belongs to — the TURN identity for chain-less messages (canMerge's run
   // boundary: a wake/resume run renders as its own turn, never smeared into the previous reply). Live
   // turns stamp the streamId, reload stamps the persisted run_id — both unique per run, compared only
@@ -121,6 +125,7 @@ export interface SendOpts {
   contextWindow?: number // agent roles pass the model's context window (drives compaction)
   permissionMode?: AgentMode // agent roles: initial permission mode (default / plan / bypass)
   imageModel?: string // designer image backend slug (image-tool roles only)
+  targetRoleId?: string // P2-5: coordinator conversations — the @mention target the composer resolved for THIS turn (persisted as the chip's stable audit identity)
 }
 
 export interface ChatState {

@@ -85,6 +85,12 @@ export async function add(input: McpServerInput, ownerPluginId?: string): Promis
     if (input.transport !== 'stdio') throw new Error('sourceDir applies only to stdio servers')
     cwd = await materializeDirCopy('mcp', id, input.sourceDir)
   }
+  // Disable-then-commit: create the row DISABLED, write the secrets, and only THEN flip it enabled and
+  // connect. setSecrets writes to the keychain and THROWS when it can't protect the value (getSecrets is the
+  // fail-safe read; writes are the loud path) — the old order (create enabled → setSecrets) let that throw
+  // escape the create's catch, leaving an ENABLED row with NO credentials that boot's connectEnabled would
+  // then connect as an unauthenticated server the user believes is configured. Now a secrets failure rolls
+  // the row (and any copy) back, and no enabled row ever exists without its secrets in place.
   let row: McpServerRow
   try {
     row = mcpRepo.create({
@@ -95,16 +101,25 @@ export async function add(input: McpServerInput, ownerPluginId?: string): Promis
       args: input.args,
       cwd,
       scope: input.scope,
-      enabled: input.enabled,
+      enabled: false,
       ownerPluginId: ownerPluginId ?? null
     })
   } catch (e) {
     if (cwd) await removeMaterialized('mcp', id) // never leave an orphan copy behind a failed insert
     throw e
   }
-  setSecrets(row.id, input.secrets)
+  try {
+    setSecrets(row.id, input.secrets)
+  } catch (e) {
+    mcpRepo.remove(row.id) // secrets could not be stored → don't persist a half-configured server
+    if (cwd) await removeMaterialized('mcp', id)
+    throw e
+  }
   projectManifest(row)
-  if (row.enabled) await connectOne(row.id)
+  if (input.enabled) {
+    mcpRepo.update(row.id, { enabled: true }) // commit the requested enabled state now that secrets are in place
+    await connectOne(row.id)
+  }
   return toDto(mcpRepo.getById(row.id) as McpServerRow)
 }
 

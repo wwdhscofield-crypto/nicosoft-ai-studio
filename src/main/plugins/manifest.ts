@@ -22,7 +22,12 @@ export function parsePlugin(dirPath: string): ParsedPlugin {
   }
   const skills = discoverSkills(dirPath)
   const { mcpServers, roles } = parsed.data
-  if (!skills.length && !mcpServers && !roles?.length) {
+  // An EMPTY `mcpServers: {}` object is truthy but adds nothing — count it as absent, matching the guard's own
+  // intent ("no components"). Otherwise a placeholder `{}` slips a zero-component plugin past this check and it
+  // commits with bundles:[] (no skill/mcp/role rows) — which boot reconciliation cannot tell apart from a
+  // crashed install, so a user-disabled zero-bundle plugin would be wrongly swept away (review round-4).
+  const hasMcp = !!mcpServers && Object.keys(mcpServers).length > 0
+  if (!skills.length && !hasMcp && !roles?.length) {
     throw new Error('Plugin has no components (no skills/ folder, mcpServers, or roles)')
   }
   return { manifest: parsed.data, dirPath, skills }

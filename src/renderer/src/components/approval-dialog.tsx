@@ -235,6 +235,10 @@ function InstallApproval({
     setBusy(true)
     try {
       const updated: Record<string, unknown> = { ...input }
+      // P1-3: bind the install to EXACTLY what this dialog previewed — echo the preview's content digest back
+      // so the tool re-verifies the source hasn't changed since it was rendered here (the preview is re-run and
+      // the digest re-issued on every folder change, so this is always the digest of the folder now shown).
+      if (preview?.ok && 'digest' in preview && preview.digest) updated.source_digest = preview.digest
       if (isMcp) {
         if (dir) updated.source_dir = dir
         const values = Object.fromEntries(secretKeys.map((k) => [k, secrets[k] ?? '']).filter(([, v]) => v !== ''))
@@ -276,6 +280,12 @@ function InstallApproval({
 
         {gateBlocked ? <div className="ap-install-error">{t('ap.install.outsideSource')}</div> : null}
         {preview?.ok === false && dir ? <div className="ap-install-error">{preview.error}</div> : null}
+        {/* P1-3(b): when the picked folder is a symlink, the install uses — and this preview digested — its
+            REAL target. Surface that resolved path so the dialog never displays one location while installing
+            from another (the renderer's string-only "inside cwd" check can't see through a symlink). */}
+        {preview?.ok && 'resolvedPath' in preview && preview.resolvedPath && preview.resolvedPath !== dir ? (
+          <div className="ap-install-line ap-install-dim">{t('ap.install.resolvesTo')} <code className="ap-install-path" title={preview.resolvedPath}>{preview.resolvedPath}</code></div>
+        ) : null}
         {/* Preview in flight for the current dir (just changed / picked): Confirm is disabled and no manifest
             shows, so the user never confirms against a stale preview of a different folder. */}
         {!preview && dir && !gateBlocked ? <div className="ap-install-line ap-install-dim">{t('ap.install.checking')}</div> : null}
@@ -292,11 +302,14 @@ function InstallApproval({
           <div className="ap-install-body">
             <div className="ap-install-line"><strong>{preview.name}</strong>{preview.version ? ` v${preview.version}` : ''}</div>
             <div className="ap-install-line">{t('ap.install.pluginAdds')}</div>
+            {/* Full consequence manifest (P1-3): each component shows what it RUNS / GRANTS, not just its name —
+                MCP servers their command/url, hooks their commands, roles their tools — so the user approves a
+                complete picture of what the plugin does, not an opaque name list. */}
             <ul className="ap-install-list">
-              {preview.skills.map((s) => <li key={`s-${s}`}>{t('ap.install.itemSkill')}: {s}</li>)}
-              {preview.mcpServers.map((s) => <li key={`m-${s}`}>{t('ap.install.itemMcp')}: {s}</li>)}
-              {preview.roles.map((s) => <li key={`r-${s}`}>{t('ap.install.itemRole')}: {s}</li>)}
-              {preview.hasHooks ? <li>{t('ap.install.itemHooks')}</li> : null}
+              {preview.skills.map((s) => <li key={`s-${s.name}`}>{t('ap.install.itemSkill')}: {s.name}{s.description ? ` — ${s.description}` : ''}</li>)}
+              {preview.mcpServers.map((s) => <li key={`m-${s.name}`}>{t('ap.install.itemMcp')}: {s.name} — <code className="ap-install-inlinecode">{s.run}</code>{s.netWarning ? <span className="ap-install-net"> {t('ap.install.netTag')}</span> : null}</li>)}
+              {preview.roles.map((s) => <li key={`r-${s.name}`}>{t('ap.install.itemRole')}: {s.name}{s.tools.length ? ` (${s.tools.join(', ')})` : ''}</li>)}
+              {preview.hooks.map((h, i) => <li key={`h-${i}`}>{t('ap.install.itemHooks')}: {h.event} → <code className="ap-install-inlinecode">{h.run}</code></li>)}
             </ul>
           </div>
         ) : null}

@@ -3,6 +3,7 @@ import * as convRepo from '../repos/conversation.repo'
 import * as summaryRepo from '../repos/summary.repo'
 import * as usageRepo from '../repos/usage.repo'
 import * as memoryService from './memory/service'
+import * as rolesService from './roles.service'
 import { requireApiKey } from './credentials'
 import { chat as llmChat } from '../llm/client'
 import { countContext } from './token-count.service'
@@ -29,6 +30,10 @@ export async function send(
   },
   signal?: AbortSignal
 ): Promise<ChatResult & { promptTokens: number }> {
+  // A role the user turned OFF must NEVER run — the plain-chat direct path enforces the same centralized
+  // precondition as runRoleStep / agent.service.run (the disable previously only blocked @mention routing,
+  // so a disabled expert's own chat still sent). Cheap policy gate, thrown before any endpoint/context work.
+  if (input.roleId) rolesService.assertRoleExecutable(input.roleId)
   const ep = endpointRepo.getById(input.endpointId)
   if (!ep) throw new LlmError('bad_request', 'endpoint not found')
   const key = requireApiKey(input.endpointId)

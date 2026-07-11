@@ -15,6 +15,10 @@ export function runMigrations(db: DatabaseSync): void {
   // closure-loop: the independent Gate B reviewer renders as its own "· Verifier" segment; this marks the
   // persisted step so the identity survives reload. null on every existing row (a normal expert/coordinator step).
   ensureColumn(db, 'messages', 'segment_kind', 'TEXT')
+  // The @mention target resolved + persisted when a coordinator-conversation user turn was sent (P2-5): a
+  // STABLE audit fact of who the message addressed, so the mention chip no longer drifts as roles are later
+  // renamed/deleted (it used to re-derive from the live roster every render). NULL = no mention / legacy row.
+  ensureColumn(db, 'messages', 'target_role_id', 'TEXT')
   ensureColumn(db, 'mcp_servers', 'args', "TEXT NOT NULL DEFAULT '[]'")
   ensureColumn(db, 'skills', 'when_to_use', 'TEXT')
   ensureColumn(db, 'skills', 'body', 'TEXT')

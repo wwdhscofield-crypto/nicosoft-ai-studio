@@ -33,6 +33,11 @@ export async function runCollaboration(
   const experts: agentService.CollabExpertInput[] = []
   const models = new Map<string, string>()
   for (const roleId of roleIds) {
+    // A role the user turned OFF must never join a build. The router already filters disabled roles out of
+    // the panel, but guard here too — the same invariant every dispatch entry point enforces — so a role
+    // disabled between routing and collab start (or a caller that skips the router) can't slip into the team.
+    // Skip (like every other readiness filter below); the experts.length < 2 gate catches over-skipping.
+    if (rolesService.isDisabled(roleId)) continue
     const binding = rolesService.getBinding(roleId)
     if (!binding?.endpointId || !binding.model) continue
     const ep = endpointRepo.getById(binding.endpointId)

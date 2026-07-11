@@ -89,6 +89,12 @@ export async function install(dirPath: string): Promise<PluginDto> {
     throw e
   }
   const m = parsed.manifest
+  // Disable-then-commit: create the plugin row DISABLED with empty bundles, register every component, then
+  // atomically flip enabled + set bundles at the very end. A CRASH mid-install (power loss / SIGKILL skips
+  // the exception rollback) used to leave an ENABLED, empty-bundles phantom whose hooks would load with no
+  // real components. Now an interrupted install leaves an inert `enabled:false, bundles:[]` row — the exact
+  // signal boot reconciliation (reconcileExtensions) uses to cascade-clean it (a real disabled plugin keeps
+  // its bundles). The successful commit below is a single atomic update.
   const row = pluginRepo.create({
     id,
     name: m.name,
@@ -97,7 +103,7 @@ export async function install(dirPath: string): Promise<PluginDto> {
     author: m.author ?? '',
     dirPath: matDir,
     bundles: [],
-    enabled: true
+    enabled: false
   })
   const bundles: PluginBundleDto[] = []
   const rollback: Array<() => void | Promise<void>> = []
@@ -136,7 +142,42 @@ export async function install(dirPath: string): Promise<PluginDto> {
     await removeMaterialized('plugins', id)
     throw e
   }
-  return toDto(pluginRepo.update(row.id, { bundles }) as PluginRow)
+  // Atomic commit: set the resolved bundles AND enable the plugin in one update. Every component was created
+  // enabled during the loop, so the plugin becoming enabled here leaves the whole set consistent (no cascade
+  // needed); a crash before this line left everything inert for reconciliation.
+  return toDto(pluginRepo.update(row.id, { bundles, enabled: true }) as PluginRow)
+}
+
+// Boot reconciliation (review round-4 P1-4): heal extension installs a crash left half-committed. The
+// disable-then-commit in install() means an INTERRUPTED plugin install leaves an inert `enabled:false,
+// bundles:[]` row — and, since components are registered before the atomic commit, some owner_plugin_id-
+// stamped skills/MCP servers may already exist. Cascade-clean each incomplete install: remove its owned
+// skills + MCP servers (found by owner_plugin_id, NOT the empty bundles list), the plugin row, and the
+// materialized copy. A user-DISABLED plugin keeps its bundles, so `bundles.length===0` cleanly distinguishes
+// a crashed install from a deliberate disable — no journal needed. This is sound because parsePlugin rejects
+// a zero-component plugin (an empty `mcpServers:{}` counts as absent), so a COMMITTED plugin ALWAYS has ≥1
+// bundle — `enabled:false && bundles:[]` is never a valid resting state, only an interrupted install.
+// Best-effort per plugin: one failure never
+// blocks boot. Runs AFTER recoverMaterializeLeftovers (dirs healed) and BEFORE loadSkills/connectMcp read
+// the DB, so a half-installed plugin's components never load. Orphaned custom ROLES from a crashed install
+// (custom_roles carries no owner_plugin_id) are a rare, user-deletable residue — out of scope for a column.
+export async function reconcileExtensions(): Promise<void> {
+  const incomplete = pluginRepo.list().filter((p) => !p.enabled && p.bundles.length === 0)
+  for (const p of incomplete) {
+    console.warn(`[extensions] reconciling an interrupted plugin install: ${p.id} (${p.name || 'unnamed'})`)
+    try {
+      for (const sk of skillService.list().filter((s) => s.ownerPluginId === p.id)) {
+        try { await skillService.remove(sk.id) } catch (e) { console.error('[extensions] reconcile: failed to drop orphaned skill', sk.id, e) }
+      }
+      for (const mc of mcpService.list().filter((m) => m.ownerPluginId === p.id)) {
+        try { await mcpService.remove(mc.id) } catch (e) { console.error('[extensions] reconcile: failed to drop orphaned mcp', mc.id, e) }
+      }
+      pluginRepo.remove(p.id)
+      await removeMaterialized('plugins', p.id)
+    } catch (e) {
+      console.error('[extensions] reconcile failed for plugin', p.id, e)
+    }
+  }
 }
 
 // Uninstall: cascade-remove every resource the plugin installed, then the plugin row.

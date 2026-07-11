@@ -20,6 +20,7 @@ import * as skillService from '../../services/extensions/skill'
 import * as mcpService from '../../services/extensions/mcp'
 import * as pluginService from '../../services/extensions/plugin'
 import { redeemInstallSecrets } from '../../services/extensions/install-secrets'
+import { digestDir, realDir } from '../../services/extensions/install-integrity'
 import { SKILL_FILE } from '../../skills/types'
 
 function textResult(toolUseId: string, text: string, isError = false): ToolResultBlock {
@@ -49,11 +50,26 @@ function resolveDir(dir: string | undefined, cwd?: string): string {
   return isAbsolute(d) || !cwd ? d : join(cwd, d)
 }
 
+// P1-3 install integrity: resolve the source to its CANONICAL real path (the value the service materializes,
+// so a symlinked source folder installs its real target — not the renderer's string-only "inside cwd" guess)
+// AND, when the confirmation dialog bound a digest, verify the folder's content still matches what the user
+// reviewed. A mismatch means the source changed between review and install → abort and install NOTHING,
+// rather than installing something other than what was approved (the review→install TOCTOU). `approvedDigest`
+// is set by the dialog on the tool input; a bare agent call (no dialog roundtrip) has none and just realpaths.
+async function realizeAndVerify(dir: string, approvedDigest: string | undefined): Promise<string> {
+  const real = await realDir(dir)
+  if (approvedDigest && (await digestDir(real)) !== approvedDigest) {
+    throw new Error('The source folder changed since you reviewed it in the confirmation dialog — run the install again to review the current contents.')
+  }
+  return real
+}
+
 // ---- install_skill ---------------------------------------------------------------------------------
 
 const installSkillSchema = z.object({
   dir_path: z.string().optional().describe(`Folder containing ${SKILL_FILE}. ${DIR_PROVENANCE}`),
-  scope: scopeSchema
+  scope: scopeSchema,
+  source_digest: z.string().optional().describe('set by the confirmation dialog to bind the install to the reviewed contents — never set this yourself')
 })
 
 export const installSkillTool = buildTool({
@@ -75,7 +91,8 @@ export const installSkillTool = buildTool({
     if (!dir) return { data: { ok: false as const, error: 'No folder was chosen — ask the user for the skill folder (or to pick it when the confirmation dialog opens).' } }
     if (!existsSync(join(dir, SKILL_FILE))) return { data: { ok: false as const, error: `No ${SKILL_FILE} in ${dir}. Ask the user for the folder that directly contains ${SKILL_FILE}.` } }
     try {
-      const dto = await skillService.add({ source: 'imported', dirPath: dir, scope: input.scope ?? 'all', enabled: true })
+      const real = await realizeAndVerify(dir, input.source_digest)
+      const dto = await skillService.add({ source: 'imported', dirPath: real, scope: input.scope ?? 'all', enabled: true })
       return { data: { ok: true as const, summary: `Skill "${dto.name}" installed (id ${dto.id}) — copied into Studio's extensions store and active for ${dto.scope === 'all' ? 'all experts' : (dto.scope as string[]).join(', ')}.` } }
     } catch (e) {
       return { data: { ok: false as const, error: e instanceof Error ? e.message : String(e) } }
@@ -95,7 +112,8 @@ const installMcpSchema = z.object({
   source_dir: z.string().optional().describe(`stdio local-folder server: the folder holding the server code — it is copied into Studio's data dir and the command runs from the copy. ${DIR_PROVENANCE}`),
   secret_keys: z.array(z.string()).optional().describe('names of env vars (stdio) / headers (http) the server needs — the USER types the values into the confirmation dialog; never ask for or handle the values yourself'),
   scope: scopeSchema,
-  secrets_token: z.string().optional().describe('set by the confirmation dialog — never set this yourself')
+  secrets_token: z.string().optional().describe('set by the confirmation dialog — never set this yourself'),
+  source_digest: z.string().optional().describe('set by the confirmation dialog to bind a local-folder install to the reviewed contents — never set this yourself')
 })
 
 export const installMcpTool = buildTool({
@@ -131,12 +149,15 @@ export const installMcpTool = buildTool({
         if (!redeemed) return { data: { ok: false as const, error: 'The secret values from the confirmation expired — run the install again.' } }
         secrets = redeemed
       }
+      // Local-folder server: realpath + digest-verify the source before it's copied (same P1-3 binding as
+      // skill/plugin). Raw-command / http servers have no folder → nothing to realize.
+      const realSource = sourceDir ? await realizeAndVerify(sourceDir, input.source_digest) : undefined
       const dto = await mcpService.add({
         name: input.name,
         transport: input.transport,
         endpointOrCmd: input.transport === 'stdio' ? input.command!.trim() : input.url!.trim(),
         args: input.args ?? [],
-        sourceDir: sourceDir || undefined,
+        sourceDir: realSource,
         secrets,
         scope: input.scope ?? 'all',
         enabled: true
@@ -153,7 +174,8 @@ export const installMcpTool = buildTool({
 // ---- install_plugin --------------------------------------------------------------------------------
 
 const installPluginSchema = z.object({
-  dir_path: z.string().optional().describe(`Plugin folder (contains plugin.json, optionally skills/, mcpServers, roles). ${DIR_PROVENANCE}`)
+  dir_path: z.string().optional().describe(`Plugin folder (contains plugin.json, optionally skills/, mcpServers, roles). ${DIR_PROVENANCE}`),
+  source_digest: z.string().optional().describe('set by the confirmation dialog to bind the install to the reviewed contents — never set this yourself')
 })
 
 export const installPluginTool = buildTool({
@@ -173,7 +195,8 @@ export const installPluginTool = buildTool({
     const dir = resolveDir(input.dir_path, ctx.cwd)
     if (!dir) return { data: { ok: false as const, error: 'No folder was chosen — ask the user for the plugin folder (or to pick it when the confirmation dialog opens).' } }
     try {
-      const dto = await pluginService.install(dir)
+      const real = await realizeAndVerify(dir, input.source_digest)
+      const dto = await pluginService.install(real)
       const parts = dto.bundles.map((b) => `${b.type}:${b.name}`).join(', ')
       return { data: { ok: true as const, summary: `Plugin "${dto.name}" installed (id ${dto.id}) — added ${dto.bundles.length ? parts : 'no components'}.` } }
     } catch (e) {
