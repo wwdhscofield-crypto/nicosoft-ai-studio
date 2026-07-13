@@ -668,5 +668,12 @@
   "design.status.stopped": "중지됨",
   "design.stop": "중지",
   "design.failedNote": "디자인 검토에 실패했습니다.",
-  "design.stoppedNote": "디자인 검토를 중지했습니다."
+  "design.stoppedNote": "디자인 검토를 중지했습니다.",
+  "migrate.status.running": "마이그레이션 중…",
+  "migrate.status.done": "완료",
+  "migrate.status.failed": "실패",
+  "migrate.status.stopped": "중지됨",
+  "migrate.stop": "중지",
+  "migrate.failedNote": "마이그레이션에 실패했습니다.",
+  "migrate.stoppedNote": "마이그레이션을 중지했습니다."
 }

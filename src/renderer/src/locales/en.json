@@ -668,5 +668,12 @@
   "design.status.stopped": "Stopped",
   "design.stop": "Stop",
   "design.failedNote": "Design review failed.",
-  "design.stoppedNote": "Design review stopped."
+  "design.stoppedNote": "Design review stopped.",
+  "migrate.status.running": "Migrating…",
+  "migrate.status.done": "Done",
+  "migrate.status.failed": "Failed",
+  "migrate.status.stopped": "Stopped",
+  "migrate.stop": "Stop",
+  "migrate.failedNote": "Migration failed.",
+  "migrate.stoppedNote": "Migration stopped."
 }

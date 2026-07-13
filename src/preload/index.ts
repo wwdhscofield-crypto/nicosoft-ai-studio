@@ -578,6 +578,13 @@ const api = {
       ipcRenderer.invoke('design:run', input),
     stop: (runId: string): Promise<boolean> => ipcRenderer.invoke('design:stop', runId)
   },
+  migrate: {
+    // Start a migration run for `instruction` in `convId` (its cwd must be a git repo). The run drives a
+    // migrate-launch card over conv:card (live progress + a reviewable patch); this returns only whether it started.
+    run: (input: { convId: string; instruction: string }): Promise<{ ok: true; runId: string } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('migrate:run', input),
+    stop: (runId: string): Promise<boolean> => ipcRenderer.invoke('migrate:stop', runId)
+  },
   plugins: {
     list: (): Promise<PluginDto[]> => ipcRenderer.invoke('plugins:list'),
     install: (dirPath: string): Promise<PluginDto> => ipcRenderer.invoke('plugins:install', dirPath),

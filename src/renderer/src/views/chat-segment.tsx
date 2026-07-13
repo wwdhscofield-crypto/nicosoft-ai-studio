@@ -14,6 +14,7 @@ import { ChunkedMarkdown } from '@/components/markdown'
 import { WorkflowLaunchCard } from '@/components/workflow-launch-card'
 import { ResearchLaunchCard } from '@/components/research-launch-card'
 import { DesignLaunchCard } from '@/components/design-launch-card'
+import { MigrateLaunchCard } from '@/components/migrate-launch-card'
 import { WorkflowDraftCard } from '@/components/workflow-draft-card'
 import { Icons } from '@/components/icons'
 import { useT, useLocale } from '@/stores/locale'
@@ -558,6 +559,16 @@ export function ChatSegment({
       <div className="segment design">
         {msgs.map((m) => (
           <DesignLaunchCard key={m.id} content={m.text} />
+        ))}
+      </div>
+    )
+  }
+  // A `/migrate` run card (script-orchestration-alignment §4.3) — sibling of research/design; carries the patch.
+  if (!isUser && first.segmentKind === 'migrate-launch') {
+    return (
+      <div className="segment migrate">
+        {msgs.map((m) => (
+          <MigrateLaunchCard key={m.id} content={m.text} />
         ))}
       </div>
     )

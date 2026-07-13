@@ -668,5 +668,12 @@
   "design.status.stopped": "已停止",
   "design.stop": "停止",
   "design.failedNote": "設計評審失敗。",
-  "design.stoppedNote": "設計評審已停止。"
+  "design.stoppedNote": "設計評審已停止。",
+  "migrate.status.running": "遷移中…",
+  "migrate.status.done": "已完成",
+  "migrate.status.failed": "失敗",
+  "migrate.status.stopped": "已停止",
+  "migrate.stop": "停止",
+  "migrate.failedNote": "遷移失敗。",
+  "migrate.stoppedNote": "遷移已停止。"
 }

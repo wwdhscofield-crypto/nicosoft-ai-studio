@@ -2265,3 +2265,26 @@ button.wf-last .wf-arr { color: var(--text-4); font-size: 10px; margin-left: 1px
 .design-note { color: var(--text-3); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .design-report { border-top: 1px solid var(--border-1); padding-top: 8px; }
 .design-err { color: var(--error); font-size: 11.5px; }
+
+/* migrate card — the /migrate run surface (script-orchestration-alignment §4.3): head (icon + instruction +
+   status dot + Stop while running), a live phase/log row while running, the per-site notes + reviewable ```diff
+   patch on done. Sibling of .research-card / .design-card (rule-of-three: fold into one .srun-card at cleanup). */
+.segment.migrate { padding: 2px 0; }
+.migrate-card {
+  display: flex; flex-direction: column; gap: 8px; width: 100%;
+  border: 1px solid var(--border-1); border-radius: var(--r-md); background: var(--bg-1);
+  padding: 10px 12px; font-size: 12.5px; color: var(--text-2); min-width: 0;
+}
+.migrate-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.migrate-icon { color: var(--text-4); display: inline-flex; flex-shrink: 0; }
+.migrate-q { color: var(--text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.migrate-status { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; color: var(--text-3); margin-left: auto; flex-shrink: 0; }
+.migrate-stop {
+  background: none; border: 1px solid var(--border-2); border-radius: 5px; color: var(--text-3);
+  font-size: 11px; cursor: pointer; padding: 1px 8px; flex-shrink: 0;
+}
+.migrate-stop:hover { color: var(--error); border-color: color-mix(in srgb, var(--error) 45%, transparent); }
+.migrate-progress { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.migrate-note { color: var(--text-3); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.migrate-report { border-top: 1px solid var(--border-1); padding-top: 8px; }
+.migrate-err { color: var(--error); font-size: 11.5px; }

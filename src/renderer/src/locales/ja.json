@@ -668,5 +668,12 @@
   "design.status.stopped": "停止",
   "design.stop": "停止",
   "design.failedNote": "デザインレビューに失敗しました。",
-  "design.stoppedNote": "デザインレビューを停止しました。"
+  "design.stoppedNote": "デザインレビューを停止しました。",
+  "migrate.status.running": "移行中…",
+  "migrate.status.done": "完了",
+  "migrate.status.failed": "失敗",
+  "migrate.status.stopped": "停止",
+  "migrate.stop": "停止",
+  "migrate.failedNote": "移行に失敗しました。",
+  "migrate.stoppedNote": "移行を停止しました。"
 }

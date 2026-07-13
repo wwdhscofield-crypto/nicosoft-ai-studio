@@ -383,7 +383,7 @@ export function Composer({
   const launchWorkflowRef = useRef(launchWorkflow)
   launchWorkflowRef.current = launchWorkflow
   // §4/D10: the palette shows the root commands for this domain — `/workflow`, `/schedule`, `/research`,
-  // `/design` — never a per-item expansion (no `/workflow <name>` rows). All stay matched while an argument is typed
+  // `/design`, `/migrate` — never a per-item expansion (no `/workflow <name>` rows). All stay matched while an argument is typed
   // (takesArg). The other built-in commands (/new, /compact, …) are unaffected. The lists are cached when
   // the palette is relevant so a command resolves synchronously (and can keep the input on a bad arg).
   const paletteRelevant = value.startsWith('/') && !value.includes('\n')
@@ -552,12 +552,47 @@ export function Composer({
   const runDesignCommandRef = useRef(runDesignCommand)
   runDesignCommandRef.current = runDesignCommand
 
+  // `/migrate <instruction>` — a codebase migration: discover the sites a change touches, transform each in an
+  // isolated git worktree (write agents), and aggregate a reviewable PATCH (nothing is applied or committed).
+  // Free text, bare = usage. Needs the conversation's folder to be a git repo (the service returns an error
+  // otherwise). Same ensure-conversation + user-bubble + stream-listener discipline as /research · /design.
+  const runMigrateCommand = (arg?: string): boolean | undefined => {
+    const instruction = arg?.trim()
+    if (!instruction) {
+      setCmdOutput(['Usage:  /migrate <instruction>', 'Discover sites → transform each in an isolated worktree → a reviewable patch (never applied).'])
+      return
+    }
+    const rawCmd = value.trim()
+    setCmdOutput(null)
+    void (async () => {
+      try {
+        chat.ensureStreamListeners() // the migrate card + patches ride conv:card — subscribe before it can fire
+        let convId = activeConv
+        if (!convId) {
+          const conv = await window.api.conversations.create({ kind: 'single', primaryRoleId: expert.id, title: rawCmd.slice(0, 60), cwd: effectiveCwd || '' })
+          convId = conv.id
+          chat.adoptConversation(conv)
+        }
+        const line = await window.api.conversations.append(convId, { author: 'user', content: rawCmd })
+        chat.insertUserLine(convId, { id: line.id, text: rawCmd })
+        const res = await window.api.migrate.run({ convId, instruction })
+        if (!res.ok) toast.error(res.error)
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err))
+      }
+    })()
+    return undefined
+  }
+  const runMigrateCommandRef = useRef(runMigrateCommand)
+  runMigrateCommandRef.current = runMigrateCommand
+
   // The root commands, rebuilt each render (cheap) — their run handlers read the latest closures via refs.
   const rootCommands: SlashCommand[] = [
     { name: 'workflow', desc: 'Run a saved workflow — list, or <name> [key=value …]', takesArg: true, run: (_c, arg) => runWorkflowCommandRef.current(arg) },
     { name: 'schedule', desc: 'Run a scheduled task now — list, or <id|name>', takesArg: true, run: (_c, arg) => runScheduleCommandRef.current(arg) },
     { name: 'research', desc: 'Deep web research → a cited report — <question>', takesArg: true, run: (_c, arg) => runResearchCommandRef.current(arg) },
-    { name: 'design', desc: 'Judge-panel design review → scored synthesis — <problem>', takesArg: true, run: (_c, arg) => runDesignCommandRef.current(arg) }
+    { name: 'design', desc: 'Judge-panel design review → scored synthesis — <problem>', takesArg: true, run: (_c, arg) => runDesignCommandRef.current(arg) },
+    { name: 'migrate', desc: 'Codebase migration → a reviewable patch — <instruction>', takesArg: true, run: (_c, arg) => runMigrateCommandRef.current(arg) }
   ]
 
   // Slash-command palette (optimization E): `/` at the start (no space yet) opens a quick-action menu.
