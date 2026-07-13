@@ -661,5 +661,12 @@
   "research.status.stopped": "停止",
   "research.stop": "停止",
   "research.failedNote": "リサーチに失敗しました。",
-  "research.stoppedNote": "リサーチを停止しました。"
+  "research.stoppedNote": "リサーチを停止しました。",
+  "design.status.running": "検討中…",
+  "design.status.done": "完了",
+  "design.status.failed": "失敗",
+  "design.status.stopped": "停止",
+  "design.stop": "停止",
+  "design.failedNote": "デザインレビューに失敗しました。",
+  "design.stoppedNote": "デザインレビューを停止しました。"
 }

@@ -5,6 +5,7 @@ import { getDb } from './db/connection'
 import * as settingsService from './services/settings.service'
 import { sweepOrphans as sweepOrphanAssignments } from './services/assignment.service'
 import { sweepInterruptedRuns as sweepInterruptedResearch } from './services/research/service'
+import { sweepInterruptedRuns as sweepInterruptedDesign } from './services/design/service'
 import { registerIpc, abortAllRuns } from './ipc/register'
 import { registerMediaProtocol, MEDIA_PRIVILEGED_SCHEME } from './media/protocol'
 import { startMemoryMaintenance } from './services/memory/service'
@@ -298,6 +299,8 @@ app.whenReady().then(async () => {
   // be stopped, so settle it to 'stopped' before the first window reads it (no run table to reconcile against).
   const staleResearch = sweepInterruptedResearch()
   if (staleResearch > 0) console.log(`[research] boot sweep: ${staleResearch} interrupted running → stopped`)
+  const staleDesign = sweepInterruptedDesign()
+  if (staleDesign > 0) console.log(`[design] boot sweep: ${staleDesign} interrupted running → stopped`)
   applyThemePref(settingsService.get<string>('theme')) // set nativeTheme from the persisted pref before the window is created
   // The Preview webview presents as an ORDINARY Chromium browser, not the studio's product UA: external sites
   // gate / bot-detect on non-browser UAs, and Claude Code's own preview runs in real Chromium and never

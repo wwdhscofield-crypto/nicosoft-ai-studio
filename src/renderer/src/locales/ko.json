@@ -661,5 +661,12 @@
   "research.status.stopped": "중지됨",
   "research.stop": "중지",
   "research.failedNote": "리서치에 실패했습니다.",
-  "research.stoppedNote": "리서치를 중지했습니다."
+  "research.stoppedNote": "리서치를 중지했습니다.",
+  "design.status.running": "검토 중…",
+  "design.status.done": "완료",
+  "design.status.failed": "실패",
+  "design.status.stopped": "중지됨",
+  "design.stop": "중지",
+  "design.failedNote": "디자인 검토에 실패했습니다.",
+  "design.stoppedNote": "디자인 검토를 중지했습니다."
 }

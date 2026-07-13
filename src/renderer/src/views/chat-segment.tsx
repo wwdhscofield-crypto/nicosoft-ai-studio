@@ -13,6 +13,7 @@ import { WidgetCard } from '@/components/widget-card'
 import { ChunkedMarkdown } from '@/components/markdown'
 import { WorkflowLaunchCard } from '@/components/workflow-launch-card'
 import { ResearchLaunchCard } from '@/components/research-launch-card'
+import { DesignLaunchCard } from '@/components/design-launch-card'
 import { WorkflowDraftCard } from '@/components/workflow-draft-card'
 import { Icons } from '@/components/icons'
 import { useT, useLocale } from '@/stores/locale'
@@ -547,6 +548,16 @@ export function ChatSegment({
       <div className="segment research">
         {msgs.map((m) => (
           <ResearchLaunchCard key={m.id} content={m.text} />
+        ))}
+      </div>
+    )
+  }
+  // A `/design` judge-panel run card (script-orchestration-alignment §4.2) — sibling of the research card.
+  if (!isUser && first.segmentKind === 'design-launch') {
+    return (
+      <div className="segment design">
+        {msgs.map((m) => (
+          <DesignLaunchCard key={m.id} content={m.text} />
         ))}
       </div>
     )

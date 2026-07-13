@@ -317,7 +317,7 @@ export function setMessageTarget(id: string, roleId: string | null, mentionText:
 // memory extraction) must skip these rows. Cards patched IN PLACE (workflow drafts' superseded/created flags,
 // research's running→report payload) double the stakes: replaying them would mutate the prompt-cache prefix
 // retroactively. A NEW card segmentKind MUST be added here — that is the single chokepoint the six faces read.
-export const CARD_SEGMENT_KINDS = new Set(['workflow-launch', 'workflow-draft', 'research-launch'])
+export const CARD_SEGMENT_KINDS = new Set(['workflow-launch', 'workflow-draft', 'research-launch', 'design-launch'])
 export function isCardRow(m: { segmentKind: string | null }): boolean {
   return m.segmentKind !== null && CARD_SEGMENT_KINDS.has(m.segmentKind)
 }

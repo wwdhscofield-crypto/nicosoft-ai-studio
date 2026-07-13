@@ -661,5 +661,12 @@
   "research.status.stopped": "已停止",
   "research.stop": "停止",
   "research.failedNote": "研究失败。",
-  "research.stoppedNote": "研究已停止。"
+  "research.stoppedNote": "研究已停止。",
+  "design.status.running": "评审中…",
+  "design.status.done": "已完成",
+  "design.status.failed": "失败",
+  "design.status.stopped": "已停止",
+  "design.stop": "停止",
+  "design.failedNote": "设计评审失败。",
+  "design.stoppedNote": "设计评审已停止。"
 }

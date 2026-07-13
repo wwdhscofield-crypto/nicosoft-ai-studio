@@ -661,5 +661,12 @@
   "research.status.stopped": "Stopped",
   "research.stop": "Stop",
   "research.failedNote": "Research failed.",
-  "research.stoppedNote": "Research stopped."
+  "research.stoppedNote": "Research stopped.",
+  "design.status.running": "Deliberating…",
+  "design.status.done": "Done",
+  "design.status.failed": "Failed",
+  "design.status.stopped": "Stopped",
+  "design.stop": "Stop",
+  "design.failedNote": "Design review failed.",
+  "design.stoppedNote": "Design review stopped."
 }

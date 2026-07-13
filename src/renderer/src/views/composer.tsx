@@ -382,8 +382,8 @@ export function Composer({
   }
   const launchWorkflowRef = useRef(launchWorkflow)
   launchWorkflowRef.current = launchWorkflow
-  // §4/D10: the palette shows the root commands for this domain — `/workflow`, `/schedule`, `/research` —
-  // never a per-item expansion (no `/workflow <name>` rows). All stay matched while an argument is typed
+  // §4/D10: the palette shows the root commands for this domain — `/workflow`, `/schedule`, `/research`,
+  // `/design` — never a per-item expansion (no `/workflow <name>` rows). All stay matched while an argument is typed
   // (takesArg). The other built-in commands (/new, /compact, …) are unaffected. The lists are cached when
   // the palette is relevant so a command resolves synchronously (and can keep the input on a bad arg).
   const paletteRelevant = value.startsWith('/') && !value.includes('\n')
@@ -518,11 +518,46 @@ export function Composer({
   const runResearchCommandRef = useRef(runResearchCommand)
   runResearchCommandRef.current = runResearchCommand
 
+  // `/design <problem>` — a judge-panel design review (N independent solution attempts from different angles →
+  // parallel judge → a scored synthesis). Free text, bare = usage. Mirrors /research: ensure the conversation +
+  // a persisted user bubble + the stream-listener subscription, then hand the problem to design:run (surfaces as
+  // a design card). Kept distinct from the coordinator council — this is a one-shot, leaf-level approach review.
+  const runDesignCommand = (arg?: string): boolean | undefined => {
+    const problem = arg?.trim()
+    if (!problem) {
+      setCmdOutput(['Usage:  /design <problem>', 'Judge-panel design review: N angles → scored synthesis.'])
+      return
+    }
+    const rawCmd = value.trim()
+    setCmdOutput(null)
+    void (async () => {
+      try {
+        chat.ensureStreamListeners() // the design card + patches ride conv:card — subscribe before it can fire
+        let convId = activeConv
+        if (!convId) {
+          const conv = await window.api.conversations.create({ kind: 'single', primaryRoleId: expert.id, title: rawCmd.slice(0, 60), cwd: effectiveCwd || '' })
+          convId = conv.id
+          chat.adoptConversation(conv)
+        }
+        const line = await window.api.conversations.append(convId, { author: 'user', content: rawCmd })
+        chat.insertUserLine(convId, { id: line.id, text: rawCmd })
+        const res = await window.api.design.run({ convId, problem })
+        if (!res.ok) toast.error(res.error)
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err))
+      }
+    })()
+    return undefined
+  }
+  const runDesignCommandRef = useRef(runDesignCommand)
+  runDesignCommandRef.current = runDesignCommand
+
   // The root commands, rebuilt each render (cheap) — their run handlers read the latest closures via refs.
   const rootCommands: SlashCommand[] = [
     { name: 'workflow', desc: 'Run a saved workflow — list, or <name> [key=value …]', takesArg: true, run: (_c, arg) => runWorkflowCommandRef.current(arg) },
     { name: 'schedule', desc: 'Run a scheduled task now — list, or <id|name>', takesArg: true, run: (_c, arg) => runScheduleCommandRef.current(arg) },
-    { name: 'research', desc: 'Deep web research → a cited report — <question>', takesArg: true, run: (_c, arg) => runResearchCommandRef.current(arg) }
+    { name: 'research', desc: 'Deep web research → a cited report — <question>', takesArg: true, run: (_c, arg) => runResearchCommandRef.current(arg) },
+    { name: 'design', desc: 'Judge-panel design review → scored synthesis — <problem>', takesArg: true, run: (_c, arg) => runDesignCommandRef.current(arg) }
   ]
 
   // Slash-command palette (optimization E): `/` at the start (no space yet) opens a quick-action menu.
