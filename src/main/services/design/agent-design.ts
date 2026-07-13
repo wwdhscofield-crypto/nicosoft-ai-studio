@@ -10,7 +10,7 @@
 // (card-only), so the run's progress surfaces on the design card that service.ts drives, never as loose bubbles.
 
 import { makeLensDeps } from '../lens/step'
-import { parseStructured } from '../lens/normalize'
+import { parseStructured, conformsToSchema } from '../lens/normalize'
 import { withScriptSlot } from '../script/pool'
 import { runScript } from '../script/executor'
 import { DESIGN_PANEL_SCRIPT } from './design-panel'
@@ -50,10 +50,14 @@ export function makeDesignSpawnAgent(deps: LensDeps, roleId: string) {
       stallTimeoutMs: DESIGN_STALL_MS,
     }
     const out = await withScriptSlot(() => deps.runAgent(spec))
-    // A schema'd reply that fails to parse MUST coalesce to null, NEVER {} — the script guards every call site
-    // with `!x` / `filter(Boolean)`. A truthy {} would slip past: a garbage judge would count as a valid score
-    // (total 0), and a {} attempt would be judged as an empty proposal. null lets the script narrow honestly.
-    return opts.schema ? (parseStructured(out.text) ?? null) : out.text
+    if (!opts.schema) return out.text
+    // Parse + CONFORM: coalesce an unparseable OR wrong-shape reply (a {} / wrapper / an object missing a
+    // required field) to null — the executor does not enforce the schema, so a truthy-but-shapeless reply would
+    // otherwise slip past the script's field guards (a garbage judge scoring 0, a {} attempt judged as empty).
+    // null restores CC's StructuredOutput contract; the script's guards then narrow honestly. (The script also
+    // checks its dereferenced fields directly — this consumer conformance is the matching backstop.)
+    const parsed = parseStructured(out.text)
+    return parsed && conformsToSchema(parsed, opts.schema) ? parsed : null
   }
 }
 

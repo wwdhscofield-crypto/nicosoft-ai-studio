@@ -67,6 +67,27 @@ export function parseStructured(text: string): unknown {
   return null
 }
 
+// Does a parsed value satisfy the schema's top-level shape? The studio script executor does NOT enforce an
+// agent() schema (unlike CC's StructuredOutput tool, which forces the sub-agent to return schema-conforming args
+// or retry) — the schema is only a PROMPT HINT. So a model can return valid JSON of the WRONG shape ({}, a
+// wrapper object, an array) that PARSES truthy and slips past a downstream `!x` / filter(Boolean) guard. A
+// consumer pairs this with parseStructured to coalesce a non-conforming reply to null, restoring the CC contract
+// ("a schema'd call returns a validated object OR null") the orchestration scripts rely on. Top-level `required`
+// only (nested shape is the script's own guard); an object schema needs every required key PRESENT, matching
+// what CC's StructuredOutput would have enforced (a reply missing a required field is rejected there too).
+export function conformsToSchema(value: unknown, schema: unknown): boolean {
+  if (!schema || typeof schema !== 'object') return true // no / non-object schema → nothing to assert
+  const s = schema as { type?: unknown; required?: unknown }
+  if (s.type === 'array') return Array.isArray(value)
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false // object schema needs an object
+  if (Array.isArray(s.required)) {
+    for (const key of s.required) {
+      if (typeof key === 'string' && (value as Record<string, unknown>)[key] === undefined) return false
+    }
+  }
+  return true
+}
+
 const asCandidate = (c: Record<string, unknown>, i: number, refuted: boolean): Finding => {
   const lens = String(c.lens ?? 'review')
   return {

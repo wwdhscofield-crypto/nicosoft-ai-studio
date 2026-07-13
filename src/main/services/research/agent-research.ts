@@ -11,7 +11,7 @@
 // service.ts drives (phase/log → the card payload), never as loose sub-agent bubbles.
 
 import { makeLensDeps } from '../lens/step'
-import { parseStructured } from '../lens/normalize'
+import { parseStructured, conformsToSchema } from '../lens/normalize'
 import { withScriptSlot } from '../script/pool'
 import { runScript } from '../script/executor'
 import { DEEP_RESEARCH_SCRIPT } from './deep-research'
@@ -57,14 +57,16 @@ export function makeResearchSpawnAgent(deps: LensDeps, roleId: string) {
       stallTimeoutMs: RESEARCH_STALL_MS,
     }
     const out = await withScriptSlot(() => deps.runAgent(spec))
-    // Parse the structured reply for schema'd calls (Scope/Search/Extract/Verdict/Report). A reply that fails to
-    // parse (prose / empty / wrong-shape JSON) MUST coalesce to null, NEVER {}: the deep-research script is
-    // byte-faithful to CC's null-on-failure agent() contract — every call site guards with `!x` or
-    // `filter(Boolean)`. A truthy {} slips past ALL of them, and the damage is silent + inverted: a garbage
-    // verifier vote counts as a valid non-refuting vote, so a claim whose ENTIRE panel failed reads as CONFIRMED
-    // (the exact opposite of the three-state invariant), and a {} scope/report crashes the run past its graceful
-    // {error}/salvage guards. null lets filter(Boolean) drop the failed vote → it counts as errored → unverified.
-    return opts.schema ? (parseStructured(out.text) ?? null) : out.text
+    if (!opts.schema) return out.text
+    // Parse + CONFORM for schema'd calls (Scope/Search/Extract/Verdict/Report). Coalesce to null NOT ONLY when
+    // the reply fails to parse (prose / empty) but also when it parses to the WRONG SHAPE (a {} / wrapper / an
+    // object missing a required field): the executor does NOT enforce the schema (it is a prompt hint), so a
+    // truthy-but-shapeless reply would slip past the byte-faithful script's `!x` / filter(Boolean) guards. The
+    // worst case is silent + inverted — a shapeless verifier vote lacks `refuted`, counts as a valid non-refuting
+    // vote, and a claim whose ENTIRE panel returned garbage reads as CONFIRMED. null restores CC's
+    // StructuredOutput contract (validated object OR null) → the failed vote counts as errored → unverified.
+    const parsed = parseStructured(out.text)
+    return parsed && conformsToSchema(parsed, opts.schema) ? parsed : null
   }
 }
 
