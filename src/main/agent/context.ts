@@ -67,6 +67,17 @@ export interface DesignHandle {
   run(input: { problem: string; signal?: AbortSignal; asyncHandleId?: string }): Promise<StudioDesignResult>
 }
 
+// studio_migrate agent tool (research-role-driven-redesign §4.1, RED ZONE) — sibling of Research/DesignHandle but
+// WRITE-gated: it transforms code in ISOLATED worktrees and aggregates a reviewable PATCH (never applied). Only
+// write-permission roles (DEV_ROLES) carry the tool. Same top-level card / caller-endpoint / Stop shape.
+export interface StudioMigrateResult {
+  ok: boolean
+  message: string // the reviewable patch (ok) or a clear failure reason
+}
+export interface MigrateHandle {
+  run(input: { instruction: string; signal?: AbortSignal; asyncHandleId?: string }): Promise<StudioMigrateResult>
+}
+
 export interface ReadFileEntry {
   content: string
   mtimeMs: number
@@ -262,6 +273,9 @@ export interface AgentContext {
   research?: ResearchHandle
   // studio_design agent tool — same handle⟺tool guard as research; undefined inside a sub-agent.
   design?: DesignHandle
+  // studio_migrate agent tool (RED ZONE) — same handle⟺tool guard; present ONLY for write-permission roles that
+  // carry the tool (DEV_ROLES), and undefined inside a sub-agent.
+  migrate?: MigrateHandle
 }
 
 // What a tool needs to make its own LLM call (a content-extraction summary, a delegated search) or run a

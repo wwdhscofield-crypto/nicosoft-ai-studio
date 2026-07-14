@@ -13,6 +13,7 @@ import * as roleRepo from '../../repos/role.repo'
 import * as endpointRepo from '../../repos/endpoint.repo'
 import * as keychain from '../../keychain/keychain'
 import * as rolesService from '../roles.service'
+import { WRITE_ROLE_IDS } from '@shared/roles'
 import { chatOnce } from '../llm-once'
 import { resolveDepth } from '../../llm/thinking'
 import type { ChatMessage } from '../../llm/types'
@@ -42,11 +43,11 @@ export interface RouteContext {
   convId?: string
 }
 
-// The role-driven script commands (research-role-driven-redesign §4.4) → their BOUND (preferred) role. /research
-// and /design route DETERMINISTICALLY (like @mention), so an explicit command never falls to Danny-direct (Danny
-// carries none of these tools). Every dispatchable role is an agent role carrying the tool; the bound role is just
-// the sensible default. (migrate joins here in a later batch.)
-const SCRIPT_COMMANDS: Record<string, string> = { research: 'analyst', design: 'designer' }
+// The role-driven script commands (research-role-driven-redesign §4.4) → their BOUND (preferred) role. /research,
+// /design, /migrate route DETERMINISTICALLY (like @mention), so an explicit command never falls to Danny-direct
+// (Danny carries none of these tools). research/design go to ANY dispatchable agent role (all carry the tool);
+// /migrate is RED ZONE — only WRITE-permission roles carry studio_migrate, so it must dispatch to one of those.
+const SCRIPT_COMMANDS: Record<string, string> = { research: 'analyst', design: 'designer', migrate: 'engineer' }
 function matchScriptCommand(userInput: string): { cmd: string; prefRole: string; arg: string; title: string } | null {
   const m = userInput.trim().match(/^\/(\w+)(?:\s|$)/)
   // Object.hasOwn, NOT `in`: `in` walks the prototype chain, so /toString, /constructor, /valueOf, /__proto__ …
@@ -106,7 +107,8 @@ export async function route(userInput: string, history: convRepo.MessageRow[], c
     // actionable error the old pickXRole()==null path surfaced. Above the direct return, mirroring @mention.
     const scriptCmd0 = matchScriptCommand(userInput)
     if (scriptCmd0) {
-      return { mode: 'single', role: enabled.includes(scriptCmd0.prefRole) ? scriptCmd0.prefRole : enabled[0], reason: `/${scriptCmd0.cmd} — no dispatch-ready role`, needsPlan: false }
+      const pool0 = scriptCmd0.cmd === 'migrate' ? enabled.filter((r) => WRITE_ROLE_IDS.has(r)) : enabled
+      return { mode: 'single', role: pool0.includes(scriptCmd0.prefRole) ? scriptCmd0.prefRole : (pool0[0] ?? scriptCmd0.prefRole), reason: `/${scriptCmd0.cmd} — no dispatch-ready role`, needsPlan: false }
     }
     // Zero experts can run a step right now. If Danny himself is dispatch-ready he answers DIRECT —
     // his own binding is all direct mode needs, and chitchat that worked pre-filter must keep working
@@ -125,7 +127,11 @@ export async function route(userInput: string, history: convRepo.MessageRow[], c
   // …' turn; the result flows back through Danny. NEVER 'direct'. These produce a deliverable → isWork.
   const scriptCmd = matchScriptCommand(userInput)
   if (scriptCmd) {
-    const role = ready.includes(scriptCmd.prefRole) ? scriptCmd.prefRole : ready[0]
+    // /migrate is RED ZONE — dispatch ONLY to a WRITE-permission role (only they carry studio_migrate);
+    // research/design go to any ready agent role. If no write role is ready, dispatch to the bound write role
+    // anyway so its dispatch fails LOUDLY (never silently send /migrate to a non-write role that lacks the tool).
+    const pool = scriptCmd.cmd === 'migrate' ? ready.filter((r) => WRITE_ROLE_IDS.has(r)) : ready
+    const role = pool.includes(scriptCmd.prefRole) ? scriptCmd.prefRole : (pool[0] ?? scriptCmd.prefRole)
     return { mode: 'single', role, reason: `explicit /${scriptCmd.cmd} command`, needsPlan: false, isWork: true, taskTitle: scriptCmd.title }
   }
 

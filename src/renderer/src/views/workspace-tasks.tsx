@@ -98,7 +98,7 @@ function PanelGroup({ owner, panelTools, expertsById, convId }: { owner: string;
         </div>
       ) : null}
       {panelTools.map((tl) =>
-        tl.name === 'StudioResearch' || tl.name === 'StudioDesign' ? (
+        tl.name === 'StudioResearch' || tl.name === 'StudioDesign' || tl.name === 'StudioMigrate' ? (
           <ScriptRunCard key={tl.id} tool={tl} convId={convId} />
         ) : (
           <LensCard key={tl.id} tool={tl} convId={convId} />
@@ -194,7 +194,7 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
         // Script cards (StudioResearch/StudioDesign) advance on PHASE progress, not token streams: fold in each
         // phase child's status + its live summary length (onLog → input.lastToolSummary), so the card re-renders
         // as phases tick through.
-        else if (tl.name === 'StudioResearch' || tl.name === 'StudioDesign') sig += `${m.expertId ?? ''}~${tl.id}~${tl.status}~${(tl.subTools ?? []).map((st) => `${st.status}${(((st.input as { lastToolSummary?: string } | undefined)?.lastToolSummary) ?? '').length}`).join('')};`
+        else if (tl.name === 'StudioResearch' || tl.name === 'StudioDesign' || tl.name === 'StudioMigrate') sig += `${m.expertId ?? ''}~${tl.id}~${tl.status}~${(tl.subTools ?? []).map((st) => `${st.status}${(((st.input as { lastToolSummary?: string } | undefined)?.lastToolSummary) ?? '').length}`).join('')};`
       }
     }
     return sig
@@ -222,7 +222,7 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
         // studio_lens + the script cards (studio_research/studio_design) surface as top-level panel cards here.
         // Only lens has a persisted store — the script runs are live-only (their result lives in the role's chat
         // turn), so their done cards show in-session only and are correctly absent after reload.
-        if (tl.name !== 'StudioLens' && tl.name !== 'StudioResearch' && tl.name !== 'StudioDesign') continue
+        if (tl.name !== 'StudioLens' && tl.name !== 'StudioResearch' && tl.name !== 'StudioDesign' && tl.name !== 'StudioMigrate') continue
         // Only StudioLens gates the persisted-examines rebuild below — that history is lens-only (research is not
         // persisted). Counting research here would wrongly suppress the rebuild and HIDE a conversation's done
         // lens-review history from the panel whenever a live/in-session research card is present.
@@ -482,7 +482,7 @@ export function WorkspaceTasks({ activeConv }: { activeConv: string | null }): R
                   </div>
                 ) : null}
                 {g.panels.map((tl) =>
-                  tl.name === 'StudioResearch' || tl.name === 'StudioDesign' ? (
+                  tl.name === 'StudioResearch' || tl.name === 'StudioDesign' || tl.name === 'StudioMigrate' ? (
                     <ScriptRunCard key={tl.id} tool={tl} />
                   ) : (
                     <LensCard key={tl.id} tool={tl} />

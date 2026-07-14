@@ -40,6 +40,7 @@ import { buildAgentSystem } from './agent-system'
 import { createLensHandle } from './lens/agent-lens'
 import { createResearchHandle } from './research/research-handle'
 import { createDesignHandle } from './design/design-handle'
+import { createMigrateHandle } from './migrate/migrate-handle'
 import { recallText } from './memory/project-map'
 import { indexText as agentMemoryIndexText } from './memory/agent-memory'
 import { setActiveServices, clearActiveServices, broadcastConvServices } from './active-services'
@@ -422,6 +423,17 @@ export async function runCollabSession(
             : undefined,
           design: tools.some((t) => t.name === 'studio_design')
             ? createDesignHandle({
+                convId,
+                callerRoleId: x.roleId,
+                cwd,
+                permissionMode: x.permissionMode ?? 'default',
+                signal: sig,
+                onStream: (ev) => hooks.onExpertStream(x.roleId, ev),
+                requestPermission: (req, s) => hooks.requestPermission(x.roleId, req, s)
+              })
+            : undefined,
+          migrate: tools.some((t) => t.name === 'studio_migrate')
+            ? createMigrateHandle({
                 convId,
                 callerRoleId: x.roleId,
                 cwd,

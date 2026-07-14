@@ -21,6 +21,7 @@ import { useRoles } from '@/stores/roles'
 import { useWorkspace } from '@/stores/workspace'
 import { useMemoryCloud } from '@/stores/memory-cloud'
 import { useChat, roleHasAgent, roleHasImageGen, roleRunsAgentLoop, roleIsCoordinator } from '@/stores/chat'
+import { WRITE_ROLE_IDS } from '@shared/roles'
 import { useRoleBinding, type RoleBindingControls } from '@/lib/use-role-binding'
 import type { EndpointDto } from '@/lib/api'
 import { fileToImage, imagesFromClipboard, type ImageAttachment } from '@/lib/image'
@@ -542,25 +543,15 @@ export function Composer({
       setCmdOutput(['Usage:  /migrate <instruction>', 'Discover sites → transform each in an isolated worktree → a reviewable patch (never applied).'])
       return
     }
-    const rawCmd = value.trim()
+    // RED ZONE: studio_migrate WRITES (in isolated worktrees), so it's gated to write-permission roles (WRITE_ROLE_IDS
+    // = the same DEV_ROLES the tool's kit is gated on). A SOLO write role calls studio_migrate; the COORDINATOR
+    // dispatches it (route() /migrate fast path → a write role). Any other role can't run it — fail loudly.
+    if (!WRITE_ROLE_IDS.has(expert.id) && !roleIsCoordinator(expert.id)) {
+      toast.error('Only a write-permission role can run a migration. Switch to Flynn (engineer) or Shuri (frontend).')
+      return
+    }
     setCmdOutput(null)
-    void (async () => {
-      try {
-        chat.ensureStreamListeners() // the migrate card + patches ride conv:card — subscribe before it can fire
-        let convId = activeConv
-        if (!convId) {
-          const conv = await window.api.conversations.create({ kind: 'single', primaryRoleId: expert.id, title: rawCmd.slice(0, 60), cwd: effectiveCwd || '' })
-          convId = conv.id
-          chat.adoptConversation(conv)
-        }
-        const line = await window.api.conversations.append(convId, { author: 'user', content: rawCmd })
-        chat.insertUserLine(convId, { id: line.id, text: rawCmd })
-        const res = await window.api.migrate.run({ convId, instruction })
-        if (!res.ok) toast.error(res.error)
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : String(err))
-      }
-    })()
+    dispatchSend(`/migrate ${instruction}`)
     return undefined
   }
   const runMigrateCommandRef = useRef(runMigrateCommand)

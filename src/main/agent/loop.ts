@@ -436,7 +436,7 @@ export async function* runAgent(
   // paraphrase or drop the command. Scheduling belongs to the main agent; schedule_list/delete stay.
   // workflow_draft is stripped like install_: the confirmation card is a conversation-level, user-facing
   // decision surface — a child must never present one (workflow-assisted-authoring §4).
-  const subAgentTools = tools.filter((t) => t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens' && t.name !== 'studio_research' && t.name !== 'studio_design' && !t.name.startsWith('preview_') && !t.name.startsWith('monitor_') && t.name !== 'schedule_wakeup' && t.name !== 'schedule_create' && t.name !== 'remember_project_map' && t.name !== 'remember' && t.name !== 'forget' && t.name !== 'recall_memory' && t.name !== 'distill_skill' && t.name !== 'studio_guide' && !t.name.startsWith('install_') && t.name !== 'ns_computer_use' && t.name !== 'workflow_draft')
+  const subAgentTools = tools.filter((t) => t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens' && t.name !== 'studio_research' && t.name !== 'studio_design' && t.name !== 'studio_migrate' && !t.name.startsWith('preview_') && !t.name.startsWith('monitor_') && t.name !== 'schedule_wakeup' && t.name !== 'schedule_create' && t.name !== 'remember_project_map' && t.name !== 'remember' && t.name !== 'forget' && t.name !== 'recall_memory' && t.name !== 'distill_skill' && t.name !== 'studio_guide' && !t.name.startsWith('install_') && t.name !== 'ns_computer_use' && t.name !== 'workflow_draft')
   const makeSpawnSubAgent =
     (signal: AbortSignal): SpawnSubAgent =>
     async ({ prompt, parentToolId, isolation }) => {
@@ -477,7 +477,7 @@ export async function* runAgent(
           // setTodos nulled (alongside panel/spawnSubAgent/askUser): a sub-agent's TodoWrite is a private, run-local
           // checklist — without this it inherits the parent's setTodos and broadcasts the child's one-shot todos into
           // the PARENT conversation's live Tasks list (overwriting the real list / prematurely archiving a phase).
-          ctx: { ...ctx, cwd: childWorktree?.path ?? ctx.cwd, cwdRoot: childWorktree?.path ?? ctx.cwdRoot, setCwd: undefined, activeWorktree: undefined, signal, readFileState: new Map(), todos: [], setTodos: undefined, spawnSubAgent: undefined, panel: undefined, research: undefined, design: undefined, preview: undefined, askUser: undefined, writtenPaths: childWorktree ? new Set() : ctx.writtenPaths, isSubAgent: true, isWorktreeIsolated: isolation === 'worktree' },
+          ctx: { ...ctx, cwd: childWorktree?.path ?? ctx.cwd, cwdRoot: childWorktree?.path ?? ctx.cwdRoot, setCwd: undefined, activeWorktree: undefined, signal, readFileState: new Map(), todos: [], setTodos: undefined, spawnSubAgent: undefined, panel: undefined, research: undefined, design: undefined, migrate: undefined, preview: undefined, askUser: undefined, writtenPaths: childWorktree ? new Set() : ctx.writtenPaths, isSubAgent: true, isWorktreeIsolated: isolation === 'worktree' },
           maxTokens,
           maxTurns,
           onStream: emitChildStream(parentToolId),
@@ -524,7 +524,7 @@ export async function* runAgent(
   // runChild that runs one of a child's turns with the sub-agent tool set — no Task, no nested agent_*
   // (depth 1) — threading the child's persisted readFileState/todos. Sub-agents get subAgents: undefined.
   if (ctx.subAgents instanceof AsyncSubAgentPool) {
-    const asyncChildTools = tools.filter((t) => t.name !== 'Task' && !t.name.startsWith('agent_') && t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens' && t.name !== 'studio_research' && t.name !== 'studio_design' && !t.name.startsWith('preview_') && !t.name.startsWith('monitor_') && t.name !== 'schedule_wakeup' && t.name !== 'schedule_create' && t.name !== 'remember_project_map' && t.name !== 'remember' && t.name !== 'forget' && t.name !== 'recall_memory' && t.name !== 'distill_skill' && t.name !== 'studio_guide' && !t.name.startsWith('install_') && t.name !== 'workflow_draft')
+    const asyncChildTools = tools.filter((t) => t.name !== 'Task' && !t.name.startsWith('agent_') && t.name !== 'EnterPlanMode' && t.name !== 'ExitPlanMode' && t.name !== 'studio_lens' && t.name !== 'studio_research' && t.name !== 'studio_design' && t.name !== 'studio_migrate' && !t.name.startsWith('preview_') && !t.name.startsWith('monitor_') && t.name !== 'schedule_wakeup' && t.name !== 'schedule_create' && t.name !== 'remember_project_map' && t.name !== 'remember' && t.name !== 'forget' && t.name !== 'recall_memory' && t.name !== 'distill_skill' && t.name !== 'studio_guide' && !t.name.startsWith('install_') && t.name !== 'workflow_draft')
     const asyncWorktrees = new Map<string, ManagedWorktree>()
     const asyncWorktreeNames = new Map<string, string>()
     const asyncCwds = new Map<string, string>()
@@ -574,7 +574,7 @@ export async function* runAgent(
       const childCtxCwd = asyncCwds.get(backgroundId) ?? childWorktree?.path ?? ctx.cwd
       const childCtxRoot = asyncCwdRoots.has(backgroundId) ? asyncCwdRoots.get(backgroundId) : childWorktree?.path ?? ctx.cwdRoot
       const childIsWorktreeIsolated = asyncWorktreeIsolated.get(backgroundId) ?? Boolean(childWorktree)
-      const childCtx: AgentContext = { ...ctx, cwd: childCtxCwd, cwdRoot: childCtxRoot, setCwd: undefined, activeWorktree: asyncActiveWorktrees.get(backgroundId), signal, readFileState, todos, setTodos: undefined, spawnSubAgent: undefined, subAgents: undefined, panel: undefined, research: undefined, design: undefined, preview: undefined, askUser: undefined, writtenPaths: childIsWorktreeIsolated ? new Set() : ctx.writtenPaths, isSubAgent: true, isBackgroundSubAgent: true, isWorktreeIsolated: childIsWorktreeIsolated }
+      const childCtx: AgentContext = { ...ctx, cwd: childCtxCwd, cwdRoot: childCtxRoot, setCwd: undefined, activeWorktree: asyncActiveWorktrees.get(backgroundId), signal, readFileState, todos, setTodos: undefined, spawnSubAgent: undefined, subAgents: undefined, panel: undefined, research: undefined, design: undefined, migrate: undefined, preview: undefined, askUser: undefined, writtenPaths: childIsWorktreeIsolated ? new Set() : ctx.writtenPaths, isSubAgent: true, isBackgroundSubAgent: true, isWorktreeIsolated: childIsWorktreeIsolated }
       const sub = runAgent({
         protocol: params.protocol,
         baseUrl,

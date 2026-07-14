@@ -26,6 +26,7 @@ import { LSPManager } from '../agent/lsp/manager'
 import { createLensHandle } from './lens/agent-lens'
 import { createResearchHandle } from './research/research-handle'
 import { createDesignHandle } from './design/design-handle'
+import { createMigrateHandle } from './migrate/migrate-handle'
 import { lspTool } from '../agent/tools/lsp'
 import { disposePlaywrightSessionsOwnedBy } from '../agent/tools/playwright-browser'
 import { releaseComputerUse } from './computer-use'
@@ -447,6 +448,19 @@ export async function runAgentLoop(
     // studio_design bridge — same handle⟺tool guard + conv-level broadcast as research.
     design: loop.tools.some((t) => t.name === 'studio_design')
       ? createDesignHandle({
+          convId: loop.convId,
+          callerRoleId: loop.roleId,
+          cwd,
+          permissionMode: loop.permissionMode,
+          signal,
+          onStream: (ev) => broadcastConvLens(loop.convId, loop.roleId, ev),
+          requestPermission: cb.requestPermission
+        })
+      : undefined,
+    // studio_migrate bridge (RED ZONE) — same handle⟺tool guard; the handle is created only when the kit carries
+    // studio_migrate, which only write-permission (DEV_ROLES) roles do. cwd is the conversation repo it isolates in.
+    migrate: loop.tools.some((t) => t.name === 'studio_migrate')
+      ? createMigrateHandle({
           convId: loop.convId,
           callerRoleId: loop.roleId,
           cwd,

@@ -11,6 +11,7 @@ import { askUserQuestionTool } from '../agent/tools/ask-user-question'
 import { studioLensTool } from '../agent/tools/studio-lens'
 import { studioResearchTool } from '../agent/tools/studio-research'
 import { studioDesignTool } from '../agent/tools/studio-design'
+import { studioMigrateTool } from '../agent/tools/studio-migrate'
 import { readMeTool, showWidgetTool } from '../agent/tools/visualize'
 import { readTool } from '../agent/tools/read'
 import { globTool } from '../agent/tools/glob'
@@ -34,7 +35,7 @@ import { workflowDraftTool } from '../agent/tools/workflow-draft'
 import { installSkillTool, installMcpTool, installPluginTool } from '../agent/tools/install-extension'
 import { studioGuideTool } from '../agent/tools/studio-guide'
 import type { Tool } from '../agent/tool'
-import { AGENT_ROLE_IDS } from '@shared/roles'
+import { AGENT_ROLE_IDS, WRITE_ROLE_IDS } from '@shared/roles'
 import * as settingsService from './settings.service'
 import * as rolesService from './roles.service'
 import { manager as mcpManager } from './extensions/mcp'
@@ -43,7 +44,7 @@ import { manager as skillManager } from './extensions/skill'
 export const ENGINEER_ROLE_ID = 'engineer'
 // Full-stack dev roles: Flynn (backend) + Shuri (frontend). Both get the complete tool set, a
 // coding-agent system prompt, and a required cwd (doc 19 phase 1).
-export const DEV_ROLES = new Set([ENGINEER_ROLE_ID, 'frontend'])
+export const DEV_ROLES = WRITE_ROLE_IDS // single source: @shared/roles.WRITE_ROLE_IDS (also the renderer /migrate guard)
 export const DEV_PROMPT: Record<string, string> = { engineer: ENGINEER_SYSTEM_PROMPT, frontend: FRONTEND_SYSTEM_PROMPT }
 
 // Roles that run a full agent loop (tools + multi-turn transcript) when dispatched by the coordinator, rather
@@ -130,6 +131,10 @@ const PLAN_TOOLS = [enterPlanModeTool, exitPlanModeTool] as unknown as Tool[]
 // injection sites key off the kit containing this tool). Grouped with lens because both surface as top-level
 // progress cards in the Tasks panel. (design joins this group in a later batch; migrate is red-zone, gated separately.)
 const PANEL_TOOLS = [studioLensTool, studioResearchTool, studioDesignTool] as unknown as Tool[]
+// studio_migrate (research-role-driven-redesign §4.1, RED ZONE) — WRITE-gated (DEV_ROLES only), NOT universal like
+// the other script tools: it transforms code (in isolated worktrees → a reviewable patch), so only write-permission
+// roles carry it. Same handle⟺tool injection guard (ctx.migrate) at the dispatch/collab sites.
+const MIGRATE_TOOLS = [studioMigrateTool] as unknown as Tool[]
 // visualize (CC "Imagine" parity) — UNIVERSAL-tier like studio_lens: read_me returns drawing guidance,
 // show_widget carries the widget as streaming tool INPUT (the renderer's WidgetCard draws it off
 // tool_use_input deltas; the handler only returns CC's fixed receipt). Every agent role; chat-only
@@ -219,6 +224,9 @@ export function toolsForAgentRole(roleId: string): Tool[] {
   // studio_lens for every agent role (decision ⑤). coordinator's read-only DIRECT kit is not an agent role,
   // so it does not get it; the runtime gate handles whether an independent reviewer can be formed.
   const panel = isAgent ? PANEL_TOOLS : []
+  // studio_migrate (RED ZONE) — WRITE-gated to DEV_ROLES (engineer/frontend), not universal like the other script
+  // tools: it transforms code. DEV_ROLES ⊂ AGENT_ROLE_IDS, so membership already implies isAgent.
+  const migrate = DEV_ROLES.has(roleId) ? MIGRATE_TOOLS : []
   const visualize = isAgent ? VISUALIZE_TOOLS : []
   const preview = isAgent ? PREVIEW_AGENT_TOOLS : []
   const monitor = isAgent ? MONITOR_TOOLS : []
@@ -240,5 +248,5 @@ export function toolsForAgentRole(roleId: string): Tool[] {
   // studio_guide — the product-manual read (studio-guide-product-manual): same tier as the memory tools —
   // every agent role plus coordinator-direct (Danny is the front door for "what can Studio do?"), sub-agents
   // stripped in loop.ts. Pairs with the standing STUDIO_GUIDE_INDEX prompt section (buildAgentSystem).
-  return [...core, ...PLAN_TOOLS, askUserQuestionTool as unknown as Tool, rememberProjectMapTool as unknown as Tool, studioGuideTool as unknown as Tool, ...MEMORY_TOOLS, ...DISTILL_TOOLS, ...install, ...panel, ...visualize, ...preview, ...monitor, ...computerUse, ...wfStatus, ...wfAuthor, ...mcpManager.toolsForRole(roleId), ...(skill ? [skill] : [])]
+  return [...core, ...PLAN_TOOLS, askUserQuestionTool as unknown as Tool, rememberProjectMapTool as unknown as Tool, studioGuideTool as unknown as Tool, ...MEMORY_TOOLS, ...DISTILL_TOOLS, ...install, ...panel, ...migrate, ...visualize, ...preview, ...monitor, ...computerUse, ...wfStatus, ...wfAuthor, ...mcpManager.toolsForRole(roleId), ...(skill ? [skill] : [])]
 }

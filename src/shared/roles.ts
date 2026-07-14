@@ -32,3 +32,8 @@ export function roleIdFromName(name: string): string {
 // (chat-helpers keys agent:run vs chat:send on it). Was two literals hand-synced across the IPC boundary.
 // coordinator is never a member (it never dispatches to itself). Environment-neutral: no node, no DOM.
 export const AGENT_ROLE_IDS: ReadonlySet<string> = new Set(['engineer', 'frontend', 'generalist', 'analyst', 'scheduler', 'translator', 'editor', 'designer'])
+
+// Roles with WRITE permission — the doers that may edit files / run write-kit tools. The SINGLE source for main's
+// DEV_ROLES (agent-tools re-points at this) AND the renderer (the /migrate red-zone guard: studio_migrate writes,
+// in isolated worktrees, so only these roles may drive it). Subset of AGENT_ROLE_IDS. Environment-neutral.
+export const WRITE_ROLE_IDS: ReadonlySet<string> = new Set(['engineer', 'frontend'])
