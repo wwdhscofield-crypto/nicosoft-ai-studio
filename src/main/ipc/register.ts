@@ -27,9 +27,6 @@ import { registerUpdateHandlers } from './update.handler'
 import { registerPreviewHandlers } from './preview.handler'
 import { registerComputerUseHandlers } from './computer-use.handler'
 import { registerWorkflowHandlers, abortAllWorkflowRuns } from './workflow.handler'
-import { registerResearchHandlers, abortAllResearchRuns } from './research.handler'
-import { registerDesignHandlers, abortAllDesignRuns } from './design.handler'
-import { registerMigrateHandlers, abortAllMigrateRuns } from './migrate.handler'
 
 // Single entry point — main/index.ts calls this once on app ready.
 export function registerIpc(): void {
@@ -61,9 +58,6 @@ export function registerIpc(): void {
   registerPreviewHandlers()
   registerComputerUseHandlers()
   registerWorkflowHandlers()
-  registerResearchHandlers()
-  registerDesignHandlers()
-  registerMigrateHandlers()
   registerUpdateHandlers()
 }
 
@@ -77,7 +71,4 @@ export function abortAllRuns(): void {
   abortAllAgentRuns()
   abortAllCoordinatorRuns()
   abortAllWorkflowRuns()
-  abortAllResearchRuns()
-  abortAllDesignRuns()
-  abortAllMigrateRuns()
 }

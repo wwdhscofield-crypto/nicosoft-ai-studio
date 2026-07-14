@@ -570,27 +570,6 @@ const api = {
       return () => ipcRenderer.off('workflow:run:event', h)
     }
   },
-  research: {
-    // Start a deep-research run for `question` in `convId`. The run drives a research-launch card over the
-    // conv:card channel (live progress + the final cited report); this returns only whether it started.
-    run: (input: { convId: string; question: string }): Promise<{ ok: true; runId: string } | { ok: false; error: string }> =>
-      ipcRenderer.invoke('research:run', input),
-    stop: (runId: string): Promise<boolean> => ipcRenderer.invoke('research:stop', runId)
-  },
-  design: {
-    // Start a judge-panel design run for `problem` in `convId`. The run drives a design-launch card over the
-    // conv:card channel (live progress + the final scored synthesis); this returns only whether it started.
-    run: (input: { convId: string; problem: string }): Promise<{ ok: true; runId: string } | { ok: false; error: string }> =>
-      ipcRenderer.invoke('design:run', input),
-    stop: (runId: string): Promise<boolean> => ipcRenderer.invoke('design:stop', runId)
-  },
-  migrate: {
-    // Start a migration run for `instruction` in `convId` (its cwd must be a git repo). The run drives a
-    // migrate-launch card over conv:card (live progress + a reviewable patch); this returns only whether it started.
-    run: (input: { convId: string; instruction: string }): Promise<{ ok: true; runId: string } | { ok: false; error: string }> =>
-      ipcRenderer.invoke('migrate:run', input),
-    stop: (runId: string): Promise<boolean> => ipcRenderer.invoke('migrate:stop', runId)
-  },
   plugins: {
     list: (): Promise<PluginDto[]> => ipcRenderer.invoke('plugins:list'),
     install: (dirPath: string): Promise<PluginDto> => ipcRenderer.invoke('plugins:install', dirPath),

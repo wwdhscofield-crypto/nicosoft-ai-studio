@@ -481,10 +481,9 @@ export function Composer({
   runScheduleCommandRef.current = runScheduleCommand
 
   // `/research <question>` — a deep-research run (fan-out web searches → fetch sources → adversarially verify
-  // claims → a cited report). The argument is FREE TEXT (no id/name resolution, unlike /workflow · /schedule);
-  // bare = usage. Mirrors launchWorkflow's ensure-conversation + persisted user-bubble discipline, then hands
-  // the question to research:run — the run surfaces as a research card in the conversation (live progress + the
-  // final report, driven over conv:card). A start-time failure (no research-capable expert) toasts.
+  // claims → a cited report). Role-driven now (research-role-driven-redesign): a solo agent role calls
+  // studio_research; a coordinator conversation dispatches it via Danny's route() /research fast path. FREE TEXT
+  // argument, bare = usage. See the guards + dispatchSend inside.
   const runResearchCommand = (arg?: string): boolean | undefined => {
     const question = arg?.trim()
     if (!question) {
