@@ -3,8 +3,9 @@
 // content with a cheap model, return its answer. Read-only (modifies nothing), concurrency-safe.
 //
 // Adapted to studio's stack: Node fetch instead of axios; our own SSRF guard
-// (checkUrlSsrf) instead of Anthropic's domain_info preflight; the small-model call goes through
-// chatAnthropic against ctx.llm. Same-host(±www) redirects are followed; a cross-host redirect is
+// (checkUrlSsrf) instead of Anthropic's domain_info preflight; the small-model call goes through the
+// protocol-dispatched chat() (client.ts) against ctx.llm — the driver's OWN protocol (openai→/v1/responses,
+// gemini→generateContent, anthropic→/v1/messages), never a hardcoded one. Same-host(±www) redirects are followed; a cross-host redirect is
 // reported back so the model re-issues WebFetch with the new URL (an open-redirect can't silently
 // bounce us to another origin).
 
@@ -14,7 +15,7 @@ import type { IncomingMessage } from 'node:http'
 import TurndownService from 'turndown'
 import { z } from 'zod'
 import { USER_AGENT } from '../../user-agent'
-import { chatAnthropic } from '../../llm/anthropic'
+import { chat } from '../../llm/client'
 import type { AgentLlmAccess } from '../context'
 import { buildTool } from '../tool'
 import type { ToolResultBlock } from '../types'
@@ -159,9 +160,13 @@ async function extractWithModel(
   const content =
     markdown.length > MAX_MARKDOWN ? markdown.slice(0, MAX_MARKDOWN) + '\n\n[content truncated to fit]' : markdown
   const userPrompt = `Web page content:\n---\n${content}\n---\n\n${prompt}\n\nProvide a concise response based only on the content above. Quote at most 125 characters from any source, in quotation marks with attribution; never reproduce song lyrics.`
-  const result = await chatAnthropic(
+  const result = await chat(
     {
-      protocol: 'anthropic',
+      // Dispatch by the DRIVER's native protocol (client.ts → chatOpenAI/chatAnthropic/chatGemini), NOT a
+      // hardcoded 'anthropic'. Studio is multi-model/multi-protocol: a gpt driver must extract via /v1/responses,
+      // gemini via generateContent — forcing anthropic here made an openai/gemini-only endpoint fetch nothing
+      // (and would 404 a truly native OpenAI endpoint that has no /v1/messages).
+      protocol: llm.protocol,
       baseUrl: llm.baseUrl,
       apiKey: llm.apiKey,
       model: llm.smallModel,
